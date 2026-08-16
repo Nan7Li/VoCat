@@ -192,7 +192,7 @@ export function AuthenticatedShell({
             {!collapsed && (
               <div className="ml-3">
                 <div className="sidebar-brand-title">Halo</div>
-                <div className="text-[11px] font-medium leading-tight tracking-tight text-black/35 dark:text-white/40">{t("高通模块测试工具")}</div>
+                <div className="text-[11px] font-medium leading-tight tracking-tight text-black/35 dark:text-white/40">{t("基于 VoCat")}</div>
               </div>
             )}
           </div>
@@ -207,7 +207,7 @@ export function AuthenticatedShell({
             <BrandLogo className="sidebar-brand-logo" />
             <div className="ml-3">
               <div className="sidebar-brand-title">Halo</div>
-              <div className="text-[11px] font-medium leading-tight tracking-tight text-black/35 dark:text-white/40">{t("高通模块测试工具")}</div>
+              <div className="text-[11px] font-medium leading-tight tracking-tight text-black/35 dark:text-white/40">{t("基于 VoCat")}</div>
             </div>
           </div>
           {menuList(false)}

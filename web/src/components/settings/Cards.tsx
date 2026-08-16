@@ -178,6 +178,18 @@ export function SystemInfoCard({
         <div className="rounded-lg bg-gray-50 p-3 dark:bg-white/5">
           <FieldRow label={t("架构")} value={info.architecture} monospace />
         </div>
+        <p className="text-[12px] leading-relaxed text-black/40 dark:text-white/45">
+          {t("Halo 是基于 VoCat 的个人界面与发行版。模组、IMS、WiFi Calling 等核心能力来自原项目。")}
+          {" "}
+          <a
+            className="text-[var(--color-primary)] underline-offset-2 hover:underline"
+            href="https://github.com/MengMengCode/VoCat"
+            target="_blank"
+            rel="noreferrer"
+          >
+            MengMengCode/VoCat
+          </a>
+        </p>
       </div>
     </div>
   );

@@ -126,7 +126,7 @@ export function previewApiPlugin(): Plugin {
 
           if (path === "/api/system/info") {
             send(res, {
-              version: "1.0.0",
+              version: "1.0.1",
               developer: false,
               hostname: "preview",
             });
@@ -234,7 +234,7 @@ export function previewApiPlugin(): Plugin {
           }
 
           if (path === "/api/system/update/check") {
-            send(res, { available: false, version: "1.0.0" });
+            send(res, { available: false, version: "1.0.1" });
             return;
           }
 
