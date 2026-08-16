@@ -11,8 +11,8 @@ export function UnauthenticatedShell({
   onToggleTheme: () => void;
 }) {
   return (
-    <div className="flex h-screen items-center justify-center bg-gray-100 transition-colors duration-300 dark:bg-gray-950">
-      <div className="absolute right-4 top-4 z-50 flex items-center gap-2">
+    <div className="vocat-app-shell relative h-full w-full items-center justify-center">
+      <div className="pointer-events-auto absolute right-5 top-5 z-50 flex items-center gap-2">
         <LanguageSwitch />
         <SwitchDark isDark={isDark} onToggle={onToggleTheme} />
       </div>

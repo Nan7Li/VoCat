@@ -27,10 +27,10 @@ export function OnlineRateCard({ online, total }: { online: number; total: numbe
   const styles = level ? LEVEL_STYLES[level] : null;
 
   return (
-    <div className="ui-panel p-4">
+    <div className="ui-card p-5">
       <div className="mb-1 flex items-center gap-2">
-        <PlugConnectedRegular className="h-4 w-4 text-sky-500" />
-        <h3 className="text-sm font-bold text-gray-800 dark:text-gray-100">{t("模块在线率")}</h3>
+        <PlugConnectedRegular className="h-4 w-4 text-[#007AFF]" />
+        <h3 className="text-[15px] font-semibold tracking-tight text-black dark:text-white">{t("模块在线率")}</h3>
       </div>
       <div className="flex items-center justify-center py-1">
         {percent === null ? (

@@ -45,10 +45,10 @@ function UsageBar({ label, percent, detail }: { label: string; percent: number; 
 export function HostPerfCard({ perf }: { perf?: DashboardHostPerf | null }) {
   const { t } = useI18n();
   return (
-    <div className="ui-panel p-4">
+    <div className="ui-card p-5">
       <div className="mb-3 flex items-center gap-2">
-        <GaugeRegular className="h-4 w-4 text-sky-500" />
-        <h3 className="text-sm font-bold text-gray-800 dark:text-gray-100">{t("性能信息")}</h3>
+        <GaugeRegular className="h-4 w-4 text-[#007AFF]" />
+        <h3 className="text-[15px] font-semibold tracking-tight text-black dark:text-white">{t("性能信息")}</h3>
       </div>
       <div className="space-y-2.5">
         <UsageBar label={t("CPU 使用率")} percent={perf?.cpuPercent ?? 0} />

@@ -9,7 +9,6 @@ export interface SwitchProps {
   ariaLabel?: string;
 }
 
-// el-switch equivalent toggle.
 export function Switch({ checked, onChange, disabled, loading, size = "default", ariaLabel }: SwitchProps) {
   const small = size === "small";
   return (
@@ -21,17 +20,17 @@ export function Switch({ checked, onChange, disabled, loading, size = "default",
       disabled={disabled || loading}
       onClick={() => onChange?.(!checked)}
       className={cx(
-        "relative inline-flex shrink-0 items-center rounded-full transition-colors duration-200 outline-none",
-        "focus-visible:ring-2 focus-visible:ring-[#0ea5e9]/50 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-950",
+        "relative inline-flex shrink-0 items-center rounded-full outline-none transition-colors duration-200",
+        "focus-visible:ring-2 focus-visible:ring-[#007AFF]/40 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-black",
         "disabled:cursor-not-allowed disabled:opacity-50",
-        small ? "h-4 w-8" : "h-5 w-10",
-        checked ? "bg-[#0ea5e9]" : "bg-gray-300 dark:bg-white/20",
+        small ? "h-[22px] w-[38px]" : "h-[31px] w-[51px]",
+        checked ? "bg-[#34C759] dark:bg-[#30D158]" : "bg-[#E9E9EA] dark:bg-[#39393D]",
       )}
     >
       <span
         className={cx(
-          "inline-block transform rounded-full bg-white shadow transition-transform duration-200",
-          small ? "h-3 w-3" : "h-4 w-4",
+          "inline-block rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.28)] transition-transform duration-200",
+          small ? "h-[18px] w-[18px]" : "h-[27px] w-[27px]",
           checked ? (small ? "translate-x-[18px]" : "translate-x-[22px]") : "translate-x-[2px]",
         )}
       />

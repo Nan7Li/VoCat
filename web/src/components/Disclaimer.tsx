@@ -151,7 +151,7 @@ export function Disclaimer({
   return (
     <div className="disclaimer-overlay fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-md">
       <div className="disclaimer-dialog relative mx-4 w-full max-w-lg overflow-hidden rounded-3xl border border-white/20 bg-white/90 p-8 shadow-2xl backdrop-blur-2xl dark:border-gray-700/50 dark:bg-gray-900/90">
-        <div className="pointer-events-none absolute left-0 top-0 h-32 w-full bg-gradient-to-b from-indigo-500/20 to-transparent" />
+        <div className="pointer-events-none absolute left-0 top-0 h-32 w-full bg-gradient-to-b from-white/40 to-transparent dark:from-white/5" />
         <div className="disclaimer-dialog-content relative z-10 flex min-h-0 flex-col">
           <div className="disclaimer-icon mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[#0ea5e9] to-[#0284c7] shadow-lg shadow-indigo-500/30">
             <WarningGlyph />

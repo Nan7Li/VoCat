@@ -24,9 +24,7 @@ export interface UpdateInfo {
 }
 
 function CardDecor() {
-  return (
-    <div className="absolute right-0 top-0 -mr-10 -mt-10 h-40 w-40 rounded-bl-full bg-indigo-500/5 transition-transform group-hover:scale-110" />
-  );
+  return null;
 }
 
 function CardIcon({ children, small }: { children: ReactNode; small?: boolean }) {
@@ -34,8 +32,8 @@ function CardIcon({ children, small }: { children: ReactNode; small?: boolean })
     <div
       className={
         small
-          ? "flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400"
-          : "flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400"
+          ? "flex h-9 w-9 items-center justify-center rounded-full bg-[#007AFF]/10 text-[#007AFF] dark:bg-[#0A84FF]/15 dark:text-[#64B5FF]"
+          : "flex h-11 w-11 items-center justify-center rounded-full bg-[#007AFF]/10 text-[#007AFF] dark:bg-[#0A84FF]/15 dark:text-[#64B5FF]"
       }
     >
       {children}
@@ -46,8 +44,8 @@ function CardIcon({ children, small }: { children: ReactNode; small?: boolean })
 function CardTitle({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div>
-      <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100">{title}</h3>
-      <p className="text-xs text-gray-500">{subtitle}</p>
+      <h3 className="text-[17px] font-semibold tracking-tight text-black dark:text-white">{title}</h3>
+      <p className="text-[13px] text-black/40 dark:text-white/45">{subtitle}</p>
     </div>
   );
 }

@@ -1,13 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowRightRegular, LockClosedRegular, PersonRegular } from "@fluentui/react-icons";
+import { LockClosedRegular, PersonRegular } from "@fluentui/react-icons";
 import { useAuth } from "../store/auth";
 import { useI18n } from "../lib/i18n";
 import { message } from "../components/ui/message";
 import { BrandLogo } from "../components/shell/BrandLogo";
-
-const INPUT_CLASS =
-  "w-full rounded-lg border border-gray-200 bg-white/70 py-3 pl-10 pr-4 font-mono text-sm text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/25 dark:border-white/10 dark:bg-black/20 dark:text-gray-100 dark:placeholder-gray-500";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -38,69 +35,59 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="relative flex h-full w-full items-center justify-center overflow-hidden">
-      <div className="animate-pulse-slow absolute -left-32 -top-32 h-[520px] w-[520px] rounded-full bg-indigo-500/15 blur-[120px] dark:bg-indigo-500/20" />
-      <div className="animate-pulse-slow absolute -bottom-32 -right-32 h-[520px] w-[520px] rounded-full bg-indigo-500/12 blur-[120px] [animation-delay:2s] dark:bg-indigo-500/16" />
-      <div className="relative w-full max-w-md p-1">
-        <div className="group relative overflow-hidden rounded-2xl border border-gray-100 bg-white/70 p-8 shadow-2xl backdrop-blur-xl dark:border-white/10 dark:bg-[#141418]/70">
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-indigo-500/8 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
-          <div className="relative z-10 mb-10 text-center">
-            <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-white shadow-lg shadow-indigo-500/20 ring-1 ring-black/5 transition-transform duration-300 group-hover:scale-105 dark:bg-white/10 dark:ring-white/10">
-              <BrandLogo className="h-14 w-14" />
-            </div>
-            <h2 className="bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-3xl font-bold text-transparent dark:from-white dark:to-gray-400">
-              vocat
-            </h2>
-            <p className="mt-3 text-sm tracking-wide text-gray-500 dark:text-gray-400">{t("高通模块专业测试工具")}</p>
+    <div className="relative flex h-full w-full items-center justify-center">
+      <div className="relative w-full max-w-[400px] px-5">
+        <div className="vocat-enter vocat-enter-1 mb-8 text-center">
+          <div className="mx-auto mb-5 flex h-[72px] w-[72px] items-center justify-center rounded-[22px] bg-white/70 shadow-[0_10px_30px_rgba(0,0,0,0.08)] ring-1 ring-black/5 backdrop-blur-xl dark:bg-white/10 dark:ring-white/10">
+            <BrandLogo className="h-12 w-12" />
           </div>
-          <form onSubmit={submit} className="relative z-10 space-y-6">
-            <div className="space-y-2">
-              <div className="relative">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 dark:text-gray-500">
-                  <PersonRegular className="h-5 w-5" />
-                </div>
-                <input
-                  className={INPUT_CLASS}
-                  placeholder={t("用户名")}
-                  type="text"
-                  autoComplete="username"
-                  value={username}
-                  onChange={(event) => setUsername(event.target.value)}
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <div className="relative">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 dark:text-gray-500">
-                  <LockClosedRegular className="h-5 w-5" />
-                </div>
-                <input
-                  className={INPUT_CLASS}
-                  placeholder={t("密码")}
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                />
-              </div>
-            </div>
-            <button
-              type="submit"
-              disabled={working}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#0ea5e9] px-4 py-3 font-bold text-white shadow-sm transition-all duration-200 hover:bg-[#0284c7] active:scale-95 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {working ? (
-                <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-              ) : (
-                <span>{t("登录")}</span>
-              )}
-              {!working && <ArrowRightRegular className="h-5 w-5" />}
-            </button>
-          </form>
+          <h1 className="font-display text-[34px] font-bold leading-none tracking-[-0.04em] text-black dark:text-white">
+            vocat
+          </h1>
+          <p className="mt-2 text-[15px] tracking-tight text-black/40 dark:text-white/45">{t("高通模块专业测试工具")}</p>
         </div>
-        <div className="mt-6 text-center">
-          <p className="text-xs text-gray-500">vocat © 2026</p>
-        </div>
+
+        <form onSubmit={submit} className="space-y-4">
+          <div className="vocat-enter vocat-enter-2 overflow-hidden rounded-[22px] bg-white/80 shadow-[0_8px_28px_rgba(0,0,0,0.05)] ring-1 ring-black/[0.04] backdrop-blur-2xl dark:bg-[#1c1c1e]/80 dark:ring-white/10">
+            <label className="flex items-center gap-3 px-4 py-3">
+              <PersonRegular className="h-5 w-5 shrink-0 text-black/30 dark:text-white/35" />
+              <input
+                className="h-11 w-full bg-transparent text-[17px] tracking-tight text-black outline-none placeholder:text-black/30 dark:text-white dark:placeholder:text-white/30"
+                placeholder={t("用户名")}
+                type="text"
+                autoComplete="username"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+              />
+            </label>
+            <div className="mx-4 h-px bg-black/[0.08] dark:bg-white/10" />
+            <label className="flex items-center gap-3 px-4 py-3">
+              <LockClosedRegular className="h-5 w-5 shrink-0 text-black/30 dark:text-white/35" />
+              <input
+                className="h-11 w-full bg-transparent text-[17px] tracking-tight text-black outline-none placeholder:text-black/30 dark:text-white dark:placeholder:text-white/30"
+                placeholder={t("密码")}
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </label>
+          </div>
+
+          <button
+            type="submit"
+            disabled={working}
+            className="vocat-enter vocat-enter-3 flex h-[50px] w-full items-center justify-center rounded-full bg-[#007AFF] text-[17px] font-semibold text-white shadow-[0_8px_22px_rgba(0,122,255,0.32)] transition-transform duration-150 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-70 dark:bg-[#0A84FF]"
+          >
+            {working ? (
+              <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+            ) : (
+              t("登录")
+            )}
+          </button>
+        </form>
+
+        <p className="vocat-enter vocat-enter-4 mt-8 text-center text-[12px] tracking-tight text-black/30 dark:text-white/30">vocat © 2026</p>
       </div>
     </div>
   );

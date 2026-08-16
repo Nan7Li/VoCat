@@ -46,6 +46,7 @@ export function AuthenticatedShell({
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [compact, setCompact] = useState(false);
   const [plugins, setPlugins] = useState<InstalledPlugin[]>([]);
   const [developer, setDeveloper] = useState(false);
   const { logout, user } = useAuth();
@@ -158,18 +159,18 @@ export function AuthenticatedShell({
   function userCard() {
     return (
       <div className="ui-panel-muted flex items-center gap-3 p-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300">
+        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#007AFF]/12 text-[#007AFF] dark:bg-[#0A84FF]/20 dark:text-[#64B5FF]">
           <SettingsRegular className="h-[18px] w-[18px]" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-bold">{user?.username || "Admin"}</div>
-          <div className="truncate text-xs text-gray-400">{user?.role || "Administrator"}</div>
+          <div className="truncate text-[13px] font-semibold tracking-tight">{user?.username || "Admin"}</div>
+          <div className="truncate text-[11px] text-black/35 dark:text-white/40">{user?.role || "Administrator"}</div>
         </div>
         <button
           type="button"
           onClick={onLogout}
           aria-label={t("退出登录")}
-          className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"
+          className="rounded-full p-1.5 text-black/35 transition-colors hover:bg-[#FF3B30]/10 hover:text-[#FF3B30] dark:text-white/40"
         >
           <SignOutRegular className="h-[18px] w-[18px]" />
         </button>
@@ -178,35 +179,35 @@ export function AuthenticatedShell({
   }
 
   return (
-    <div className="flex h-full">
+    <div className="vocat-app-shell">
       {!isMobile && (
         <aside
           className={cx(
-            "ui-glass sidebar-shell relative h-full transition-[width] duration-200",
-            collapsed ? "w-[52px]" : "w-[232px]",
+            "vocat-sidebar sidebar-shell relative h-full transition-[width] duration-300",
+            collapsed ? "w-[68px]" : "w-[248px]",
           )}
         >
-          <div className={cx("flex h-14 items-center px-4", collapsed && "justify-center px-0")}>
+          <div className={cx("relative z-[1] flex h-16 items-center px-4", collapsed && "justify-center px-0")}>
             <BrandLogo className="sidebar-brand-logo" />
             {!collapsed && (
               <div className="ml-3">
                 <div className="sidebar-brand-title">vocat</div>
-                <div className="text-[10px] font-medium leading-tight tracking-wide text-gray-400 dark:text-gray-500">{t("高通模块测试工具")}</div>
+                <div className="text-[11px] font-medium leading-tight tracking-tight text-black/35 dark:text-white/40">{t("高通模块测试工具")}</div>
               </div>
             )}
           </div>
           {menuList(collapsed)}
-          {!collapsed && <div className="absolute bottom-4 w-full px-3">{userCard()}</div>}
+          {!collapsed && <div className="absolute bottom-4 z-[1] w-full px-3">{userCard()}</div>}
         </aside>
       )}
 
       <Drawer open={isMobile && mobileOpen} onClose={() => setMobileOpen(false)} className="mobile-drawer">
-        <div className="sidebar-shell relative h-full bg-white/95 backdrop-blur-md dark:bg-[#141418]/95">
+        <div className="sidebar-shell relative h-full bg-white/80 backdrop-blur-3xl dark:bg-[#1c1c1e]/80">
           <div className="flex h-16 items-center px-4">
             <BrandLogo className="sidebar-brand-logo" />
             <div className="ml-3">
               <div className="sidebar-brand-title">vocat</div>
-              <div className="text-[10px] font-medium leading-tight tracking-wide text-gray-400 dark:text-gray-500">{t("高通模块测试工具")}</div>
+              <div className="text-[11px] font-medium leading-tight tracking-tight text-black/35 dark:text-white/40">{t("高通模块测试工具")}</div>
             </div>
           </div>
           {menuList(false)}
@@ -214,14 +215,14 @@ export function AuthenticatedShell({
         </div>
       </Drawer>
 
-      <div className="flex h-full min-w-0 flex-1 flex-col">
-        <header className="ui-glass sticky top-0 z-10 flex h-14 items-center justify-between border-b border-gray-100 px-4 dark:border-white/5 sm:px-5">
+      <div className="vocat-stage">
+        <header className={cx("vocat-toolbar", compact && "is-compact")}>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={toggle}
               aria-label={collapsed ? t("展开侧栏") : t("收起侧栏")}
-              className="rounded-lg px-2 py-1.5 text-gray-500 transition-colors hover:bg-black/5 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/10 dark:hover:text-gray-200"
+              className="vocat-glass-btn"
             >
               {!isMobile && !collapsed ? (
                 <PanelLeftContractRegular className="h-5 w-5" />
@@ -230,16 +231,21 @@ export function AuthenticatedShell({
               )}
             </button>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <VersionBadge />
             <LanguageSwitch />
             <SwitchDark isDark={isDark} onToggle={onToggleTheme} />
           </div>
         </header>
-        <main className="flex-1 overflow-auto bg-gray-50/50 p-4 dark:bg-transparent sm:p-6">
+        <main
+          className="vocat-main"
+          onScroll={(event) => setCompact(event.currentTarget.scrollTop > 24)}
+        >
           <div className="main-inner mx-auto w-full">
             <ErrorBoundary title={t("页面渲染失败")}>
-              <Outlet />
+              <div key={location.pathname} className="vocat-page">
+                <Outlet />
+              </div>
             </ErrorBoundary>
           </div>
         </main>

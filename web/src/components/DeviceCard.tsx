@@ -35,15 +35,14 @@ export function DeviceCard({ device, onOpen }: { device: DashboardDevice; onOpen
     <button
       type="button"
       onClick={() => onOpen(device.id)}
-      className="ui-card ui-card-hover group relative block w-full overflow-hidden text-left transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0ea5e9] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-gray-950"
+      className="ui-card ui-card-hover group relative block w-full overflow-hidden text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007AFF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#F2F2F7] dark:focus-visible:ring-offset-black"
     >
-      <div className="absolute right-0 top-0 -mr-8 -mt-8 h-32 w-32 rounded-bl-full bg-gradient-to-br from-indigo-500/10 to-indigo-400/10 transition-transform group-hover:scale-150" />
-      <div className="relative z-10 p-6">
+      <div className="relative z-10 p-5">
         <div className="mb-6 flex items-start justify-between">
           <div className="flex items-center gap-3">
             <img src={deviceTypeImage(device.deviceType)} alt="" className="h-10 w-10 flex-shrink-0 object-contain" />
             <div>
-              <h3 className="text-base font-bold text-gray-800 dark:text-gray-100">{device.name || device.id}</h3>
+              <h3 className="text-[17px] font-semibold tracking-tight text-black dark:text-white">{device.name || device.id}</h3>
               <div className="mt-0.5 flex items-center gap-1.5">
                 <StatusDot tone={device.healthy ? "success" : "danger"} size="md" animated={device.healthy} />
                 <span className={cx("text-xs font-medium", device.healthy ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400")}>
@@ -54,7 +53,7 @@ export function DeviceCard({ device, onOpen }: { device: DashboardDevice; onOpen
           </div>
         </div>
         <div className="space-y-4">
-          <div className="flex items-center justify-between rounded-xl border border-gray-100 bg-gray-50/50 p-3 dark:border-white/5 dark:bg-white/5">
+          <div className="flex items-center justify-between rounded-[16px] bg-black/[0.04] p-3 dark:bg-white/[0.06]">
             <div className="flex min-w-0 items-center gap-2">
               <div className="flex items-center gap-1.5 opacity-80">
                 <NetIcon className={cx("h-[18px] w-[18px]", netColor)} />

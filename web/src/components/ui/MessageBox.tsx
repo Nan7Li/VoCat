@@ -46,11 +46,11 @@ export function ConfirmHost() {
   const danger = state.type === "danger" || state.confirmVariant === "danger";
 
   return (
-    <div className="fixed inset-0 z-[4000] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-[fade-slide-in_0.2s_ease]">
+    <div className="fixed inset-0 z-[4000] flex items-center justify-center bg-black/30 p-4 backdrop-blur-xl animate-[fade-slide-in_0.2s_ease]">
       <div
         role="alertdialog"
         aria-modal="true"
-        className="glass-modal w-full max-w-sm rounded-2xl p-6 shadow-2xl animate-[fade-slide-in_0.25s_cubic-bezier(0.4,0,0.2,1)]"
+        className="glass-modal w-full max-w-sm rounded-[28px] p-6 animate-[fade-slide-in_0.25s_cubic-bezier(0.4,0,0.2,1)]"
       >
         <div className="flex items-start gap-3">
           <div

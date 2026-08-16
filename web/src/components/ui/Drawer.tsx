@@ -28,10 +28,10 @@ export function Drawer({
 
   return (
     <div className="fixed inset-0 z-[2900]">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/25 backdrop-blur-xl" onClick={onClose} />
       <div
         className={cx(
-          "absolute inset-y-0 left-0 overflow-hidden shadow-2xl animate-[drawer-in_0.25s_cubic-bezier(0.4,0,0.2,1)]",
+          "absolute inset-y-2 left-2 overflow-hidden rounded-[28px] shadow-[0_20px_60px_rgba(0,0,0,0.18)] animate-[drawer-in_0.25s_cubic-bezier(0.4,0,0.2,1)]",
           widthClass,
           className,
         )}

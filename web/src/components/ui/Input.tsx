@@ -22,10 +22,10 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       <input
         ref={ref}
         className={cx(
-          "w-full rounded-lg border border-[#dcdfe6] bg-white px-3 text-sm text-gray-900 outline-none transition-all",
-          "placeholder:text-gray-400 hover:border-[#c0c4cc] focus:border-[#0ea5e9] focus:ring-2 focus:ring-[#0ea5e9]/25",
-          "dark:border-white/15 dark:bg-black/20 dark:text-gray-100 dark:placeholder:text-gray-500 dark:hover:border-white/25 dark:focus:border-[#0ea5e9]",
-          inputSize === "large" ? "h-10" : "h-8",
+          "w-full rounded-[12px] border border-black/[0.08] bg-black/[0.03] px-3 text-[15px] tracking-tight text-black outline-none transition-all",
+          "placeholder:text-black/30 hover:border-black/15 focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20",
+          "dark:border-white/10 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30 dark:hover:border-white/20 dark:focus:border-[#0A84FF] dark:focus:bg-[#1c1c1e]",
+          inputSize === "large" ? "h-11" : "h-10",
           prefix ? "pl-10" : null,
           suffix ? "pr-10" : null,
         )}
@@ -45,9 +45,9 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
     <textarea
       ref={ref}
       className={cx(
-        "w-full rounded-lg border border-[#dcdfe6] bg-white px-3 py-2 text-sm text-gray-900 outline-none transition-all",
-        "placeholder:text-gray-400 hover:border-[#c0c4cc] focus:border-[#0ea5e9] focus:ring-2 focus:ring-[#0ea5e9]/25",
-        "dark:border-white/15 dark:bg-black/20 dark:text-gray-100 dark:placeholder:text-gray-500 dark:hover:border-white/25 dark:focus:border-[#0ea5e9]",
+        "w-full rounded-[12px] border border-black/[0.08] bg-black/[0.03] px-3 py-2 text-[15px] tracking-tight text-black outline-none transition-all",
+        "placeholder:text-black/30 hover:border-black/15 focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20",
+        "dark:border-white/10 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30 dark:hover:border-white/20 dark:focus:border-[#0A84FF]",
         className,
       )}
       {...rest}

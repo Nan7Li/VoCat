@@ -23,7 +23,7 @@ export function VersionBadge() {
   const label = version ? `v${version}` : "vdev";
   return (
     <span
-      className="flex h-7 items-center justify-center rounded-lg px-2 font-mono text-xs text-gray-400 select-none dark:text-gray-500"
+      className="flex h-[34px] items-center justify-center rounded-full px-3 font-mono text-[11px] tracking-tight text-black/35 select-none dark:text-white/40"
       title={version ? `vocat v${version}` : "vocat dev build"}
     >
       {label}

@@ -34,7 +34,7 @@ export function Tabs({
                 "relative whitespace-nowrap px-4 py-2.5 text-sm font-medium transition-colors outline-none",
                 "disabled:cursor-not-allowed disabled:opacity-50",
                 active
-                  ? "text-[#0ea5e9] dark:text-[#7dd3fc]"
+                  ? "text-[#007AFF] dark:text-[#64B5FF]"
                   : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200",
               )}
             >
