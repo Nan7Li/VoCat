@@ -42,6 +42,7 @@ build/*.py
 # ---- Docs / scratch ----
 *.md
 !README.md
+!ATTRIBUTION.md
 !docs/**/*.md
 *.txt
 build/lists/
