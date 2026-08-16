@@ -24,7 +24,7 @@ export function UpcomingTasksCard({ tasks }: { tasks: DashboardUpcomingTask[] })
     <div className="ui-card p-5">
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <CalendarClockRegular className="h-4 w-4 text-[#007AFF]" />
+          <CalendarClockRegular className="h-4 w-4 text-[var(--color-primary)]" />
           <h3 className="text-[15px] font-semibold tracking-tight text-black dark:text-white">{t("将要执行的定时任务")}</h3>
         </div>
         <button

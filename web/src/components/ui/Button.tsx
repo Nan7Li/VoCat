@@ -22,7 +22,7 @@ const SIZE: Record<ButtonSize, string> = {
 
 const SOLID: Record<string, string> = {
   primary:
-    "border-transparent bg-[#007AFF] text-white hover:bg-[#0066D6] active:bg-[#0055B3] ui-action-btn-primary disabled:hover:bg-[#007AFF] dark:bg-[#0A84FF] dark:hover:bg-[#409CFF]",
+    "border-transparent bg-[var(--color-primary)] text-[var(--color-on-primary)] hover:bg-[var(--color-primary-hover)] active:bg-[var(--color-primary-active)] ui-action-btn-primary",
   danger:
     "border-transparent bg-[#FF3B30] text-white hover:bg-[#E0342B] active:bg-[#C42D25] ui-action-btn disabled:hover:bg-[#FF3B30]",
   success:
@@ -35,7 +35,7 @@ const SOLID: Record<string, string> = {
 // going solid on hover. Primary stays on the light-blue theme.
 const PLAIN: Record<string, string> = {
   primary:
-    "border-[#007AFF]/25 bg-[#007AFF]/10 text-[#007AFF] hover:border-[#007AFF] hover:bg-[#007AFF] hover:text-white active:bg-[#0066D6] ui-action-btn disabled:hover:border-[#007AFF]/25 disabled:hover:bg-[#007AFF]/10 disabled:hover:text-[#007AFF] dark:border-[#0A84FF]/40 dark:bg-[#0A84FF]/15 dark:text-[#64B5FF] dark:hover:border-[#0A84FF] dark:hover:bg-[#0A84FF] dark:hover:text-white",
+    "border-[var(--color-primary)]/30 bg-[var(--color-primary-soft)] text-[var(--color-primary)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-[var(--color-on-primary)] ui-action-btn",
   danger:
     "border-[#f5b3b3] bg-[#fef0f0] text-[#f56c6c] hover:border-[#f56c6c] hover:bg-[#f56c6c] hover:text-white active:bg-[#dd6161] ui-action-btn disabled:hover:border-[#f5b3b3] disabled:hover:bg-[#fef0f0] disabled:hover:text-[#f56c6c] dark:border-[#f56c6c]/40 dark:bg-[#f56c6c]/10 dark:text-[#f78989] dark:hover:border-[#f56c6c] dark:hover:bg-[#f56c6c] dark:hover:text-white",
   success:
@@ -65,7 +65,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   const isDisabled = disabled || loading;
 
   const variantClass = isText
-    ? "border-transparent bg-transparent text-[#007AFF] hover:bg-black/5 dark:text-[#0A84FF] dark:hover:bg-white/10 shadow-none"
+    ? "border-transparent bg-transparent text-[var(--color-primary)] hover:bg-black/5 dark:hover:bg-white/10 shadow-none"
     : isDefault
       ? "border-black/8 bg-white/80 text-black hover:bg-black/[0.04] ui-action-btn dark:border-white/10 dark:bg-white/8 dark:text-white dark:hover:bg-white/12"
       : plain
@@ -79,7 +79,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       disabled={isDisabled}
       className={cx(
         "inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-full border font-semibold tracking-tight outline-none transition-all duration-150",
-        "focus-visible:ring-2 focus-visible:ring-[#007AFF]/40 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-black",
+        "focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-black",
         "active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60",
         SIZE[size],
         isText && "px-2 shadow-none",

@@ -39,10 +39,10 @@ export default function LoginPage() {
       <div className="relative w-full max-w-[400px] px-5">
         <div className="vocat-enter vocat-enter-1 mb-8 text-center">
           <div className="mx-auto mb-5 flex h-[72px] w-[72px] items-center justify-center rounded-[22px] bg-white/70 shadow-[0_10px_30px_rgba(0,0,0,0.08)] ring-1 ring-black/5 backdrop-blur-xl dark:bg-white/10 dark:ring-white/10">
-            <BrandLogo className="h-12 w-12" />
+            <BrandLogo className="h-12 w-12 text-[var(--color-primary)]" />
           </div>
           <h1 className="font-display text-[34px] font-bold leading-none tracking-[-0.04em] text-black dark:text-white">
-            vocat
+            Halo
           </h1>
           <p className="mt-2 text-[15px] tracking-tight text-black/40 dark:text-white/45">{t("高通模块专业测试工具")}</p>
         </div>
@@ -77,7 +77,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={working}
-            className="vocat-enter vocat-enter-3 flex h-[50px] w-full items-center justify-center rounded-full bg-[#007AFF] text-[17px] font-semibold text-white shadow-[0_8px_22px_rgba(0,122,255,0.32)] transition-transform duration-150 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-70 dark:bg-[#0A84FF]"
+            className="vocat-enter vocat-enter-3 flex h-[50px] w-full items-center justify-center rounded-full bg-[var(--color-primary)] text-[17px] font-semibold text-[var(--color-on-primary)] shadow-[0_8px_22px_rgb(var(--color-primary-rgb)/0.32)] transition-transform duration-150 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-70"
           >
             {working ? (
               <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
@@ -87,7 +87,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="vocat-enter vocat-enter-4 mt-8 text-center text-[12px] tracking-tight text-black/30 dark:text-white/30">vocat © 2026</p>
+        <p className="vocat-enter vocat-enter-4 mt-8 text-center text-[12px] tracking-tight text-black/30 dark:text-white/30">Halo © 2026</p>
       </div>
     </div>
   );

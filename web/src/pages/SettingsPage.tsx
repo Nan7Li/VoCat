@@ -26,6 +26,7 @@ import { PluginsCard } from "../components/settings/PluginsCard";
 import { HTTPSCard } from "../components/settings/HTTPSCard";
 import { DeviceQuotaCard } from "../components/settings/DeviceQuotaCard";
 import { SMSRateLimitCard } from "../components/settings/SMSRateLimitCard";
+import { AppearanceCard } from "../components/settings/AppearanceCard";
 
 const EMPTY_PASSWORD: PasswordForm = { oldPassword: "", newPassword: "", confirmPassword: "" };
 
@@ -406,6 +407,7 @@ export default function SettingsPage() {
     <div className="mx-auto max-w-5xl">
       <PageHeader title={t("系统设置")} subtitle={t("管理网关参数与运行信息")} />
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+        <AppearanceCard />
         <SecurityCard
           value={password}
           onChange={(patch) => setPassword((prev) => ({ ...prev, ...patch }))}

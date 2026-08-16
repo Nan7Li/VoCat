@@ -35,7 +35,7 @@ export function DeviceCard({ device, onOpen }: { device: DashboardDevice; onOpen
     <button
       type="button"
       onClick={() => onOpen(device.id)}
-      className="ui-card ui-card-hover group relative block w-full overflow-hidden text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[#007AFF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#F2F2F7] dark:focus-visible:ring-offset-black"
+      className="ui-card ui-card-hover group relative block w-full overflow-hidden text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#F2F2F7] dark:focus-visible:ring-offset-black"
     >
       <div className="relative z-10 p-5">
         <div className="mb-6 flex items-start justify-between">

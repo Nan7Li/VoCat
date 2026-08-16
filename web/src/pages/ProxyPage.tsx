@@ -77,11 +77,11 @@ export default function ProxyPage() {
         api<Country[]>("/upstream-proxy-countries"),
         api<CountryRule[]>("/upstream-proxy-country-rules"),
       ]);
-      setProxies(proxyList || []);
-      setBindings(bindingList || []);
+      setProxies(Array.isArray(proxyList) ? proxyList : []);
+      setBindings(Array.isArray(bindingList) ? bindingList : []);
       setDevices(deviceList?.devices || []);
-      setCountries(countryList || []);
-      setCountryRules(ruleList || []);
+      setCountries(Array.isArray(countryList) ? countryList : []);
+      setCountryRules(Array.isArray(ruleList) ? ruleList : []);
     } catch (error) {
       setUpstreamError({ message: apiMessage(error), status: error instanceof ApiError ? error.status : undefined });
     } finally {

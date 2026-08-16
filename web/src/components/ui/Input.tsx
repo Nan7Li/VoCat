@@ -23,8 +23,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
         ref={ref}
         className={cx(
           "w-full rounded-[12px] border border-black/[0.08] bg-black/[0.03] px-3 text-[15px] tracking-tight text-black outline-none transition-all",
-          "placeholder:text-black/30 hover:border-black/15 focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20",
-          "dark:border-white/10 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30 dark:hover:border-white/20 dark:focus:border-[#0A84FF] dark:focus:bg-[#1c1c1e]",
+          "placeholder:text-black/30 hover:border-black/15 focus:border-[var(--color-primary)] focus:bg-white focus:ring-2 focus:ring-[var(--color-primary)]/20",
+          "dark:border-white/10 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30 dark:hover:border-white/20 dark:focus:border-[var(--color-primary)] dark:focus:bg-[#1c1c1e]",
           inputSize === "large" ? "h-11" : "h-10",
           prefix ? "pl-10" : null,
           suffix ? "pr-10" : null,
@@ -46,8 +46,8 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
       ref={ref}
       className={cx(
         "w-full rounded-[12px] border border-black/[0.08] bg-black/[0.03] px-3 py-2 text-[15px] tracking-tight text-black outline-none transition-all",
-        "placeholder:text-black/30 hover:border-black/15 focus:border-[#007AFF] focus:bg-white focus:ring-2 focus:ring-[#007AFF]/20",
-        "dark:border-white/10 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30 dark:hover:border-white/20 dark:focus:border-[#0A84FF]",
+        "placeholder:text-black/30 hover:border-black/15 focus:border-[var(--color-primary)] focus:bg-white focus:ring-2 focus:ring-[var(--color-primary)]/20",
+        "dark:border-white/10 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30 dark:hover:border-white/20 dark:focus:border-[var(--color-primary)]",
         className,
       )}
       {...rest}

@@ -21,7 +21,7 @@ export function Switch({ checked, onChange, disabled, loading, size = "default",
       onClick={() => onChange?.(!checked)}
       className={cx(
         "relative inline-flex shrink-0 items-center rounded-full outline-none transition-colors duration-200",
-        "focus-visible:ring-2 focus-visible:ring-[#007AFF]/40 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-black",
+        "focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-black",
         "disabled:cursor-not-allowed disabled:opacity-50",
         small ? "h-[22px] w-[38px]" : "h-[31px] w-[51px]",
         checked ? "bg-[#34C759] dark:bg-[#30D158]" : "bg-[#E9E9EA] dark:bg-[#39393D]",

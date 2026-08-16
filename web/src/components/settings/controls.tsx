@@ -201,8 +201,8 @@ export function SegmentedTabs({
             className={cx(
               "h-[38px] shrink-0 whitespace-nowrap rounded-lg px-5 text-sm font-medium outline-none transition-all duration-300",
               active
-                ? "bg-white font-semibold text-[#0ea5e9] shadow-[0_1px_4px_rgba(0,0,0,0.05),0_2px_8px_rgba(0,0,0,0.03)] dark:bg-white/10 dark:text-[#7dd3fc]"
-                : "text-gray-500 hover:text-[#0ea5e9] dark:text-gray-400 dark:hover:text-[#7dd3fc]",
+                ? "bg-white font-semibold text-[var(--color-primary)] shadow-[0_1px_4px_rgba(0,0,0,0.05),0_2px_8px_rgba(0,0,0,0.03)] dark:bg-white/10"
+                : "text-gray-500 hover:text-[var(--color-primary)] dark:text-gray-400",
             )}
           >
             {tab.label}

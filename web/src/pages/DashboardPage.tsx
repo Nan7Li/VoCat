@@ -35,7 +35,7 @@ export default function DashboardPage() {
     setDevicesLoading(true);
     try {
       const list = await api<DashboardDevice[]>("/dashboard/devices");
-      setDevices(list || []);
+      setDevices(Array.isArray(list) ? list : []);
       setDevicesError(null);
       setDevicesOkAt(Date.now());
     } catch (e: any) {

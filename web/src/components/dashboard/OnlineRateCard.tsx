@@ -29,7 +29,7 @@ export function OnlineRateCard({ online, total }: { online: number; total: numbe
   return (
     <div className="ui-card p-5">
       <div className="mb-1 flex items-center gap-2">
-        <PlugConnectedRegular className="h-4 w-4 text-[#007AFF]" />
+        <PlugConnectedRegular className="h-4 w-4 text-[var(--color-primary)]" />
         <h3 className="text-[15px] font-semibold tracking-tight text-black dark:text-white">{t("模块在线率")}</h3>
       </div>
       <div className="flex items-center justify-center py-1">

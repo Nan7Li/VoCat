@@ -269,7 +269,7 @@ export default function SmsPage() {
     try {
       const raw = await listContacts(device);
       if (id !== contactReqId.current) return null;
-      const threads = sortThreads(raw.map(deriveThread));
+      const threads = sortThreads((Array.isArray(raw) ? raw : []).map(deriveThread));
       setContactsState(threads);
       setContactsOkAt(Date.now());
       return threads;
@@ -673,7 +673,7 @@ export default function SmsPage() {
 <div className="relative flex-1 overflow-hidden ui-card">
   {contactsLoading && contacts.length === 0 ? (
     <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/50 backdrop-blur-sm dark:bg-black/20">
-      <Spinner className="h-7 w-7 text-[#0ea5e9]" />
+      <Spinner className="h-7 w-7 text-[var(--color-primary)]" />
     </div>
   ) : null}
   <div className="sms-main-layout">

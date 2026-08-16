@@ -24,7 +24,7 @@ export function VersionBadge() {
   return (
     <span
       className="flex h-[34px] items-center justify-center rounded-full px-3 font-mono text-[11px] tracking-tight text-black/35 select-none dark:text-white/40"
-      title={version ? `vocat v${version}` : "vocat dev build"}
+      title={version ? `Halo v${version}` : "Halo preview"}
     >
       {label}
     </span>

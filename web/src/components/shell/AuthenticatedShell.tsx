@@ -159,7 +159,7 @@ export function AuthenticatedShell({
   function userCard() {
     return (
       <div className="ui-panel-muted flex items-center gap-3 p-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#007AFF]/12 text-[#007AFF] dark:bg-[#0A84FF]/20 dark:text-[#64B5FF]">
+        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-primary-soft)] text-[var(--color-primary)]">
           <SettingsRegular className="h-[18px] w-[18px]" />
         </div>
         <div className="min-w-0 flex-1">
@@ -191,7 +191,7 @@ export function AuthenticatedShell({
             <BrandLogo className="sidebar-brand-logo" />
             {!collapsed && (
               <div className="ml-3">
-                <div className="sidebar-brand-title">vocat</div>
+                <div className="sidebar-brand-title">Halo</div>
                 <div className="text-[11px] font-medium leading-tight tracking-tight text-black/35 dark:text-white/40">{t("高通模块测试工具")}</div>
               </div>
             )}
@@ -206,7 +206,7 @@ export function AuthenticatedShell({
           <div className="flex h-16 items-center px-4">
             <BrandLogo className="sidebar-brand-logo" />
             <div className="ml-3">
-              <div className="sidebar-brand-title">vocat</div>
+              <div className="sidebar-brand-title">Halo</div>
               <div className="text-[11px] font-medium leading-tight tracking-tight text-black/35 dark:text-white/40">{t("高通模块测试工具")}</div>
             </div>
           </div>

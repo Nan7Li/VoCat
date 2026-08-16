@@ -121,6 +121,7 @@ async function requestAPI<T>(path: string, options: RequestOptions, retryCSRF: b
     method,
     headers,
     credentials: "include",
+    signal: options.signal ?? AbortSignal.timeout(4000),
     body: options.body === undefined
       ? undefined
       : formBody

@@ -8,6 +8,7 @@ import { Disclaimer } from "./components/Disclaimer";
 import { MessageHost } from "./components/ui/message";
 import { ConfirmHost } from "./components/ui/MessageBox";
 import { LoadingScreen } from "./components/ui/LoadingScreen";
+import { applyAccent, readStoredAccent } from "./lib/accent";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import DevicesPage from "./pages/DevicesPage";
@@ -33,6 +34,7 @@ function useTheme() {
   });
   useEffect(() => {
     document.documentElement.classList.toggle("dark", isDark);
+    applyAccent(readStoredAccent(), false);
     try {
       localStorage.setItem(THEME_KEY, isDark ? "dark" : "light");
     } catch {

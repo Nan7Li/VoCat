@@ -1,8 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { previewApiPlugin } from "./vite-preview-api";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), previewApiPlugin()],
   build: {
     outDir: "dist",
     emptyOutDir: true,

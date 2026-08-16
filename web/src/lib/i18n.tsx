@@ -43,7 +43,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
-    document.title = lang === "zh" ? "vocat · 高通模块专业测试工具" : "vocat · Qualcomm Module Professional Test Tool";
+    document.title = lang === "zh" ? "Halo · 高通模块专业测试工具" : "Halo · Qualcomm Module Professional Test Tool";
   }, [lang]);
 
   // 语言偏好存数据库（GET 无需鉴权）：任意设备/浏览器打开都是同一种语言。

@@ -32,8 +32,8 @@ function CardIcon({ children, small }: { children: ReactNode; small?: boolean })
     <div
       className={
         small
-          ? "flex h-9 w-9 items-center justify-center rounded-full bg-[#007AFF]/10 text-[#007AFF] dark:bg-[#0A84FF]/15 dark:text-[#64B5FF]"
-          : "flex h-11 w-11 items-center justify-center rounded-full bg-[#007AFF]/10 text-[#007AFF] dark:bg-[#0A84FF]/15 dark:text-[#64B5FF]"
+          ? "flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
+          : "flex h-11 w-11 items-center justify-center rounded-full bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
       }
     >
       {children}
