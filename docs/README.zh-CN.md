@@ -24,7 +24,7 @@
 
 [English](../README.md) | [العربية](README.ar.md) | **简体中文** | [繁體中文](README.zh-TW.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [Español](README.es.md) | [日本語](README.ja.md)
 
-> **Halo 1.0.1** 是基于 [VoCat](https://github.com/MengMengCode/VoCat) 的个人界面与发行版，原作者为 Vocat Project Authors。模组、IMS、WiFi Calling、eSIM 和代理等核心能力都是原项目的工作。本分支只改了界面、Halo 品牌、可自定义主色，以及少量本地修复。仍适用 [Vocat Research & Evaluation License](../LICENSE)。详见 [ATTRIBUTION.md](../ATTRIBUTION.md)。
+> **Halo 1.1.0** 是基于 [VoCat](https://github.com/MengMengCode/VoCat) v0.2.7 的个人界面与发行版，原作者为 Vocat Project Authors。模组、IMS、WiFi Calling、eSIM 和代理等核心能力都是原项目的工作。本分支只改了界面、Halo 品牌、可自定义主色，以及少量本地修复。仍适用 [Vocat Research & Evaluation License](../LICENSE)。详见 [ATTRIBUTION.md](../ATTRIBUTION.md)。
 
 Vocat 是一款面向 Quectel EC20/EC25 系列蜂窝模组的开源 Web 控制面板与工程工具套件。它在一个自包含的服务中整合了模组发现、实时射频状态、AT 与 USSD 终端、短信、WiFi Calling(WiFi 通话)、eSIM 管理、网络选择、代理路由、通知、审计日志以及发布自动化。
 
@@ -47,19 +47,21 @@ Vocat 是一款面向 Quectel EC20/EC25 系列蜂窝模组的开源 Web 控制�
 | eSIM 与 eUICC | eUICC 发现、EID 与生产信息、证书元数据、多 eUICC 清单、已安装配置文件列表、启用/禁用/切换操作,以及在卡片支持时进行下载、重命名和删除。 |
 | 卡策略 | 基于 ICCID 的 WiFi Calling 与飞行模式行为,策略即时应用。 |
 | 代理路由 | 上游 SOCKS 路由、设备绑定、国家规则、TCP 可达性检查以及面向 WiFi Calling 数据路径的 UDP Associate 检查。 |
-| 通知 | 通过 Telegram、Bark、邮件、Pushplus 以及签名 Webhook 转发新入站短信,每条短信单独推送。 |
+| 通知 | 通过 Telegram、Bark、邮件、Pushplus、签名 Webhook、企业微信以及飞书 / Lark 群机器人转发新入站短信,每条短信单独推送。 |
 | Telegram 机器人 | 设备状态、已安装配置文件列表与切换、WiFi Calling 控制以及短信发送。敏感操作需要管理员确认。 |
 | 运维 | 鉴权、CSRF 防护、访问策略、审计事件、实时日志、日志留存、健康检查、响应式布局、深色模式以及中英文应用界面。 |
 | 分发 | 静态 Linux 二进制、systemd 安装脚本、带 SHA-256 校验的自更新、Docker 镜像、GHCR 发布以及 GitHub Actions 发布构建。 |
 
 ## 支持的硬件
 
-Vocat 面向基于高通芯片、并暴露兼容 AT、QMI、串口与 USB 网络接口的 Quectel 模组,包括:
+Vocat 面向暴露 QMI 通道的高通模组,包括:
 
 - Quectel EC20
 - Quectel EC25
 - Quectel EG25 系列
 - 兼容的 EG600 及相关模组
+- 经 `qmi_wwan` 发现的其他高通模组（SIMCom、Sierra、Telit 以及 410 类棒）
+- 大疆 / 百旺 4G 模组，Linux 上可用 `vocat doctor --repair-dji-qmi`
 
 可用功能取决于模组固件、USB 复合设备配置、SIM/eSIM 能力、主机驱动、无线网络以及运营商配置。
 
@@ -213,8 +215,7 @@ vocat carrier import-ipcc --install Carrier_iPhone.ipcc
 ```
 
 导入器不会复制关闭证书验证、绕过运营商授权、APN 凭据、紧急呼叫或
-设备型号专属媒体参数。完整字段和冲突处理说明见
-[CARRIER_IPCC_IMPORT.md](CARRIER_IPCC_IMPORT.md)。
+设备型号专属媒体参数。
 
 ## Telegram 机器人
 

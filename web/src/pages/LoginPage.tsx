@@ -88,7 +88,7 @@ export default function LoginPage() {
         </form>
 
         <p className="vocat-enter vocat-enter-4 mt-8 text-center text-[12px] leading-relaxed tracking-tight text-black/30 dark:text-white/30">
-          Halo 1.0.1
+          Halo 1.1.0
           <br />
           {t("基于 VoCat，原作者 Vocat Project Authors")}
         </p>

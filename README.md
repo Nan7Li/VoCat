@@ -24,7 +24,7 @@
 
 **English** | [العربية](docs/README.ar.md) | [简体中文](docs/README.zh-CN.md) | [繁體中文](docs/README.zh-TW.md) | [Français](docs/README.fr.md) | [Русский](docs/README.ru.md) | [Español](docs/README.es.md) | [日本語](docs/README.ja.md)
 
-> **Halo 1.0.1** is a personal interface and release based on [VoCat](https://github.com/MengMengCode/VoCat) by the Vocat Project Authors. The modem, IMS, WiFi Calling, eSIM, and proxy stack is their work. This branch only adds a different UI, Halo branding, a customizable accent color, and a few local fixes. The [Vocat Research & Evaluation License](LICENSE) still applies. See [ATTRIBUTION.md](ATTRIBUTION.md).
+> **Halo 1.1.0** is a personal interface and release based on [VoCat](https://github.com/MengMengCode/VoCat) v0.2.7 by the Vocat Project Authors. The modem, IMS, WiFi Calling, eSIM, and proxy stack is their work. This branch only adds a different UI, Halo branding, a customizable accent color, and a few local fixes. The [Vocat Research & Evaluation License](LICENSE) still applies. See [ATTRIBUTION.md](ATTRIBUTION.md).
 
 Vocat is an open-source web control panel and engineering toolkit for Quectel EC20/EC25-class cellular modems. It combines modem discovery, live radio status, AT and USSD terminals, SMS, WiFi Calling, eSIM management, network selection, proxy routing, notifications, audit logs, and release automation in one self-contained service.
 
@@ -47,19 +47,21 @@ The backend is written in Go, the interface is built with React and TypeScript, 
 | eSIM and eUICC | eUICC discovery, EID and production information, certificate metadata, multi-eUICC inventory, installed profile listing, enable/disable/switch operations, download, rename, and delete operations when supported by the card. |
 | Card policy | ICCID-based WiFi Calling and flight-mode behavior with immediate policy application. |
 | Proxy routing | Upstream SOCKS routing, device bindings, country rules, TCP reachability checks, and UDP Associate checks for WiFi Calling data paths. |
-| Notifications | New inbound SMS forwarding through Telegram, Bark, email, Pushplus, and signed webhooks. Each SMS is delivered as an individual notification. |
+| Notifications | New inbound SMS forwarding through Telegram, Bark, email, Pushplus, signed webhooks, WeCom, and Feishu / Lark group bots. Each SMS is delivered as an individual notification. |
 | Telegram bot | Device status, installed-profile listing and switching, WiFi Calling controls, and SMS sending. Sensitive actions require administrator confirmation. |
 | Operations | Authentication, CSRF protection, access policies, audit events, live logs, log retention, health checks, responsive layout, dark mode, and English/Chinese application UI. |
 | Distribution | Static Linux binaries, systemd installation script, self-update with SHA-256 verification, Docker image, GHCR publishing, and GitHub Actions release builds. |
 
 ## Supported hardware
 
-Vocat targets Qualcomm-based Quectel modules that expose compatible AT, QMI, serial, and USB networking interfaces, including:
+Vocat targets Qualcomm-based modules that expose a QMI channel, including:
 
 - Quectel EC20
 - Quectel EC25
 - Quectel EG25 family
 - Compatible EG600 and related modules
+- Other Qualcomm modules discovered via `qmi_wwan` (SIMCom, Sierra, Telit, and 410-class dongles)
+- DJI / Baiwang 4G modules, with `vocat doctor --repair-dji-qmi` on Linux
 
 Available features depend on the module firmware, USB composition, SIM/eSIM capabilities, host drivers, radio network, and carrier configuration.
 
@@ -215,8 +217,19 @@ Vocat reads an optional JSON configuration file from `VOCAT_CONFIG`, then applie
 | `GITHUB_TOKEN` | empty | Optional GitHub token for private repositories or higher API limits. |
 
 User-supplied Apple carrier bundles can be converted into reviewable,
-allow-listed carrier profiles with `vocat carrier import-ipcc`; see
-[docs/CARRIER_IPCC_IMPORT.md](docs/CARRIER_IPCC_IMPORT.md).
+allow-listed carrier profiles. Preview is the default:
+
+```bash
+vocat carrier import-ipcc Carrier_iPhone.ipcc
+```
+
+After reviewing the match scope and warnings, install with `--install` and restart:
+
+```bash
+vocat carrier import-ipcc --install Carrier_iPhone.ipcc
+```
+
+The importer does not copy disabled certificate checks, carrier-auth bypasses, APN credentials, emergency-call data, or device-specific media parameters.
 
 Administrator credentials are stored only in SQLite. Initialize an empty
 database once with `vocat bootstrap-admin`; environment variables and JSON
