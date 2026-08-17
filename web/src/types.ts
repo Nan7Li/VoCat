@@ -450,6 +450,57 @@ export interface SystemInfo {
   developer?: boolean;
 }
 
+export interface UpstreamVocatStatus {
+  enabled: boolean;
+  repository: string;
+  syncedVersion: string;
+  latestVersion?: string;
+  available?: boolean;
+  releaseNotes?: string;
+  htmlUrl?: string;
+  lastCheckAt?: string;
+  lastError?: string;
+}
+
+export interface AutoUpdateSettings {
+  enabled: boolean;
+  apply: boolean;
+  intervalHours: number;
+  lastCheckAt?: string;
+  lastAvailable?: boolean;
+  lastVersion?: string;
+  lastError?: string;
+  repository?: string;
+  isDocker?: boolean;
+}
+
+export interface WireGuardTunnel {
+  id: string;
+  name: string;
+  interface: string;
+  config: string;
+  autostart: boolean;
+  available: boolean;
+  running: boolean;
+  publicKey?: string;
+  listenPort?: number;
+  peers?: number;
+  transferRx?: number;
+  transferTx?: number;
+  endpoint?: string;
+  latestHandshake?: string;
+  error?: string;
+  external?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WireGuardSnapshot {
+  available: boolean;
+  hint?: string;
+  tunnels: WireGuardTunnel[];
+}
+
 export interface HTTPSSettings {
   enabled: boolean;
   httpUrl: string;

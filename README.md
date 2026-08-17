@@ -122,11 +122,11 @@ Download the matching binary and `SHA256SUMS` from GitHub Releases:
 
 | Platform | Release file |
 | --- | --- |
-| Linux x86-64 | `vocat-linux-amd64` |
-| Linux x86 32-bit | `vocat-linux-386` |
-| Linux ARM64 | `vocat-linux-arm64` |
-| Linux AArch64 | `vocat-linux-aarch64` |
-| Linux ARMv7 | `vocat-linux-armv7` |
+| Linux x86-64 | `halo-linux-amd64` (fallback `vocat-linux-amd64`) |
+| Linux x86 32-bit | `halo-linux-386` (fallback `vocat-linux-386`) |
+| Linux ARM64 | `halo-linux-arm64` (fallback `vocat-linux-arm64`) |
+| Linux AArch64 | `halo-linux-aarch64` (fallback `vocat-linux-aarch64`) |
+| Linux ARMv7 | `halo-linux-armv7` (fallback `vocat-linux-armv7`) |
 
 Verify and install it:
 
@@ -213,7 +213,7 @@ Vocat reads an optional JSON configuration file from `VOCAT_CONFIG`, then applie
 | `VOCAT_SECURE_COOKIES` | `false` | Marks session cookies as secure when HTTPS is used. |
 | `VOCAT_SHUTDOWN_TIMEOUT` | `10s` | Graceful shutdown timeout. |
 | `VOCAT_MAX_REQUEST_BODY_BYTES` | `1048576` | Maximum API request body size. |
-| `VOCAT_REPO` | `MengMengCode/VoCat` | Trusted GitHub repository used by the self-updater, in `owner/name` form. |
+| `VOCAT_REPO` | `Nan7Li/VoCat` | Trusted GitHub repository used by the self-updater, in `owner/name` form. |
 | `GITHUB_TOKEN` | empty | Optional GitHub token for private repositories or higher API limits. |
 
 User-supplied Apple carrier bundles can be converted into reviewable,
@@ -253,16 +253,11 @@ Profile switching and SMS submission use one-time confirmation buttons. The bot 
 
 ## Updating
 
-Check for a newer GitHub Release:
+Halo checks `Nan7Li/VoCat` by default and prefers `halo-linux-*` release assets, falling back to `vocat-linux-*`. In **Settings**, enable automatic checks (on by default) and optionally automatic install-and-restart. Manual CLI:
 
 ```bash
-vocat update --check --repo MengMengCode/VoCat
-```
-
-Install the latest release:
-
-```bash
-sudo vocat update --repo MengMengCode/VoCat
+vocat update --check
+sudo vocat update
 ```
 
 The updater downloads the binary matching the current Linux architecture, verifies it with the published `SHA256SUMS`, replaces the executable atomically, and restarts the `vocat` systemd service when available.
@@ -274,6 +269,10 @@ docker pull ghcr.io/mengmengcode/vocat:latest
 ```
 
 Recreate the container after pulling the new image.
+
+## WireGuard tunnels
+
+The **WG Tunnels** page stores standard `wg-quick` configs and can bring them up or down on the Halo host. Autostart tunnels are applied after the server starts. This needs Linux `wireguard-tools` (`wg` and `wg-quick`); it is not a userspace VPN inside the browser.
 
 ## Development
 

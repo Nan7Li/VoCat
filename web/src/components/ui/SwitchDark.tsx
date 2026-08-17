@@ -1,5 +1,6 @@
 import { WeatherMoonRegular, WeatherSunnyRegular } from "@fluentui/react-icons";
 import { useI18n } from "../../lib/i18n";
+import { withViewTransition } from "../../lib/motion";
 
 // SwitchDark: circular theme toggle button (moon in light, sun in dark).
 export function SwitchDark({ isDark, onToggle }: { isDark: boolean; onToggle: () => void }) {
@@ -7,7 +8,7 @@ export function SwitchDark({ isDark, onToggle }: { isDark: boolean; onToggle: ()
   return (
     <button
       type="button"
-      onClick={onToggle}
+      onClick={() => withViewTransition(onToggle)}
       aria-label={isDark ? t("切换浅色模式") : t("切换深色模式")}
       className="vocat-glass-btn"
     >

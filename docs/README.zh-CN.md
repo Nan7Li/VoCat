@@ -191,7 +191,7 @@ Vocat 先从 `VOCAT_CONFIG` 读取可选的 JSON 配置文件,再应用 `VOCAT_*
 | `VOCAT_SECURE_COOKIES` | `false` | 在使用 HTTPS 时将会话 Cookie 标记为安全。 |
 | `VOCAT_SHUTDOWN_TIMEOUT` | `10s` | 优雅关闭超时时间。 |
 | `VOCAT_MAX_REQUEST_BODY_BYTES` | `1048576` | API 请求体最大字节数。 |
-| `VOCAT_REPO` | `MengMengCode/VoCat` | 自更新器使用的受信任 GitHub 仓库，格式为 `owner/name`。 |
+| `VOCAT_REPO` | `Nan7Li/VoCat` | 自更新器使用的受信任 GitHub 仓库，格式为 `owner/name`。 |
 | `GITHUB_TOKEN` | 空 | 可选的 GitHub token,用于私有仓库或更高的 API 限额。 |
 
 管理员账号和密码只保存在 SQLite 数据库中。空数据库需要执行一次
@@ -233,16 +233,11 @@ vocat carrier import-ipcc --install Carrier_iPhone.ipcc
 
 ## 更新
 
-检查是否有更新的 GitHub Release:
+Halo 默认检查 `Nan7Li/VoCat`，优先下载 `halo-linux-*`，没有时再回退到 `vocat-linux-*`。设置页可以打开自动检查（默认开启），也可以打开“发现新版本后自动安装并重启”。命令行：
 
 ```bash
-vocat update --check --repo MengMengCode/VoCat
-```
-
-安装最新发布版:
-
-```bash
-sudo vocat update --repo MengMengCode/VoCat
+vocat update --check
+sudo vocat update
 ```
 
 更新器会下载与当前 Linux 架构匹配的二进制,使用已发布的 `SHA256SUMS` 进行校验,原子性地替换可执行文件,并在可用时重启 `vocat` systemd 服务。
@@ -254,6 +249,10 @@ docker pull ghcr.io/mengmengcode/vocat:latest
 ```
 
 拉取新镜像后重建容器。
+
+## WG 隧道
+
+侧栏 **WG 隧道** 可以保存标准 `wg-quick` 配置，并在 Halo 主机上连接 / 断开。勾选开机启动后，服务起来会自动 `wg-quick up`。需要 Linux 主机安装 `wireguard-tools`（`wg` 和 `wg-quick`），不是浏览器里的用户态 VPN。
 
 ## 开发
 

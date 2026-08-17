@@ -31,10 +31,10 @@ function UsageBar({ label, percent, detail }: { label: string; percent: number; 
           <span className={cx("text-xs font-bold tabular-nums", textColor(clamped))}>{percentText(clamped)}</span>
         </span>
       </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-white/10">
+      <div className="h-2 overflow-hidden rounded-full bg-[rgba(180,140,100,0.14)] dark:bg-white/10">
         <div
-          className={cx("h-full rounded-full transition-all duration-500", barColor(clamped))}
-          style={{ width: `${clamped}%` }}
+          className={cx("h-full w-full origin-left rounded-full transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)]", barColor(clamped))}
+          style={{ transform: `scaleX(${clamped / 100})` }}
         />
       </div>
     </div>

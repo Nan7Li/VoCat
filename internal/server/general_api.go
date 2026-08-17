@@ -33,6 +33,9 @@ func (s *Server) routeGeneralAPI(w http.ResponseWriter, r *http.Request) bool {
 	if s.routeExportProxyAPI(w, r, cleanPath) {
 		return true
 	}
+	if s.routeWireGuardAPI(w, r, cleanPath) {
+		return true
+	}
 	if s.routeSMSAPI(w, r, cleanPath) {
 		return true
 	}
@@ -63,6 +66,10 @@ func (s *Server) routeGeneralAPI(w http.ResponseWriter, r *http.Request) bool {
 		s.handleHTTPSCertificate(w, r)
 	case "settings/developer":
 		s.handleDeveloperSettings(w, r)
+	case "settings/auto-update":
+		s.handleAutoUpdateSettings(w, r)
+	case "settings/upstream-vocat":
+		s.handleUpstreamVocat(w, r)
 	default:
 		return false
 	}

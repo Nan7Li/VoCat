@@ -381,6 +381,20 @@ func migrationStatements(version int) []string {
 			`ALTER TABLE devices ADD COLUMN vowifi_allow_sha1 INTEGER NOT NULL DEFAULT 0 CHECK (vowifi_allow_sha1 IN (0, 1))`,
 			`ALTER TABLE devices ADD COLUMN vowifi_use_modp1024 INTEGER NOT NULL DEFAULT 0 CHECK (vowifi_use_modp1024 IN (0, 1))`,
 		}
+	case 20:
+		return []string{
+			`CREATE TABLE IF NOT EXISTS wireguard_tunnels (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				interface TEXT NOT NULL UNIQUE,
+				config_text TEXT NOT NULL,
+				autostart INTEGER NOT NULL DEFAULT 0 CHECK (autostart IN (0, 1)),
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS wireguard_tunnels_name_idx
+				ON wireguard_tunnels(name, id)`,
+		}
 	default:
 		return nil
 	}

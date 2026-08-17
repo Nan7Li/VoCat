@@ -36,11 +36,12 @@ const (
 var telegramTokenInURLPattern = regexp.MustCompile(`bot[0-9]{5,20}:[A-Za-z0-9_-]{20,128}`)
 
 type telegramRuntimeConfig struct {
-	Token   string
-	ChatID  string
-	AdminID int64
-	BaseURL string
-	Proxy   string
+	Token        string
+	ChatID       string
+	AdminID      int64
+	BaseURL      string
+	Proxy        string
+	ViaInterface string
 }
 
 type telegramBot struct {
@@ -2309,8 +2310,9 @@ func (bot *telegramBot) loadConfig(ctx context.Context) (telegramRuntimeConfig, 
 	config := telegramRuntimeConfig{
 		Token:   configString(raw, "bot_token"),
 		ChatID:  configString(raw, "chat_id"),
-		BaseURL: configString(raw, "base_url"),
-		Proxy:   configString(raw, "proxy"),
+		BaseURL:      configString(raw, "base_url"),
+		Proxy:        configString(raw, "proxy"),
+		ViaInterface: configString(raw, "via_interface"),
 	}
 	if config.BaseURL == "" {
 		config.BaseURL = defaultTelegramBaseURL
@@ -2341,7 +2343,7 @@ func (bot *telegramBot) call(ctx context.Context, config telegramRuntimeConfig, 
 	if err != nil {
 		return err
 	}
-	client, err := restrictedHTTPClient(ctx, 10*time.Second, config.Proxy)
+	client, err := telegramHTTPClient(ctx, 10*time.Second, config.Proxy, config.ViaInterface)
 	if err != nil {
 		return err
 	}

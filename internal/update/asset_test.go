@@ -17,10 +17,10 @@ func TestAssetNamesFor(t *testing.T) {
 		goarch string
 		want   []string
 	}{
-		{"linux", "amd64", []string{"vocat-linux-amd64"}},
-		{"linux", "386", []string{"vocat-linux-386"}},
-		{"linux", "arm64", []string{"vocat-linux-arm64", "vocat-linux-aarch64"}},
-		{"linux", "arm", []string{"vocat-linux-armv7", "vocat-linux-arm"}},
+		{"linux", "amd64", []string{"halo-linux-amd64", "vocat-linux-amd64"}},
+		{"linux", "386", []string{"halo-linux-386", "vocat-linux-386"}},
+		{"linux", "arm64", []string{"halo-linux-arm64", "halo-linux-aarch64", "vocat-linux-arm64", "vocat-linux-aarch64"}},
+		{"linux", "arm", []string{"halo-linux-armv7", "halo-linux-arm", "vocat-linux-armv7", "vocat-linux-arm"}},
 	}
 	for _, item := range tests {
 		if got := assetNamesFor(item.goos, item.goarch); !reflect.DeepEqual(got, item.want) {

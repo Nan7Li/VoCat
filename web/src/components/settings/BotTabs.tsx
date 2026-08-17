@@ -1,4 +1,7 @@
+import { useEffect, useState } from "react";
 import { useI18n } from "../../lib/i18n";
+import { api } from "../../api";
+import type { WireGuardSnapshot } from "../../types";
 import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
 import { ChannelHeader, Field } from "./controls";
@@ -12,6 +15,28 @@ interface ChannelProps<T> {
 export function TelegramTab({ value, onChange }: ChannelProps<TelegramForm>) {
   const { t } = useI18n();
   const off = !value.enabled;
+  const [tunnels, setTunnels] = useState<{ value: string; label: string }[]>([
+    { value: "", label: t("本机直连") },
+  ]);
+  useEffect(() => {
+    let active = true;
+    api<WireGuardSnapshot>("/wireguard-tunnels")
+      .then((data) => {
+        if (!active) return;
+        const options = [{ value: "", label: t("本机直连") }];
+        for (const tunnel of data.tunnels || []) {
+          options.push({
+            value: tunnel.interface,
+            label: tunnel.running ? `${tunnel.name} (${tunnel.interface})` : `${tunnel.name} (${tunnel.interface}, ${t("未连接")})`,
+          });
+        }
+        setTunnels(options);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [t]);
   return (
     <div className="pt-2">
       <ChannelHeader title={t("启用 Telegram 机器人")} enabled={value.enabled} onToggle={(enabled) => onChange({ enabled })} />
@@ -33,7 +58,16 @@ export function TelegramTab({ value, onChange }: ChannelProps<TelegramForm>) {
         <Field label={t("TG API 反代（可选）")} hint={t("反向代理地址 (例如 https://api.telegram.org/bot%s/%s)")}>
           <Input value={value.baseUrl} onChange={(e) => onChange({ baseUrl: e.target.value })} disabled={off} placeholder={t("留空直连 api.telegram.org；需要反代时填写")} />
         </Field>
-        <Field label={t("HTTP 代理（可选）")} hint={t("用于连接 API 服务器的 HTTP 代理")}>
+        <Field label={t("走 WG 隧道")} hint={t("让 Bot API 从指定隧道出去。隧道需已连接，且 AllowedIPs 包含 Telegram 或 0.0.0.0/0。不会改路由器默认路由。")}>
+          <Select
+            value={value.viaInterface || ""}
+            onChange={(viaInterface) => onChange({ viaInterface })}
+            options={tunnels}
+            disabled={off}
+            className="w-full"
+          />
+        </Field>
+        <Field label={t("HTTP 代理（可选）")} hint={t("用于连接 API 服务器的 HTTP 代理。填写后优先于 WG 隧道。")}>
           <Input value={value.proxy} onChange={(e) => onChange({ proxy: e.target.value })} disabled={off} placeholder={t("例如 http://127.0.0.1:7890")} />
         </Field>
       </div>

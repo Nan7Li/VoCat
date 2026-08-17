@@ -18,6 +18,7 @@ import SmsPage from "./pages/SmsPage";
 import AutomaticTasksPage from "./pages/AutomaticTasksPage";
 import LogsPage from "./pages/LogsPage";
 import SettingsPage from "./pages/SettingsPage";
+import WireGuardPage from "./pages/WireGuardPage";
 import ExtensionPage from "./pages/ExtensionPage";
 
 const THEME_KEY = "theme";
@@ -98,7 +99,7 @@ function AppRoot() {
   if (!ready) return <LoadingScreen />;
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[#F2F2F7] font-sans text-black transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] dark:bg-black dark:text-white">
+    <div className="h-screen w-screen overflow-hidden bg-[#F7F4EF] font-sans text-[#2C2C2C] transition-colors duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:bg-[#1A1610] dark:text-[#F3EADF]">
       <Routes>
         <Route path="/login" element={<LoginLayout isDark={isDark} onToggleTheme={toggle} />}>
           <Route index element={<LoginPage />} />
@@ -114,6 +115,7 @@ function AppRoot() {
           <Route index element={<DashboardPage />} />
           <Route path="devices/*" element={<DevicesPage />} />
           <Route path="proxy" element={<ProxyPage />} />
+          <Route path="wireguard" element={<WireGuardPage />} />
           <Route path="export-proxy" element={<ExportProxyPage />} />
           <Route path="sms" element={<SmsPage />} />
           <Route path="automatic-tasks" element={<AutomaticTasksPage />} />

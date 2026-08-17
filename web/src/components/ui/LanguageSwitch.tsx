@@ -1,4 +1,5 @@
 import { useI18n } from "../../lib/i18n";
+import { withViewTransition } from "../../lib/motion";
 
 // 中英文切换按钮：使用「文/A」翻译图标。图标颜色跟随按钮 currentColor，
 // 与 hover / dark 模式样式一致。英文模式 Hover 提示切中文，反之亦然。
@@ -10,7 +11,7 @@ export function LanguageSwitch() {
   return (
     <button
       type="button"
-      onClick={() => setLanguage(next)}
+      onClick={() => withViewTransition(() => setLanguage(next))}
       aria-label={label}
       title={label}
       className="vocat-glass-btn"

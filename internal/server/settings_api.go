@@ -26,6 +26,7 @@ import (
 
 	"vocat/internal/device"
 	"vocat/internal/store"
+	"vocat/internal/wireguard"
 )
 
 var (
@@ -47,7 +48,7 @@ var notificationChannels = []string{
 var notificationFields = map[string]map[string]string{
 	"telegram": {
 		"bot_token": "string", "chat_id": "string", "admin_id": "string",
-		"base_url": "string", "proxy": "string",
+		"base_url": "string", "proxy": "string", "via_interface": "string",
 	},
 	"email": {
 		"use_ssl": "boolean", "smtp_host": "string", "smtp_port": "integer", "username": "string",
@@ -646,6 +647,11 @@ func validateNotificationTestConfig(channel string, config map[string]any) error
 				return errors.New("telegram.base_url must be an absolute HTTPS URL or a URL template with two %s placeholders")
 			}
 		}
+		if via := configString(config, "via_interface"); via != "" {
+			if err := validateTelegramViaInterface(via); err != nil {
+				return err
+			}
+		}
 	case "email":
 		if configString(config, "smtp_host") == "" {
 			return errors.New("email.smtp_host is required")
@@ -756,7 +762,7 @@ func sendTelegramNotificationTest(ctx context.Context, config map[string]any) er
 	if err != nil {
 		return err
 	}
-	client, err := restrictedHTTPClient(ctx, 6*time.Second, configString(config, "proxy"))
+	client, err := telegramHTTPClient(ctx, 6*time.Second, configString(config, "proxy"), configString(config, "via_interface"))
 	if err != nil {
 		return err
 	}
@@ -920,10 +926,45 @@ func formatMailAddress(address *mail.Address) string {
 	return (&mail.Address{Name: address.Name, Address: address.Address}).String()
 }
 
+func validateTelegramViaInterface(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	if err := wireguard.ValidateInterfaceName(name); err != nil {
+		return fmt.Errorf("telegram.via_interface: %w", err)
+	}
+	return nil
+}
+
+type notificationClientOptions struct {
+	Proxy     string
+	Interface string
+}
+
 func restrictedHTTPClient(
 	ctx context.Context,
 	timeout time.Duration,
 	proxy string,
+) (*http.Client, error) {
+	return restrictedHTTPClientOpts(ctx, timeout, notificationClientOptions{Proxy: proxy})
+}
+
+func telegramHTTPClient(
+	ctx context.Context,
+	timeout time.Duration,
+	proxy, viaInterface string,
+) (*http.Client, error) {
+	return restrictedHTTPClientOpts(ctx, timeout, notificationClientOptions{
+		Proxy:     proxy,
+		Interface: viaInterface,
+	})
+}
+
+func restrictedHTTPClientOpts(
+	ctx context.Context,
+	timeout time.Duration,
+	opts notificationClientOptions,
 ) (*http.Client, error) {
 	timeout = clampNotificationTimeout(timeout)
 	transport := &http.Transport{
@@ -939,8 +980,14 @@ func restrictedHTTPClient(
 			MinVersion: tls.VersionTLS12,
 		},
 	}
-	if strings.TrimSpace(proxy) != "" {
-		parsed, err := validateNotificationProxyURL(ctx, proxy)
+	if iface := strings.TrimSpace(opts.Interface); iface != "" && strings.TrimSpace(opts.Proxy) == "" {
+		if err := validateTelegramViaInterface(iface); err != nil {
+			return nil, err
+		}
+		transport.DialContext = notificationViaInterfaceDialer(timeout, iface, wireguard.TableFor(iface))
+	}
+	if strings.TrimSpace(opts.Proxy) != "" {
+		parsed, err := validateNotificationProxyURL(ctx, opts.Proxy)
 		if err != nil {
 			return nil, fmt.Errorf("validate notification proxy: %w", err)
 		}

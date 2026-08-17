@@ -10,6 +10,7 @@ import {
   PanelLeftExpandRegular,
   RouterRegular,
   SettingsRegular,
+  ShieldLockRegular,
   SignOutRegular,
 } from "@fluentui/react-icons";
 import { useAuth } from "../../store/auth";
@@ -30,6 +31,7 @@ const NAV = [
   { to: "/", label: "仪表盘", icon: BoardRegular, end: true },
   { to: "/devices", label: "设备管理", icon: RouterRegular },
   { to: "/proxy", label: "代理管理", icon: GlobeRegular },
+  { to: "/wireguard", label: "WG 隧道", icon: ShieldLockRegular },
   { to: "/sms", label: "短信检测", icon: MailRegular },
   { to: "/automatic-tasks", label: "自动任务", icon: SendClockRegular },
   { to: "/logs", label: "实时日志", icon: DocumentTextRegular },
@@ -183,26 +185,24 @@ export function AuthenticatedShell({
       {!isMobile && (
         <aside
           className={cx(
-            "vocat-sidebar sidebar-shell relative h-full transition-[width] duration-300",
-            collapsed ? "w-[68px]" : "w-[248px]",
+            "vocat-sidebar sidebar-shell relative h-full",
+            collapsed ? "is-collapsed w-[68px]" : "w-[248px]",
           )}
         >
           <div className={cx("relative z-[1] flex h-16 items-center px-4", collapsed && "justify-center px-0")}>
             <BrandLogo className="sidebar-brand-logo" />
-            {!collapsed && (
-              <div className="ml-3">
-                <div className="sidebar-brand-title">Halo</div>
-                <div className="text-[11px] font-medium leading-tight tracking-tight text-black/35 dark:text-white/40">{t("基于 VoCat")}</div>
-              </div>
-            )}
+            <div className={cx("sidebar-fade ml-3", collapsed && "is-hidden")}>
+              <div className="sidebar-brand-title">Halo</div>
+              <div className="text-[11px] font-medium leading-tight tracking-tight text-black/35 dark:text-white/40">{t("基于 VoCat")}</div>
+            </div>
           </div>
           {menuList(collapsed)}
-          {!collapsed && <div className="absolute bottom-4 z-[1] w-full px-3">{userCard()}</div>}
+          <div className={cx("absolute bottom-4 z-[1] w-full px-3 sidebar-fade", collapsed && "is-hidden")}>{userCard()}</div>
         </aside>
       )}
 
       <Drawer open={isMobile && mobileOpen} onClose={() => setMobileOpen(false)} className="mobile-drawer">
-        <div className="sidebar-shell relative h-full bg-white/80 backdrop-blur-3xl dark:bg-[#1c1c1e]/80">
+        <div className="sidebar-shell relative h-full bg-[#FDF8F2] dark:bg-[#241F1A]">
           <div className="flex h-16 items-center px-4">
             <BrandLogo className="sidebar-brand-logo" />
             <div className="ml-3">

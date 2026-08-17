@@ -144,7 +144,11 @@ jobs:
           merge-multiple: true
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum vocat-linux-* | sort > SHA256SUMS
+        run: |
+          for f in vocat-linux-*; do
+            cp "$f" "halo-${f#vocat-}"
+          done
+          sha256sum vocat-linux-* halo-linux-* | sort > SHA256SUMS
       - name: Create or update GitHub Release
         run: |
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

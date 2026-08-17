@@ -125,6 +125,22 @@ type PhoneAssociation struct {
 	UpdatedAt time.Time
 }
 
+// WireGuardTunnel is a persisted wg-quick configuration. Private keys live in
+// Config and must be redacted before they leave the process.
+type WireGuardTunnel struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Interface string    `json:"interface"`
+	Config    string    `json:"config"`
+	Autostart bool      `json:"autostart"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (value WireGuardTunnel) SensitiveValues() []string {
+	return wireGuardSecrets(value.Config)
+}
+
 type AutomaticTask struct {
 	ID           int64           `json:"id"`
 	Name         string          `json:"name"`

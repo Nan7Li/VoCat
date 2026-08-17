@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 
 export const ACCENT_KEY = "halo.accent";
-export const DEFAULT_ACCENT = "#C9A46A";
+export const DEFAULT_ACCENT = "#E85D3C";
 
 export const ACCENT_PRESETS = [
+  { id: "apricot", label: "杏橙", hex: "#E85D3C" },
   { id: "grok", label: "Grok 金", hex: "#C9A46A" },
   { id: "cream", label: "奶油", hex: "#E4D2B0" },
   { id: "copper", label: "赤铜", hex: "#C47A4A" },
@@ -53,7 +54,9 @@ function luminance({ r, g, b }: RGB) {
 
 export function readStoredAccent() {
   try {
-    return normalizeHex(localStorage.getItem(ACCENT_KEY) || "") || DEFAULT_ACCENT;
+    const stored = normalizeHex(localStorage.getItem(ACCENT_KEY) || "");
+    if (!stored) return DEFAULT_ACCENT;
+    return stored;
   } catch {
     return DEFAULT_ACCENT;
   }
@@ -65,15 +68,24 @@ export function applyAccent(hex: string, persist = true) {
   const value = toHex(rgb);
   const hover = toHex(mix(rgb, { r: 0, g: 0, b: 0 }, 0.16));
   const active = toHex(mix(rgb, { r: 0, g: 0, b: 0 }, 0.28));
+  const ink = toHex(mix(rgb, { r: 0, g: 0, b: 0 }, 0.22));
   const root = document.documentElement;
   root.style.setProperty("--color-primary", value);
   root.style.setProperty("--color-primary-hover", hover);
   root.style.setProperty("--color-primary-active", active);
+  root.style.setProperty("--color-primary-ink", ink);
   root.style.setProperty("--color-primary-soft", `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.16)`);
+  root.style.setProperty("--color-primary-faint", `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.08)`);
+  root.style.setProperty("--color-primary-border", `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.32)`);
   root.style.setProperty("--color-primary-rgb", `${rgb.r} ${rgb.g} ${rgb.b}`);
-  root.style.setProperty("--color-on-primary", luminance(rgb) > 0.45 ? "#1A1610" : "#FFFFFF");
+  root.style.setProperty("--color-on-primary", luminance(rgb) > 0.45 ? "#2C2C2C" : "#FFFFFF");
   root.style.setProperty("--el-color-primary", value);
   root.style.setProperty("--el-color-primary-dark-2", hover);
+  root.style.setProperty("--el-color-primary-light-3", toHex(mix(rgb, { r: 255, g: 255, b: 255 }, 0.28)));
+  root.style.setProperty("--el-color-primary-light-5", toHex(mix(rgb, { r: 255, g: 255, b: 255 }, 0.45)));
+  root.style.setProperty("--el-color-primary-light-7", toHex(mix(rgb, { r: 255, g: 255, b: 255 }, 0.62)));
+  root.style.setProperty("--el-color-primary-light-8", toHex(mix(rgb, { r: 255, g: 255, b: 255 }, 0.78)));
+  root.style.setProperty("--el-color-primary-light-9", toHex(mix(rgb, { r: 255, g: 255, b: 255 }, 0.9)));
   root.style.setProperty("--ui-btn-primary-shadow", `0 6px 18px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.28)`);
   root.style.setProperty("--ui-btn-primary-shadow-hover", `0 8px 22px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.36)`);
   if (persist) {
@@ -83,13 +95,20 @@ export function applyAccent(hex: string, persist = true) {
       /* ignore */
     }
   }
+  window.dispatchEvent(new CustomEvent("halo:accent", { detail: value }));
   return value;
 }
 
 export function useAccent() {
-  const [accent, setAccentState] = useState(DEFAULT_ACCENT);
+  const [accent, setAccentState] = useState(() => readStoredAccent());
   useEffect(() => {
     setAccentState(applyAccent(readStoredAccent(), false));
+    const sync = (event: Event) => {
+      const next = (event as CustomEvent<string>).detail;
+      if (next) setAccentState(next);
+    };
+    window.addEventListener("halo:accent", sync);
+    return () => window.removeEventListener("halo:accent", sync);
   }, []);
   function setAccent(hex: string) {
     setAccentState(applyAccent(hex));

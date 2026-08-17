@@ -9,6 +9,7 @@ export interface TelegramForm {
   adminId: string;
   baseUrl: string;
   proxy: string;
+  viaInterface: string;
 }
 
 export interface HeaderRow {
@@ -173,6 +174,7 @@ export function formsFromNotifications(data: Partial<NotificationSettings>): Not
       adminId: telegram.adminId === null || telegram.adminId === undefined ? "" : String(telegram.adminId),
       baseUrl: str(telegram.baseUrl),
       proxy: str(telegram.proxy),
+      viaInterface: str(telegram.viaInterface),
     },
     webhook: {
       enabled: !!webhook.enabled,
@@ -307,6 +309,7 @@ export function buildNotificationsPayload(forms: NotifyForms) {
       adminId: forms.telegram.adminId.trim(),
       baseUrl: forms.telegram.baseUrl || "",
       proxy: forms.telegram.proxy || "",
+      viaInterface: forms.telegram.viaInterface || "",
     },
     email: buildEmailPayload(forms.email),
     pushplus: {

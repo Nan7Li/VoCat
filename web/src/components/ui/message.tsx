@@ -39,7 +39,7 @@ function dismiss(id: number) {
   window.setTimeout(() => {
     items = items.filter((item) => item.id !== id);
     emit();
-  }, 200);
+  }, 220);
 }
 
 export const message = {
@@ -81,9 +81,10 @@ export function MessageHost() {
           <div
             key={item.id}
             className={cx(
-              "pointer-events-auto flex items-center gap-2 rounded-full border px-4 py-2.5 text-[13px] font-medium shadow-[0_12px_40px_rgba(0,0,0,0.12)] backdrop-blur-2xl transition-all duration-200",
-              "border-white/60 bg-white/75 text-black dark:border-white/10 dark:bg-[#1c1c1e]/80 dark:text-white",
-              item.leaving ? "-translate-y-2 opacity-0" : "translate-y-0 opacity-100",
+              "pointer-events-auto flex items-center gap-2 rounded-full border px-4 py-2.5 text-[13px] font-medium",
+              "border-[#E8D9C8] bg-white text-[#2C2C2C] shadow-[0_4px_20px_rgba(180,140,100,0.12)]",
+              "dark:border-white/10 dark:bg-[#241F1A] dark:text-[#F3EADF]",
+              item.leaving ? "ui-toast-out" : "ui-toast-in",
             )}
             role="status"
           >

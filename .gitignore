@@ -24,6 +24,10 @@ vc.jar
 web/dist/
 web/build/
 web/node_modules/
+web/scripts/*-out/
+
+# ---- Local Halo binaries ----
+/halo-linux-*
 
 # ---- Go build ----
 *.test

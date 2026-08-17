@@ -4,12 +4,6 @@ import { Button, Input, Select } from "../ui";
 import type { EsimChipInfo, EsimDownloadForm } from "./types";
 import { tf, useI18n } from "../../lib/i18n";
 
-// Pre-listed so Tailwind generates them; index by quantized percent.
-const WIDTHS = [
-  "w-[0%]", "w-[5%]", "w-[10%]", "w-[15%]", "w-[20%]", "w-[25%]", "w-[30%]", "w-[35%]", "w-[40%]", "w-[45%]",
-  "w-[50%]", "w-[55%]", "w-[60%]", "w-[65%]", "w-[70%]", "w-[75%]", "w-[80%]", "w-[85%]", "w-[90%]", "w-[95%]", "w-[100%]",
-];
-
 export interface EsimDownloadFormProps {
   form: EsimDownloadForm;
   chipInfo: EsimChipInfo | null;
@@ -38,8 +32,6 @@ export function EsimDownloadForm(props: EsimDownloadFormProps) {
     value: e.aid || "",
     label: tf("eUICC #{n} (...{tail}) — {free} 可用", { n: i + 1, tail: e.eid.slice(-4), free: e.freeNvram }),
   }));
-  const widthClass = WIDTHS[Math.min(20, Math.round(props.downloadPct / 5))];
-
   return (
     <div className="ui-panel-muted p-4">
       <div className="mb-3 flex items-center gap-2">
@@ -67,10 +59,10 @@ export function EsimDownloadForm(props: EsimDownloadFormProps) {
           <div className="h-2.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-white/10">
             <div
               className={cx(
-                "h-full rounded-full transition-all",
-                widthClass,
-                props.downloadErr ? "bg-red-500" : props.downloadPct >= 100 ? "bg-green-500" : "bg-[#0ea5e9]",
+                "h-full w-full origin-left rounded-full transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)]",
+                props.downloadErr ? "bg-red-500" : props.downloadPct >= 100 ? "bg-green-500" : "bg-[var(--color-primary)]",
               )}
+              style={{ transform: `scaleX(${Math.max(0, Math.min(100, props.downloadPct)) / 100})` }}
             />
           </div>
           <div className={cx("text-xs", props.downloadErr ? "text-red-500" : "text-gray-500 dark:text-gray-400")}>

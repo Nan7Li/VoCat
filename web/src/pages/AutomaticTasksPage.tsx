@@ -527,7 +527,18 @@ export default function AutomaticTasksPage() {
         ) : null}
       </div>
 
-      <Modal open={open} onClose={closeEditor} title={form.id ? t("编辑自动任务") : t("添加自动任务")} width="max-w-3xl">
+      <Modal
+        open={open}
+        onClose={closeEditor}
+        title={form.id ? t("编辑自动任务") : t("添加自动任务")}
+        width="max-w-3xl"
+        footer={
+          <>
+            <Button onClick={closeEditor}>{t("取消")}</Button>
+            <Button variant="primary" loading={saving} onClick={() => void save()}>{t("保存")}</Button>
+          </>
+        }
+      >
         <div className="grid gap-4 md:grid-cols-2">
           <div className="md:col-span-2"><label className={fieldLabel}>{t("任务名称")}</label><Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder={t("例如：每日短信保活")} /></div>
           <div><label className={fieldLabel}>{t("设备")}</label><Select value={form.deviceId} onChange={chooseDevice} options={devices.map((device) => ({ value: device.id, label: `${device.name || device.id} (${device.id})` }))} /></div>
@@ -548,7 +559,6 @@ export default function AutomaticTasksPage() {
           <div className="flex items-center justify-between rounded-lg border border-gray-200 p-3 dark:border-white/10"><div><div className="text-sm font-semibold">{t("启用任务")}</div><div className="text-xs text-gray-400">{t("停用后不会进入执行队列")}</div></div><Switch checked={form.enabled} onChange={(enabled) => setForm({ ...form, enabled })} /></div>
           <div className="flex items-center justify-between rounded-lg border border-gray-200 p-3 dark:border-white/10"><div><div className="text-sm font-semibold">{t("完成后推送通知")}</div><div className="text-xs text-gray-400">{t("发送到全部已配置并启用的通知渠道")}</div></div><Switch checked={form.notify} onChange={(notify) => setForm({ ...form, notify })} /></div>
         </div>
-        <div className="mt-5 flex justify-end gap-2"><Button onClick={closeEditor}>{t("取消")}</Button><Button variant="primary" loading={saving} onClick={() => void save()}>{t("保存")}</Button></div>
       </Modal>
     </div>
   );

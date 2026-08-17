@@ -19,10 +19,12 @@ export function DeviceListItemCard({ device, selected, statusText, onSelect }: D
         type="button"
         onClick={() => onSelect(device.id)}
         className={cx(
-          "h-full w-full rounded-xl border p-3 text-left transition-all",
+          "h-full w-full rounded-[16px] border p-3 text-left",
+          "transition-[background-color,border-color,box-shadow,transform] duration-[340ms] ease-[cubic-bezier(0.32,0.72,0,1)]",
+          "active:scale-[0.985]",
           selected
-            ? "border-indigo-200 bg-indigo-50/70 dark:border-indigo-500/30 dark:bg-indigo-500/10"
-            : "border-gray-100 hover:bg-gray-50/60 dark:border-white/10 dark:hover:bg-white/5",
+            ? "border-[var(--color-primary)]/25 bg-[var(--color-primary-soft)] shadow-[0_4px_20px_rgba(180,140,100,0.08)]"
+            : "border-[#E8D9C8] hover:bg-[#FDF6F0] dark:border-white/10 dark:hover:bg-white/5",
         )}
       >
         <div className="flex items-start justify-between gap-2">

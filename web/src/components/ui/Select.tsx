@@ -80,7 +80,7 @@ export function Select({ value, onChange, options, placeholder, disabled, size =
         position: "fixed",
         left: rect.left,
         width: rect.width,
-        zIndex: 3100,
+        zIndex: 4600,
         maxHeight: MENU_MAX_HEIGHT,
         ...(openUp ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }),
       });
@@ -97,8 +97,10 @@ export function Select({ value, onChange, options, placeholder, disabled, size =
         disabled={disabled}
         onClick={toggleOpen}
         className={cx(
-          "flex w-full items-center justify-between gap-2 rounded-lg border border-[#dcdfe6] bg-white px-3 text-left text-sm text-gray-900 outline-none transition-all",
-          "hover:border-[#c0c4cc] focus:border-[#0ea5e9] focus:ring-2 focus:ring-[#0ea5e9]/25",
+          "flex w-full items-center justify-between gap-2 rounded-[12px] border border-[#E8D9C8] bg-white px-3 text-left text-sm text-[#2C2C2C] outline-none",
+          "transition-[border-color,box-shadow,transform] duration-[180ms] ease-[cubic-bezier(0.32,0.72,0,1)]",
+          "hover:border-[#D9C6B0] focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20",
+          "active:scale-[0.99]",
           "dark:border-white/15 dark:bg-black/20 dark:text-gray-100 dark:hover:border-white/25",
           "disabled:cursor-not-allowed disabled:opacity-60",
           size === "large" ? "h-10" : "h-8",
@@ -107,14 +109,14 @@ export function Select({ value, onChange, options, placeholder, disabled, size =
         <span className={cx("truncate", !selected && "text-gray-400 dark:text-gray-500")}>
           {selected ? selected.label : ph}
         </span>
-        <ChevronDownRegular className={cx("shrink-0 text-gray-400 transition-transform", open && "rotate-180")} />
+        <ChevronDownRegular className={cx("shrink-0 text-[#8A7A6A] transition-transform duration-[340ms] ease-[cubic-bezier(0.32,0.72,0,1)]", open && "rotate-180")} />
       </button>
       {open &&
         createPortal(
           <div
             ref={menuRef}
             style={menuStyle}
-            className="overflow-auto rounded-lg border border-gray-200/70 bg-white p-1 shadow-xl backdrop-blur-xl dark:border-white/10 dark:bg-[#1c1c22]"
+            className="ui-pop overflow-auto rounded-[12px] border border-[#E8D9C8] bg-white p-1 shadow-[0_10px_32px_rgba(180,140,100,0.14)] dark:border-white/10 dark:bg-[#241F1A]"
           >
           {options.length === 0 && <div className="px-3 py-2 text-sm text-gray-400">{t("暂无数据")}</div>}
           {options.map((option) => {
@@ -129,10 +131,11 @@ export function Select({ value, onChange, options, placeholder, disabled, size =
                   setOpen(false);
                 }}
                 className={cx(
-                  "flex w-full items-center justify-between gap-2 rounded-md px-3 py-1.5 text-left text-sm transition-colors",
+                  "flex w-full items-center justify-between gap-2 rounded-[10px] px-3 py-1.5 text-left text-sm",
+                  "transition-[background-color,color,transform] duration-[160ms] ease-[cubic-bezier(0.32,0.72,0,1)] active:scale-[0.98]",
                   active
-                    ? "font-semibold text-[#0ea5e9] dark:text-[#7dd3fc]"
-                    : "text-gray-700 hover:bg-black/5 dark:text-gray-200 dark:hover:bg-white/10",
+                    ? "font-semibold text-[var(--color-primary)] bg-[var(--color-primary-soft)]"
+                    : "text-[#3A3A3A] hover:bg-[#FDF6F0] dark:text-gray-200 dark:hover:bg-white/10",
                   option.disabled && "cursor-not-allowed opacity-50",
                 )}
               >

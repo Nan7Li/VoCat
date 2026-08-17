@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertRegular, CheckmarkRegular } from "@fluentui/react-icons";
 import { api, apiMessage, getSecuritySettings, updateSecuritySettings } from "../api";
-import type { DeveloperSettings, HTTPSSettings, NotificationSettings, SecuritySettings, SystemInfo } from "../types";
+import type { AutoUpdateSettings, DeveloperSettings, HTTPSSettings, NotificationSettings, SecuritySettings, SystemInfo, UpstreamVocatStatus } from "../types";
 import { Button, PageHeader, confirmDialog, message } from "../components/ui";
 import { CardDecor, CardIcon, CardTitle, SecurityCard, SystemInfoCard } from "../components/settings/Cards";
 import type { PasswordForm, UpdateInfo } from "../components/settings/Cards";
@@ -62,6 +62,11 @@ export default function SettingsPage() {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [applyingUpdate, setApplyingUpdate] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [autoUpdate, setAutoUpdate] = useState<AutoUpdateSettings | null>(null);
+  const [savingAutoUpdate, setSavingAutoUpdate] = useState(false);
+  const [upstream, setUpstream] = useState<UpstreamVocatStatus | null>(null);
+  const [checkingUpstream, setCheckingUpstream] = useState(false);
+  const [markingUpstream, setMarkingUpstream] = useState(false);
   const [security, setSecurity] = useState<NetworkAccessForm>(EMPTY_SECURITY);
   const [clientIp, setClientIp] = useState("");
   const [clientAllowed, setClientAllowed] = useState(true);
@@ -112,6 +117,22 @@ export default function SettingsPage() {
     setClientAllowed(!!data.clientAllowed);
   }, []);
 
+  const fetchAutoUpdate = useCallback(async () => {
+    try {
+      setAutoUpdate(await api<AutoUpdateSettings>("/settings/auto-update"));
+    } catch {
+      /* settings card still works without the scheduler state */
+    }
+  }, []);
+
+  const fetchUpstream = useCallback(async () => {
+    try {
+      setUpstream(await api<UpstreamVocatStatus>("/settings/upstream-vocat"));
+    } catch {
+      /* optional tracker */
+    }
+  }, []);
+
   const fetchSecurity = useCallback(async () => {
     setLoadingSecurity(true);
     try {
@@ -152,7 +173,9 @@ export default function SettingsPage() {
     void fetchSystemInfo();
     void fetchNotifications();
     void fetchSecurity();
-  }, [fetchSystemInfo, fetchNotifications, fetchSecurity]);
+    void fetchAutoUpdate();
+    void fetchUpstream();
+  }, [fetchSystemInfo, fetchNotifications, fetchSecurity, fetchAutoUpdate, fetchUpstream]);
 
   useEffect(() => {
     if (systemInfo.developer) {
@@ -358,6 +381,52 @@ export default function SettingsPage() {
     }
   }, [forms.lark]);
 
+  const onAutoUpdateChange = useCallback(async (patch: Partial<AutoUpdateSettings>) => {
+    const next = { ...(autoUpdate || { enabled: true, apply: false, intervalHours: 6 }), ...patch };
+    setSavingAutoUpdate(true);
+    try {
+      setAutoUpdate(await api<AutoUpdateSettings>("/settings/auto-update", {
+        method: "PUT",
+        body: { enabled: next.enabled, apply: next.apply, intervalHours: next.intervalHours },
+      }));
+      message.success(t("自动更新设置已保存"));
+    } catch (error) {
+      message.error(apiMessage(error) || t("自动更新设置保存失败"));
+    } finally {
+      setSavingAutoUpdate(false);
+    }
+  }, [autoUpdate]);
+
+  const onCheckUpstream = useCallback(async () => {
+    setCheckingUpstream(true);
+    try {
+      const data = await api<UpstreamVocatStatus>("/settings/upstream-vocat", { method: "POST", body: {} });
+      setUpstream(data);
+      if (data.available) message.info(`${t("官方 VoCat 有新内容:")} ${data.latestVersion || ""}`);
+      else message.info(t("官方 VoCat 暂无更新于已同步版本之后"));
+    } catch (error) {
+      message.error(apiMessage(error) || t("检查 VoCat 失败"));
+    } finally {
+      setCheckingUpstream(false);
+    }
+  }, []);
+
+  const onMarkUpstreamSynced = useCallback(async () => {
+    if (!upstream?.latestVersion) return;
+    setMarkingUpstream(true);
+    try {
+      setUpstream(await api<UpstreamVocatStatus>("/settings/upstream-vocat", {
+        method: "PUT",
+        body: { syncedVersion: upstream.latestVersion },
+      }));
+      message.success(t("已记录为同步到该 VoCat 版本"));
+    } catch (error) {
+      message.error(apiMessage(error) || t("记录同步版本失败"));
+    } finally {
+      setMarkingUpstream(false);
+    }
+  }, [upstream]);
+
   const onCheckUpdate = useCallback(async () => {
     setCheckingUpdate(true);
     try {
@@ -438,8 +507,16 @@ export default function SettingsPage() {
           updateInfo={updateInfo}
           checkingUpdate={checkingUpdate}
           applyingUpdate={applyingUpdate}
+          autoUpdate={autoUpdate}
+          savingAutoUpdate={savingAutoUpdate}
           onCheckUpdate={onCheckUpdate}
           onApplyUpdate={onApplyUpdate}
+          onAutoUpdateChange={onAutoUpdateChange}
+          upstream={upstream}
+          checkingUpstream={checkingUpstream}
+          markingUpstream={markingUpstream}
+          onCheckUpstream={onCheckUpstream}
+          onMarkUpstreamSynced={onMarkUpstreamSynced}
         />
 
         <NetworkAccessCard

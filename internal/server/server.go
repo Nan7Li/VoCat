@@ -25,6 +25,7 @@ import (
 	"vocat/internal/store"
 	"vocat/internal/update"
 	"vocat/internal/vowifi"
+	"vocat/internal/wireguard"
 )
 
 const (
@@ -49,6 +50,7 @@ type Options struct {
 	UpdateRepository    string
 	UpdateToken         string
 	HTTPS               *httpsmode.Manager
+	WireGuard           *wireguard.Manager
 }
 
 // Server is the single HTTP handler for the JSON API and embedded SPA.
@@ -86,6 +88,7 @@ type Server struct {
 	publicIPMu          sync.RWMutex
 	publicIPs           map[string]cachedPublicIP
 	automaticTasks      *automaticTaskScheduler
+	wireguard           *wireguard.Manager
 }
 
 func New(options Options) (*Server, error) {
@@ -139,6 +142,7 @@ func New(options Options) (*Server, error) {
 		updateCheck:         update.CheckLatest,
 		updateApply:         update.ApplyLatest,
 		updateRestart:       update.RestartService,
+		wireguard:           options.WireGuard,
 	}
 	server.loadAccessConfig(context.Background())
 	server.loadUILanguage(context.Background())

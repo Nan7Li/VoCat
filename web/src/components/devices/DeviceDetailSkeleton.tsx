@@ -5,7 +5,7 @@ import { Spinner } from "../ui";
 export function DeviceDetailSkeleton() {
   return (
     <div className="ui-card flex items-center justify-center gap-3 p-16 text-gray-400 dark:text-gray-500">
-      <Spinner className="h-6 w-6 text-[#0ea5e9]" />
+      <Spinner className="h-6 w-6 text-[var(--color-primary)]" />
       <span className="text-sm">{tl("正在加载设备...")}</span>
     </div>
   );

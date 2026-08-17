@@ -282,7 +282,8 @@ func validateExecutable(ctx context.Context, path string) error {
 	if err != nil {
 		return fmt.Errorf("update: downloaded binary cannot run on this host: %w (%s)", err, strings.TrimSpace(string(output)))
 	}
-	if !strings.Contains(strings.ToLower(string(output)), "vocat") {
+	versionText := strings.ToLower(string(output))
+	if !strings.Contains(versionText, "vocat") && !strings.Contains(versionText, "halo") {
 		return fmt.Errorf("update: downloaded binary returned an unexpected version response: %q", strings.TrimSpace(string(output)))
 	}
 	return nil
@@ -409,16 +410,19 @@ func findAsset(release *Release, name string) *Asset {
 
 func assetNamesFor(goos, goarch string) []string {
 	if goos == "linux" && goarch == "arm64" {
-		// AArch64 and arm64 name the same instruction set. Prefer the historic
-		// release name and accept the explicit architecture alias as fallback.
-		return []string{"vocat-linux-arm64", "vocat-linux-aarch64"}
+		// Halo releases publish halo-linux-*; keep VoCat names as fallback so a
+		// Halo host can still consume an upstream vocat-linux-* asset.
+		return []string{"halo-linux-arm64", "halo-linux-aarch64", "vocat-linux-arm64", "vocat-linux-aarch64"}
 	}
 	if goos == "linux" && goarch == "arm" {
 		// Official 32-bit ARM builds target GOARM=7. Keep the generic legacy
 		// name as a fallback for installations consuming an older release.
-		return []string{"vocat-linux-armv7", "vocat-linux-arm"}
+		return []string{"halo-linux-armv7", "halo-linux-arm", "vocat-linux-armv7", "vocat-linux-arm"}
 	}
-	return []string{fmt.Sprintf("vocat-%s-%s", goos, goarch)}
+	return []string{
+		fmt.Sprintf("halo-%s-%s", goos, goarch),
+		fmt.Sprintf("vocat-%s-%s", goos, goarch),
+	}
 }
 
 func printUpdateUsage() {
@@ -429,7 +433,7 @@ Fetch the latest release from GitHub and replace this binary in place.
 Flags:
   --check            Report whether an update is available, then exit.
   --force            Reinstall even when already at the latest version.
-  --repo owner/name  GitHub repository (default: $VOCAT_REPO or MengMengCode/VoCat).
+  --repo owner/name  GitHub repository (default: $VOCAT_REPO or Nan7Li/VoCat).
   --target path      Binary to replace (default: /opt/vocat/bin/vocat if
                      present, otherwise the running executable).
   --token token      GitHub bearer token (default: $GITHUB_TOKEN).

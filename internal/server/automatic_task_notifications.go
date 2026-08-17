@@ -104,7 +104,7 @@ func sendTelegramTextNotification(ctx context.Context, config map[string]any, te
 	if err != nil {
 		return err
 	}
-	client, err := restrictedHTTPClient(ctx, 8*time.Second, configString(config, "proxy"))
+	client, err := telegramHTTPClient(ctx, 8*time.Second, configString(config, "proxy"), configString(config, "via_interface"))
 	if err != nil {
 		return err
 	}

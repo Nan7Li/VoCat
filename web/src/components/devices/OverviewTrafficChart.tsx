@@ -98,9 +98,20 @@ export function OverviewTrafficChart({ deviceId }: { deviceId: string }) {
     { rx: 0, tx: 0 },
   ), [days]);
 
+  const [accent, setAccent] = useState(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--color-primary").trim() || "#E85D3C",
+  );
+  useEffect(() => {
+    const sync = () => {
+      setAccent(getComputedStyle(document.documentElement).getPropertyValue("--color-primary").trim() || "#E85D3C");
+    };
+    window.addEventListener("halo:accent", sync);
+    return () => window.removeEventListener("halo:accent", sync);
+  }, []);
+
   const option = useMemo(() => ({
     animationDuration: 350,
-    color: ["#0ea5e9", "#8b5cf6"],
+    color: [accent || "#E85D3C", "#8b5cf6"],
     tooltip: {
       trigger: "axis",
       formatter: (items: Array<{ marker?: string; seriesName?: string; value?: number; axisValueLabel?: string }>) => {
@@ -151,7 +162,7 @@ export function OverviewTrafficChart({ deviceId }: { deviceId: string }) {
         areaStyle: { opacity: 0.08 },
       },
     ],
-  }), [days, t]);
+  }), [days, t, accent]);
 
   return (
     <div className="ui-panel-muted p-4 lg:p-5">

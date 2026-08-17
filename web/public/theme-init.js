@@ -3,12 +3,12 @@ try {
   var dark = theme === "dark";
   var root = document.documentElement;
   root.classList.toggle("dark", dark);
-  root.style.background = dark ? "#000000" : "#f2f2f7";
+  root.style.background = dark ? "#1A1610" : "#F7F4EF";
 
-  var stored = localStorage.getItem("halo.accent") || "#C9A46A";
+  var stored = localStorage.getItem("halo.accent") || "#E85D3C";
   var raw = String(stored).replace("#", "");
   if (/^[0-9a-fA-F]{3}$/.test(raw)) raw = raw.split("").map(function (ch) { return ch + ch; }).join("");
-  if (!/^[0-9a-fA-F]{6}$/.test(raw)) raw = "C9A46A";
+  if (!/^[0-9a-fA-F]{6}$/.test(raw)) raw = "E85D3C";
   var n = parseInt(raw, 16);
   var r = (n >> 16) & 255;
   var g = (n >> 8) & 255;
@@ -28,8 +28,12 @@ try {
   root.style.setProperty("--color-primary", hex);
   root.style.setProperty("--color-primary-hover", mix(0.16));
   root.style.setProperty("--color-primary-active", mix(0.28));
+  root.style.setProperty("--color-primary-ink", mix(0.22));
   root.style.setProperty("--color-primary-soft", "rgba(" + r + ", " + g + ", " + b + ", 0.16)");
+  root.style.setProperty("--color-primary-faint", "rgba(" + r + ", " + g + ", " + b + ", 0.08)");
+  root.style.setProperty("--color-primary-border", "rgba(" + r + ", " + g + ", " + b + ", 0.32)");
   root.style.setProperty("--color-primary-rgb", r + " " + g + " " + b);
-  root.style.setProperty("--color-on-primary", lum > 0.45 ? "#1A1610" : "#FFFFFF");
+  root.style.setProperty("--color-on-primary", lum > 0.45 ? "#2C2C2C" : "#FFFFFF");
   root.style.setProperty("--el-color-primary", hex);
+  root.style.setProperty("--el-color-primary-dark-2", mix(0.16));
 } catch (e) {}

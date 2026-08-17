@@ -190,7 +190,7 @@ export function SegmentedTabs({
   onChange: (key: string) => void;
 }) {
   return (
-    <div className="mb-6 inline-flex max-w-full items-center gap-1 overflow-x-auto rounded-xl bg-gray-100 p-1 dark:bg-white/5">
+    <div className="mb-6 inline-flex max-w-full items-center gap-1 overflow-x-auto rounded-full bg-[#F7F4EF] p-1 dark:bg-white/5">
       {tabs.map((tab) => {
         const active = tab.key === value;
         return (
@@ -199,10 +199,12 @@ export function SegmentedTabs({
             type="button"
             onClick={() => onChange(tab.key)}
             className={cx(
-              "h-[38px] shrink-0 whitespace-nowrap rounded-lg px-5 text-sm font-medium outline-none transition-all duration-300",
+              "h-[38px] shrink-0 whitespace-nowrap rounded-full px-5 text-sm font-medium outline-none",
+              "transition-[background-color,color,box-shadow,transform] duration-[340ms] ease-[cubic-bezier(0.32,0.72,0,1)]",
+              "active:scale-[0.97]",
               active
-                ? "bg-white font-semibold text-[var(--color-primary)] shadow-[0_1px_4px_rgba(0,0,0,0.05),0_2px_8px_rgba(0,0,0,0.03)] dark:bg-white/10"
-                : "text-gray-500 hover:text-[var(--color-primary)] dark:text-gray-400",
+                ? "bg-white font-semibold text-[var(--color-primary)] shadow-[0_4px_20px_rgba(180,140,100,0.08)] dark:bg-white/10"
+                : "text-[#8A7A6A] hover:text-[#2C2C2C] dark:text-gray-400",
             )}
           >
             {tab.label}

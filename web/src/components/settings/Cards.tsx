@@ -5,9 +5,11 @@ import {
   InfoRegular,
   KeyRegular,
 } from "@fluentui/react-icons";
-import type { SystemInfo } from "../../types";
+import type { AutoUpdateSettings, SystemInfo, UpstreamVocatStatus } from "../../types";
 import { useI18n } from "../../lib/i18n";
 import { Button } from "../ui/Button";
+import { Switch } from "../ui/Switch";
+import { Select } from "../ui/Select";
 import { FieldRow, PasswordInput } from "./controls";
 
 export interface PasswordForm {
@@ -119,15 +121,31 @@ export function SystemInfoCard({
   updateInfo,
   checkingUpdate,
   applyingUpdate,
+  autoUpdate,
+  savingAutoUpdate,
   onCheckUpdate,
   onApplyUpdate,
+  onAutoUpdateChange,
+  upstream,
+  checkingUpstream,
+  markingUpstream,
+  onCheckUpstream,
+  onMarkUpstreamSynced,
 }: {
   info: SystemInfo;
   updateInfo: UpdateInfo | null;
   checkingUpdate: boolean;
   applyingUpdate: boolean;
+  autoUpdate: AutoUpdateSettings | null;
+  savingAutoUpdate: boolean;
   onCheckUpdate: () => void;
   onApplyUpdate: () => void;
+  onAutoUpdateChange: (patch: Partial<AutoUpdateSettings>) => void;
+  upstream: UpstreamVocatStatus | null;
+  checkingUpstream: boolean;
+  markingUpstream: boolean;
+  onCheckUpstream: () => void;
+  onMarkUpstreamSynced: () => void;
 }) {
   const { t } = useI18n();
   return (
@@ -163,6 +181,59 @@ export function SystemInfoCard({
             </Button>
           </div>
         ) : null}
+        <div className="space-y-3 rounded-lg bg-gray-50 p-3 dark:bg-white/5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[13px] font-semibold text-black/80 dark:text-white/80">{t("自动检查更新")}</div>
+              <p className="text-[12px] text-black/40 dark:text-white/45">{t("后台定期查询 Halo 发行版")}</p>
+            </div>
+            <Switch
+              checked={!!autoUpdate?.enabled}
+              disabled={!autoUpdate || savingAutoUpdate}
+              loading={savingAutoUpdate}
+              onChange={(enabled) => onAutoUpdateChange({ enabled })}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[13px] font-semibold text-black/80 dark:text-white/80">{t("自动安装并重启")}</div>
+              <p className="text-[12px] text-black/40 dark:text-white/45">{t("发现新版本后下载校验并替换本机程序")}</p>
+            </div>
+            <Switch
+              checked={!!autoUpdate?.apply}
+              disabled={!autoUpdate || savingAutoUpdate || !!autoUpdate?.isDocker}
+              loading={savingAutoUpdate}
+              onChange={(apply) => onAutoUpdateChange({ apply })}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[13px] font-semibold text-black/80 dark:text-white/80">{t("检查间隔")}</div>
+            <Select
+              value={String(autoUpdate?.intervalHours || 6)}
+              disabled={!autoUpdate || savingAutoUpdate}
+              onChange={(value) => onAutoUpdateChange({ intervalHours: Number(value) })}
+              options={[
+                { value: "1", label: t("每 1 小时") },
+                { value: "6", label: t("每 6 小时") },
+                { value: "12", label: t("每 12 小时") },
+                { value: "24", label: t("每 24 小时") },
+              ]}
+            />
+          </div>
+          {autoUpdate?.lastCheckAt ? (
+            <p className="text-[12px] text-black/40 dark:text-white/45">
+              {t("上次检查")} {autoUpdate.lastCheckAt.replace("T", " ").replace("Z", " UTC")}
+              {autoUpdate.lastError
+                ? ` · ${autoUpdate.lastError}`
+                : autoUpdate.lastAvailable
+                  ? ` · ${t("发现新版本:")} ${autoUpdate.lastVersion || ""}`
+                  : ` · ${t("当前已是最新版本")}`}
+            </p>
+          ) : null}
+          {autoUpdate?.repository ? (
+            <p className="font-mono text-[11px] text-black/35 dark:text-white/35">{autoUpdate.repository}</p>
+          ) : null}
+        </div>
         <div className="rounded-lg bg-gray-50 p-3 dark:bg-white/5">
           <FieldRow label={t("构建时间")} value={info.buildTime} monospace />
         </div>
@@ -177,6 +248,42 @@ export function SystemInfoCard({
         </div>
         <div className="rounded-lg bg-gray-50 p-3 dark:bg-white/5">
           <FieldRow label={t("架构")} value={info.architecture} monospace />
+        </div>
+        <div className="space-y-3 rounded-lg bg-gray-50 p-3 dark:bg-white/5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[13px] font-semibold text-black/80 dark:text-white/80">{t("VoCat 上游")}</div>
+              <p className="text-[12px] text-black/40 dark:text-white/45">
+                {t("跟踪官方 VoCat 的新功能和说明。Halo 程序更新仍从本仓库 GitHub Releases 安装。")}
+              </p>
+            </div>
+            <Button size="small" loading={checkingUpstream} onClick={onCheckUpstream}>
+              {t("检查 VoCat")}
+            </Button>
+          </div>
+          <FieldRow label={t("已同步")} value={upstream?.syncedVersion || "0.2.7"} monospace />
+          {upstream?.latestVersion ? <FieldRow label={t("官方最新")} value={upstream.latestVersion} monospace /> : null}
+          {upstream?.available ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/20 dark:bg-amber-500/10">
+              <div className="mb-2 text-[13px] font-bold text-amber-800 dark:text-amber-200">
+                {t("官方 VoCat 有新内容:")} {upstream.latestVersion}
+              </div>
+              <div className="mb-3 max-h-32 overflow-y-auto whitespace-pre-wrap text-xs text-amber-700 dark:text-amber-300/80">
+                {upstream.releaseNotes || t("暂无更新说明")}
+              </div>
+              {upstream.htmlUrl ? (
+                <a className="mb-3 block text-[12px] text-[var(--color-primary)] underline-offset-2 hover:underline" href={upstream.htmlUrl} target="_blank" rel="noreferrer">
+                  {upstream.repository}
+                </a>
+              ) : null}
+              <Button size="small" loading={markingUpstream} onClick={onMarkUpstreamSynced} className="w-full">
+                {t("已合并进 Halo")}
+              </Button>
+            </div>
+          ) : upstream?.lastCheckAt ? (
+            <p className="text-[12px] text-black/40 dark:text-white/45">{t("官方 VoCat 暂无更新于已同步版本之后")}</p>
+          ) : null}
+          {upstream?.lastError ? <p className="text-[12px] text-red-600 dark:text-red-400">{upstream.lastError}</p> : null}
         </div>
         <p className="text-[12px] leading-relaxed text-black/40 dark:text-white/45">
           {t("Halo 是基于 VoCat 的个人界面与发行版。模组、IMS、WiFi Calling 等核心能力来自原项目。")}

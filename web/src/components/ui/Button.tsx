@@ -67,7 +67,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   const variantClass = isText
     ? "border-transparent bg-transparent text-[var(--color-primary)] hover:bg-black/5 dark:hover:bg-white/10 shadow-none"
     : isDefault
-      ? "border-black/8 bg-white/80 text-black hover:bg-black/[0.04] ui-action-btn dark:border-white/10 dark:bg-white/8 dark:text-white dark:hover:bg-white/12"
+      ? "border-[#E8D9C8] bg-white text-[#2C2C2C] hover:bg-[#FDF6F0] ui-action-btn dark:border-white/12 dark:bg-white/8 dark:text-[#F3EADF] dark:hover:bg-white/12"
       : plain
         ? PLAIN[variant]
         : SOLID[variant];
@@ -78,9 +78,10 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       type={type}
       disabled={isDisabled}
       className={cx(
-        "inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-full border font-semibold tracking-tight outline-none transition-all duration-150",
-        "focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-black",
-        "active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60",
+        "inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-full border font-semibold tracking-tight outline-none",
+        "transition-[transform,background-color,border-color,box-shadow,color] duration-[180ms] ease-[cubic-bezier(0.32,0.72,0,1)]",
+        "focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/35 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-[#1A1610]",
+        "active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60",
         SIZE[size],
         isText && "px-2 shadow-none",
         block && "w-full",

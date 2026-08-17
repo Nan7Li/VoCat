@@ -31,18 +31,20 @@ export function Tabs({
               disabled={tab.disabled}
               onClick={() => onChange(tab.key)}
               className={cx(
-                "relative whitespace-nowrap px-4 py-2.5 text-sm font-medium transition-colors outline-none",
-                "disabled:cursor-not-allowed disabled:opacity-50",
+                "relative whitespace-nowrap px-4 py-2.5 text-sm font-medium outline-none",
+                "transition-[color,transform] duration-[180ms] ease-[cubic-bezier(0.32,0.72,0,1)]",
+                "disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.97]",
                 active
                   ? "text-[var(--color-primary)]"
-                  : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200",
+                  : "text-[#8A7A6A] hover:text-[#2C2C2C] dark:text-gray-400 dark:hover:text-gray-200",
               )}
             >
               {tab.label}
               <span
                 className={cx(
-                  "absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-[var(--color-primary)] transition-all duration-200",
-                  active ? "opacity-100" : "opacity-0",
+                  "absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-[var(--color-primary)]",
+                  "transition-[opacity,transform] duration-[340ms] ease-[cubic-bezier(0.32,0.72,0,1)]",
+                  active ? "scale-x-100 opacity-100" : "scale-x-50 opacity-0",
                 )}
               />
             </button>

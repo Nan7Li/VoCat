@@ -37,6 +37,7 @@ import (
 	"vocat/internal/vowifi/ims"
 	"vocat/internal/vowifi/integration"
 	vowifiruntime "vocat/internal/vowifi/runtime"
+	"vocat/internal/wireguard"
 	"vocat/web"
 )
 
@@ -256,6 +257,13 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 		}
 	}()
 
+	wireGuardDir := filepath.Join(filepath.Dir(cfg.DatabasePath), "wireguard")
+	wireGuardManager, err := wireguard.New(database, wireGuardDir, logger)
+	if err != nil {
+		return fmt.Errorf("configure wireguard tunnels: %w", err)
+	}
+	go wireGuardManager.Restore(pollContext)
+
 	handler, err := server.New(server.Options{
 		Store:               database,
 		Auth:                authService,
@@ -272,6 +280,7 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 		UpdateRepository:    strings.TrimSpace(os.Getenv("VOCAT_REPO")),
 		UpdateToken:         strings.TrimSpace(os.Getenv("GITHUB_TOKEN")),
 		HTTPS:               httpsManager,
+		WireGuard:           wireGuardManager,
 	})
 	if err != nil {
 		return err
@@ -281,6 +290,7 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 	handler.StartTelegramBot(pollContext)
 	handler.StartSMSNotificationDispatchers(pollContext)
 	handler.StartAutomaticTasks(pollContext)
+	handler.StartAutoUpdate(pollContext)
 
 	serverConfig := func(handler http.Handler) *http.Server {
 		return &http.Server{

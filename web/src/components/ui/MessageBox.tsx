@@ -46,11 +46,12 @@ export function ConfirmHost() {
   const danger = state.type === "danger" || state.confirmVariant === "danger";
 
   return (
-    <div className="fixed inset-0 z-[4000] flex items-center justify-center bg-black/30 p-4 backdrop-blur-xl animate-[fade-slide-in_0.2s_ease]">
+    <div className="halo-modal-root" style={{ zIndex: 4500 }}>
+      <button type="button" className="halo-modal-backdrop" aria-label={t("取消")} onClick={() => close(false)} />
       <div
         role="alertdialog"
         aria-modal="true"
-        className="glass-modal w-full max-w-sm rounded-[28px] p-6 animate-[fade-slide-in_0.25s_cubic-bezier(0.4,0,0.2,1)]"
+        className="halo-modal-panel glass-modal ui-pop w-full max-w-sm px-6 py-5"
       >
         <div className="flex items-start gap-3">
           <div
@@ -62,11 +63,11 @@ export function ConfirmHost() {
             <WarningFilled className="text-[22px]" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-base font-bold text-gray-900 dark:text-white">{state.title}</div>
-            <div className="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-300">{state.message}</div>
+            <div className="text-[17px] font-semibold tracking-tight text-[#2C2C2C] dark:text-white">{state.title}</div>
+            <div className="mt-2 text-[14px] leading-relaxed text-[#6B5C4F] dark:text-white/65">{state.message}</div>
           </div>
         </div>
-        <div className="mt-6 flex items-center justify-end gap-3">
+        <div className="mt-5 flex items-center justify-end gap-2.5">
           <Button onClick={() => close(false)}>{state.cancelText ?? t("取消")}</Button>
           <Button variant={danger ? "danger" : "primary"} onClick={() => close(true)} autoFocus>
             {state.confirmText ?? t("确定")}

@@ -39,8 +39,9 @@ type CheckResult struct {
 }
 
 const (
-	githubAPI         = "https://api.github.com"
-	DefaultRepository = "MengMengCode/VoCat"
+	githubAPI           = "https://api.github.com"
+	DefaultRepository   = "Nan7Li/VoCat"
+	UpstreamRepository  = "MengMengCode/VoCat"
 )
 
 var githubHTTPClient = &http.Client{
