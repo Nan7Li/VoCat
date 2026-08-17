@@ -77,6 +77,16 @@ func main() {
 			logger.Error("update failed", "error", err)
 			os.Exit(1)
 		}
+	case "doctor":
+		if err := runDoctor(rest); err != nil {
+			logger.Error("doctor failed", "error", err)
+			os.Exit(1)
+		}
+	case "carrier":
+		if err := runCarrier(rest, os.Stdout); err != nil {
+			logger.Error("carrier command failed", "error", err)
+			os.Exit(1)
+		}
 	case "menu":
 		if err := runMenu(logger); err != nil {
 			logger.Error("menu failed", "error", err)
@@ -119,6 +129,10 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
+	}
+	carrierProfileDir := filepath.Join(filepath.Dir(cfg.DatabasePath), "carrier-profiles.d")
+	if err := vowifi.LoadCarrierProfileDirectory(carrierProfileDir); err != nil {
+		return fmt.Errorf("load installed carrier profiles: %w", err)
 	}
 	instanceLock, err := lockServerInstance(cfg.DatabasePath)
 	if err != nil {
