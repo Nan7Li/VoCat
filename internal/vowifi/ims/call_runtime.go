@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -858,11 +859,60 @@ func (session *Session) setCallDiagnostic(id string, code int, reason string) {
 
 func (session *Session) setCallMediaReady(id string) {
 	session.callMu.Lock()
-	if call := session.calls[id]; call != nil && call.media != nil {
-		call.public.MediaReady = call.media.ready()
-		call.public.Codec = call.media.Codec()
+	defer session.callMu.Unlock()
+	call := session.calls[id]
+	if call == nil || call.media == nil {
+		return
 	}
-	session.callMu.Unlock()
+	call.public.MediaReady = call.media.ready()
+	call.public.Codec = call.media.Codec()
+	if call.public.MediaReady && call.public.Recording == "" && session.provider.config.RecordingsDir != "" {
+		relative, absolute := session.recordingPath(call)
+		if absolute != "" {
+			if err := call.media.startRecording(absolute); err == nil {
+				call.public.Recording = relative
+			} else {
+				session.provider.config.Logger.Warn("IMS call recording start failed",
+					"device_id", session.request.DeviceID, "call_id", id, "error", err)
+			}
+		}
+	}
+}
+
+// recordingPath derives the WAV target for a call. The relative path is what
+// the server persists in call_records; the absolute path is what the media
+// tee writes to.
+func (session *Session) recordingPath(call *imsCall) (string, string) {
+	deviceDir := sanitizeFileName(session.request.DeviceID)
+	if deviceDir == "" {
+		deviceDir = "device"
+	}
+	callName := sanitizeFileName(call.public.ID)
+	if callName == "" {
+		callName = fmt.Sprintf("call-%d", time.Now().Unix())
+	}
+	base := fmt.Sprintf("%s_%d.wav", callName, time.Now().Unix())
+	relative := deviceDir + "/" + base
+	return relative, filepath.Join(session.provider.config.RecordingsDir, deviceDir, base)
+}
+
+func sanitizeFileName(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 96 {
+		value = value[:96]
+	}
+	cleaned := make([]rune, 0, len(value))
+	for _, character := range value {
+		if character >= 'a' && character <= 'z' ||
+			character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' ||
+			character == '.' || character == '_' || character == '-' {
+			cleaned = append(cleaned, character)
+		} else {
+			cleaned = append(cleaned, '_')
+		}
+	}
+	return strings.Trim(string(cleaned), "._-")
 }
 
 func (session *Session) CallMedia(_ context.Context, id string) (vowifi.CallMedia, error) {

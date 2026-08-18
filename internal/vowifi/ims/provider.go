@@ -69,6 +69,10 @@ type Config struct {
 	// Logger receives structured IMS runtime diagnostics. Inbound SMS logs do
 	// not include message text or raw protocol payloads.
 	Logger *slog.Logger
+	// RecordingsDir, when non-empty, enables call recording: each call's
+	// 8 kHz PCM is tee'd into a stereo WAV (channel 0 = remote, channel 1 =
+	// local microphone) under <RecordingsDir>/<deviceID>/<callID>_<unix>.wav.
+	RecordingsDir string
 }
 
 // Provider implements vowifi.IMSProvider using a small RFC 3261 REGISTER

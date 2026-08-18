@@ -42,6 +42,9 @@ func (s *Server) routeGeneralAPI(w http.ResponseWriter, r *http.Request) bool {
 	if s.routeProxyAPI(w, r, cleanPath) {
 		return true
 	}
+	if s.routeCallRecordsAPI(w, r, cleanPath) {
+		return true
+	}
 	if s.routeSettingsAPI(w, r, cleanPath) {
 		return true
 	}

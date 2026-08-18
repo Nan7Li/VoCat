@@ -51,6 +51,9 @@ type Options struct {
 	UpdateToken         string
 	HTTPS               *httpsmode.Manager
 	WireGuard           *wireguard.Manager
+	// RecordingsDir enables call recording (WAV files live under
+	// <RecordingsDir>/<deviceID>/...) and the recording download API.
+	RecordingsDir string
 }
 
 // Server is the single HTTP handler for the JSON API and embedded SPA.
@@ -89,6 +92,7 @@ type Server struct {
 	publicIPs           map[string]cachedPublicIP
 	automaticTasks      *automaticTaskScheduler
 	wireguard           *wireguard.Manager
+	recordingsDir       string
 }
 
 func New(options Options) (*Server, error) {
@@ -143,6 +147,7 @@ func New(options Options) (*Server, error) {
 		updateApply:         update.ApplyLatest,
 		updateRestart:       update.RestartService,
 		wireguard:           options.WireGuard,
+		recordingsDir:       options.RecordingsDir,
 	}
 	server.loadAccessConfig(context.Background())
 	server.loadUILanguage(context.Background())

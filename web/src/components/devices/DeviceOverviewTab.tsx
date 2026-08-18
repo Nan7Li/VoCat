@@ -5,9 +5,10 @@ import { OverviewSimPanel } from "./OverviewSimPanel";
 import { OverviewNetworkPanel } from "./OverviewNetworkPanel";
 import { OverviewTrafficChart } from "./OverviewTrafficChart";
 import { OperatorSelectionDialog } from "./OperatorSelectionDialog";
+import { EpdgStatusCard } from "./EpdgStatusCard";
 import type { DeviceDetail } from "./types";
 import { useI18n } from "../../lib/i18n";
-import { isVoWiFiInUse } from "./shared";
+import { isVoWiFiInUse, softphoneReadyReason } from "./shared";
 import { BrowserSoftphone } from "./BrowserSoftphone";
 
 export interface DeviceOverviewTabProps {
@@ -55,6 +56,9 @@ export function DeviceOverviewTab(props: DeviceOverviewTabProps) {
           trafficSpeedTx={props.trafficSpeedTx}
 		/> : null}
       </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <EpdgStatusCard device={device} />
+      </div>
       {device.developerEnabled && device.networkEnabled && device.id ? <OverviewTrafficChart deviceId={device.id} /> : null}
 	  {device?.id && !wifiCallingOnly ? (
         <OperatorSelectionDialog
@@ -69,7 +73,12 @@ export function DeviceOverviewTab(props: DeviceOverviewTabProps) {
           onUpdated={props.onRefresh}
         />
       ) : null}
-      <BrowserSoftphone deviceId={device.id} enabled={isVoWiFiInUse(device) && !!device.vowifiRuntime?.imsReady} />
+      <BrowserSoftphone
+        deviceId={device.id}
+        deviceName={device.name}
+        ready={isVoWiFiInUse(device) && !!device.vowifiRuntime?.imsReady}
+        reason={softphoneReadyReason(device)}
+      />
     </div>
   );
 }

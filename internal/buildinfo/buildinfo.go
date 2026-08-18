@@ -7,7 +7,7 @@ package buildinfo
 
 // Version is the semantic version of this build. It defaults to the dev
 // sentinel when no -ldflags override is supplied.
-var Version = "1.1.3"
+var Version = "1.1.4"
 
 // BuildTime is the UTC timestamp the binary was built at (RFC3339), or empty
 // for a local dev build.

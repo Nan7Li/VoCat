@@ -411,6 +411,9 @@ type Call struct {
 	MediaReady bool       `json:"media_ready,omitempty"`
 	Codec      string     `json:"codec,omitempty"`
 	EndedAt    *time.Time `json:"ended_at,omitempty"`
+	// Recording is the WAV file path relative to the server's recordings
+	// directory, populated when the call media recorder is active.
+	Recording string `json:"recording,omitempty"`
 }
 
 // CallController is an optional capability of an IMS session. Media remains a

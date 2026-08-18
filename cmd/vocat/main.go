@@ -245,6 +245,7 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 		database,
 		deviceManager,
 		cardReaders,
+		filepath.Join(filepath.Dir(cfg.DatabasePath), "recordings"),
 	)
 	if err != nil {
 		return fmt.Errorf("configure VoWiFi runtime: %w", err)
@@ -282,11 +283,13 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 		UpdateToken:         strings.TrimSpace(os.Getenv("GITHUB_TOKEN")),
 		HTTPS:               httpsManager,
 		WireGuard:           wireGuardManager,
+		RecordingsDir:       filepath.Join(filepath.Dir(cfg.DatabasePath), "recordings"),
 	})
 	if err != nil {
 		return err
 	}
 	go handler.StartLogRetentionLoop(pollContext, time.Minute)
+	go handler.RunCallHistoryWatcher(pollContext)
 	go handler.StartSMSSyncLoop(pollContext, 15*time.Second)
 	handler.StartTelegramBot(pollContext)
 	handler.StartSMSNotificationDispatchers(pollContext)
@@ -586,6 +589,7 @@ func configureVoWiFiRuntime(
 	database *store.Store,
 	deviceManager *device.Manager,
 	cardReaders *pcsc.Service,
+	recordingsDir string,
 ) (*vowifiruntime.Manager, error) {
 	mapper := integration.ATMapper{
 		Store:   database,
@@ -641,7 +645,7 @@ func configureVoWiFiRuntime(
 			} else if deviceConfig.DeviceType == store.DeviceTypeWiFi410 {
 				adapter = nativeQMIAdapter
 			}
-			return newVoWiFiOrchestrator(deviceConfig, database, adapter, logger)
+			return newVoWiFiOrchestrator(deviceConfig, database, adapter, logger, recordingsDir)
 		},
 	})
 
@@ -741,6 +745,7 @@ func newVoWiFiOrchestrator(
 	database *store.Store,
 	adapter vowifiDeviceAdapter,
 	logger *slog.Logger,
+	recordingsDir string,
 ) (*vowifi.Orchestrator, error) {
 	apn := deviceConfig.APN
 	if apn == "" {
@@ -754,6 +759,9 @@ func newVoWiFiOrchestrator(
 	}
 	imsProvider, err := ims.NewProvider(adapter, ims.Config{
 		Logger: logger,
+		// Call audio is tee'd into stereo WAV files (channel 0 = remote,
+		// channel 1 = local microphone) under the recordings directory.
+		RecordingsDir: recordingsDir,
 		// Carrier-specific transport and SMSC defaults live in the shared data
 		// profile. Prefer network-provided P-CSCF hints, then safely try the
 		// alternate transport only if no SIP response was observed.
@@ -845,14 +853,28 @@ func newVoWiFiOrchestrator(
 		Proxy: integration.ProxyResolver{
 			Store: database,
 			Probe: func(ctx context.Context, upstream store.UpstreamProxy, epdg string) error {
-				result, err := localproxy.ProbeSOCKS5EPDGPorts(ctx, upstream.Addr, upstream.Username, upstream.Password, epdg, 8*time.Second)
-				if err != nil {
-					return err
+				result, probeErr := localproxy.ProbeSOCKS5EPDGPorts(ctx, upstream.Addr, upstream.Username, upstream.Password, epdg, 8*time.Second)
+				status := store.EPDGProbeStatus{
+					DeviceID:   deviceConfig.ID,
+					EPDG:       epdg,
+					Port500OK:  result.Port500OK,
+					Port4500OK: result.Port4500OK,
+					RTT500MS:   result.RTT500MS,
+					RTT4500MS:  result.RTT4500MS,
+					CheckedAt:  time.Now().UTC(),
 				}
-				if !result.Port500OK || !result.Port4500OK {
-					return fmt.Errorf("ePDG UDP/500 and UDP/4500 health check did not pass")
+				if probeErr != nil {
+					status.Error = probeErr.Error()
+					status.DisabledVoWiFi = true
+				} else if !result.Port500OK || !result.Port4500OK {
+					status.Error = "ePDG UDP/500 and UDP/4500 health check did not pass"
+					status.DisabledVoWiFi = true
+					probeErr = fmt.Errorf("%s", status.Error)
 				}
-				return nil
+				if saveErr := database.SaveEPDGProbeStatus(ctx, status); saveErr != nil {
+					logger.Warn("save ePDG probe status", "device_id", deviceConfig.ID, "error", saveErr)
+				}
+				return probeErr
 			},
 		},
 		Tunnel: tunnelProvider,

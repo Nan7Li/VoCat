@@ -142,6 +142,13 @@ func (s *Server) handleCallAction(w http.ResponseWriter, r *http.Request, config
 			}
 		}
 		s.recordAudit(r.Context(), "admin", "call."+action, "device", config.ID, "success", transport)
+		// Persist the lifecycle immediately so history is fresh even before the
+		// background watcher's next tick; the watcher later finalises the row.
+		if calls, listErr := controller.Calls(config.ID); listErr == nil {
+			for _, call := range calls {
+				s.upsertCallRecord(r.Context(), config.ID, call)
+			}
+		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"data": map[string]any{
 			"accepted": true, "action": action, "number": number, "call_id": callID,
 			"duration_seconds": int(duration / time.Second), "transport": transport, "call": result,
@@ -165,6 +172,7 @@ func (s *Server) handleCallAction(w http.ResponseWriter, r *http.Request, config
 		}
 	}
 	s.recordAudit(r.Context(), "admin", "call."+action, "device", config.ID, "success", transport)
+	s.upsertCellularCallRecord(r.Context(), config.ID, number, action)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"data": map[string]any{
 			"accepted": true, "action": action, "number": number,

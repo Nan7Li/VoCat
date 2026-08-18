@@ -395,6 +395,52 @@ func migrationStatements(version int) []string {
 			`CREATE INDEX IF NOT EXISTS wireguard_tunnels_name_idx
 				ON wireguard_tunnels(name, id)`,
 		}
+	case 21:
+		return []string{
+			// Phone page: persisted call history (number, direction, timing,
+			// outcome, device) plus the optional WAV recording filename. The
+			// (device_id, call_id) pair is unique so the call watcher can update
+			// the same dialog across its lifecycle without duplicates.
+			`CREATE TABLE IF NOT EXISTS call_records (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				device_id TEXT NOT NULL,
+				call_id TEXT NOT NULL,
+				number TEXT NOT NULL DEFAULT '',
+				direction TEXT NOT NULL,
+				state TEXT NOT NULL,
+				started_at INTEGER NOT NULL,
+				answered_at INTEGER,
+				ended_at INTEGER,
+				duration_seconds INTEGER NOT NULL DEFAULT 0 CHECK (duration_seconds >= 0),
+				transport TEXT NOT NULL DEFAULT 'vowifi',
+				recording TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				UNIQUE (device_id, call_id)
+			)`,
+			`CREATE INDEX IF NOT EXISTS call_records_started_idx
+				ON call_records(started_at DESC, id DESC)`,
+			`CREATE INDEX IF NOT EXISTS call_records_device_started_idx
+				ON call_records(device_id, started_at DESC, id DESC)`,
+			// ePDG UDP/500+4500 health-check outcome per device. Powers the
+			// device page's "why is VoWiFi off" explanation when a probe failure
+			// auto-disabled that SIM's VoWiFi.
+			`CREATE TABLE IF NOT EXISTS epdg_probe_status (
+				device_id TEXT PRIMARY KEY,
+				iccid TEXT NOT NULL DEFAULT '',
+				epdg TEXT NOT NULL DEFAULT '',
+				port_500_ok INTEGER NOT NULL DEFAULT 0 CHECK (port_500_ok IN (0, 1)),
+				port_4500_ok INTEGER NOT NULL DEFAULT 0 CHECK (port_4500_ok IN (0, 1)),
+				rtt_500_ms INTEGER NOT NULL DEFAULT 0,
+				rtt_4500_ms INTEGER NOT NULL DEFAULT 0,
+				error TEXT NOT NULL DEFAULT '',
+				checked_at INTEGER NOT NULL,
+				last_success_at INTEGER,
+				last_failure_at INTEGER,
+				disabled_vowifi INTEGER NOT NULL DEFAULT 0 CHECK (disabled_vowifi IN (0, 1)),
+				FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+				)`,
+		}
 	default:
 		return nil
 	}

@@ -52,6 +52,8 @@ export default function DevicesPage() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 	const [dataToggling, setDataToggling] = useState(false);
+	const [airplaneToggling, setAirplaneToggling] = useState(false);
+	const [vowifiToggling, setVowifiToggling] = useState(false);
   const [rebooting, setRebooting] = useState(false);
   const [reconnectingVoWiFi, setReconnectingVoWiFi] = useState(false);
   const [rescanning, setRescanning] = useState(false);
@@ -248,6 +250,38 @@ export default function DevicesPage() {
 	  message.error(apiMessage(e) || (enabled ? t("开启漫游数据失败") : t("关闭漫游数据失败")));
     } finally {
 	  setDataToggling(false);
+    }
+  }, [refreshAll, refreshSoon]);
+
+  const handleToggleAirplane = useCallback(async (enabled: boolean) => {
+    const id = selectedIdRef.current.trim();
+    if (!id) return;
+    setAirplaneToggling(true);
+    try {
+      await api(`/devices/${id}/flight-mode`, { method: "PATCH", body: { enabled } });
+      message.success(enabled ? t("飞行模式已开启") : t("飞行模式已关闭"));
+      await refreshAll();
+      refreshSoon(1500);
+    } catch (e) {
+      message.error(apiMessage(e) || (enabled ? t("开启飞行模式失败") : t("关闭飞行模式失败")));
+    } finally {
+      setAirplaneToggling(false);
+    }
+  }, [refreshAll, refreshSoon]);
+
+  const handleToggleVoWiFi = useCallback(async (enabled: boolean) => {
+    const id = selectedIdRef.current.trim();
+    if (!id) return;
+    setVowifiToggling(true);
+    try {
+      await api(`/devices/${id}/vowifi`, { method: "PATCH", body: { enabled } });
+      message.success(enabled ? t("VoWiFi 已开启，等待 IMS 注册…") : t("VoWiFi 已关闭"));
+      await refreshAll();
+      refreshSoon(3000);
+    } catch (e) {
+      message.error(apiMessage(e) || (enabled ? t("开启 VoWiFi 失败") : t("关闭 VoWiFi 失败")));
+    } finally {
+      setVowifiToggling(false);
     }
   }, [refreshAll, refreshSoon]);
 
@@ -696,6 +730,10 @@ export default function DevicesPage() {
                 onReconnectVowifi={handleReconnectVoWiFi}
                 onRebootModem={handleRebootModem}
                 onOpenSms={handleOpenSms}
+				onToggleAirplane={handleToggleAirplane}
+				onToggleVoWiFi={handleToggleVoWiFi}
+				airplaneToggling={airplaneToggling}
+				vowifiToggling={vowifiToggling}
 				wifiCallingOnly={isReader}
 				modemControlOnly={isNative410}
               />

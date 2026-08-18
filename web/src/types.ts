@@ -38,6 +38,42 @@ export interface VoWiFiCall {
   mediaReady?: boolean;
   codec?: string;
   endedAt?: string;
+  recording?: string;
+}
+
+// One persisted row of the phone page's call history.
+export interface CallRecord {
+  id: number;
+  deviceId: string;
+  number: string;
+  direction: "incoming" | "outgoing";
+  state: "active" | "answered" | "missed" | "failed" | "ended";
+  startedAt?: string;
+  answeredAt?: string | null;
+  endedAt?: string | null;
+  durationSeconds: number;
+  transport: "vowifi" | "cellular";
+  recording?: string;
+}
+
+// Last ePDG UDP/500+4500 health-check outcome for a device.
+export interface EPDGProbeStatus {
+  deviceId: string;
+  iccid?: string;
+  epdg?: string;
+  port500Ok: boolean;
+  port4500Ok: boolean;
+  rtt500Ms?: number;
+  rtt4500Ms?: number;
+  error?: string;
+  checkedAt?: string;
+  lastSuccessAt?: string | null;
+  lastFailureAt?: string | null;
+  disabledVoWiFi: boolean;
+}
+
+export interface CallRecordsResponse {
+  records: CallRecord[];
 }
 
 export interface VoWiFiRuntime {
@@ -132,6 +168,7 @@ export interface DeviceListItem {
   networkConnected: boolean;
   registrationStateLabel: "registered" | "searching" | "denied" | "unknown";
   flightMode?: boolean;
+  epdgProbe?: EPDGProbeStatus;
 }
 
 export interface DevicesResponse {

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   BoardRegular,
+  CallRegular,
   DocumentTextRegular,
   GlobeRegular,
   MailRegular,
@@ -29,6 +30,7 @@ import type { SystemInfo } from "../../types";
 
 const NAV = [
   { to: "/", label: "仪表盘", icon: BoardRegular, end: true },
+  { to: "/phone", label: "电话", icon: CallRegular },
   { to: "/devices", label: "设备管理", icon: RouterRegular },
   { to: "/proxy", label: "代理管理", icon: GlobeRegular },
   { to: "/wireguard", label: "WG 隧道", icon: ShieldLockRegular },
@@ -233,6 +235,15 @@ export function AuthenticatedShell({
           </div>
           <div className="flex items-center gap-2">
             <VersionBadge />
+            <button
+              type="button"
+              onClick={() => window.open("/api/system/diagnostics", "_blank", "noopener,noreferrer")}
+              title={t("下载脱敏诊断包")}
+              className="vocat-glass-btn flex h-[34px] items-center gap-1.5 px-3 text-[12px] font-medium"
+            >
+              <DocumentTextRegular className="h-4 w-4" />
+              <span className="hidden sm:inline">{t("诊断包")}</span>
+            </button>
             <LanguageSwitch />
             <SwitchDark isDark={isDark} onToggle={onToggleTheme} />
           </div>

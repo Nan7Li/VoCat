@@ -36,6 +36,45 @@ type rtpMedia struct {
 	downlink chan []int16
 	closed   chan struct{}
 	close    sync.Once
+
+	recorder *wavRecorder
+}
+
+// startRecording opens a WAV file and begins teeing both call directions.
+// It is safe to call once per media lifetime; a second call is a no-op.
+func (media *rtpMedia) startRecording(path string) error {
+	if path == "" {
+		return nil
+	}
+	media.mu.Lock()
+	defer media.mu.Unlock()
+	if media.recorder != nil {
+		return nil
+	}
+	recorder, err := newWAVRecorder(path)
+	if err != nil {
+		return err
+	}
+	media.recorder = recorder
+	return nil
+}
+
+func (media *rtpMedia) recordDownlink(samples []int16) {
+	media.mu.RLock()
+	recorder := media.recorder
+	media.mu.RUnlock()
+	if recorder != nil {
+		recorder.writeDownlink(samples)
+	}
+}
+
+func (media *rtpMedia) recordUplink(samples []int16) {
+	media.mu.RLock()
+	recorder := media.recorder
+	media.mu.RUnlock()
+	if recorder != nil {
+		recorder.writeUplink(samples)
+	}
 }
 
 func newRTPMedia(local net.IP) (*rtpMedia, error) {
@@ -240,12 +279,14 @@ func (media *rtpMedia) WritePCM(samples []int16) error {
 			}
 		}
 		if _, err := media.conn.WriteToUDP(packet, remote); err != nil {
+			media.recordUplink(samples)
 			return fmt.Errorf("ims: send RTP: %w", err)
 		}
 		media.pending = media.pending[rtpPacketSamples:]
 		media.sequence++
 		media.timestamp += rtpPacketSamples
 	}
+	media.recordUplink(samples)
 	return nil
 }
 
@@ -296,6 +337,7 @@ func (media *rtpMedia) receive() {
 			default:
 			}
 		}
+		media.recordDownlink(samples)
 	}
 }
 
@@ -303,6 +345,13 @@ func (media *rtpMedia) Close() error {
 	media.close.Do(func() {
 		close(media.closed)
 		_ = media.conn.Close()
+		media.mu.Lock()
+		recorder := media.recorder
+		media.recorder = nil
+		media.mu.Unlock()
+		if recorder != nil {
+			_ = recorder.Close()
+		}
 	})
 	return nil
 }

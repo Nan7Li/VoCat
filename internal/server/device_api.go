@@ -1600,6 +1600,22 @@ func (s *Server) configuredDeviceSummary(
 	runtimeTunnelReady, _ := runtimeResponse["tunnel_ready"].(bool)
 	result["vowifi_active"] = config.VoWiFiEnabled && runtimeMatchesCard && runtimeEnabled && runtimeTunnelReady
 	result["radio_mode"] = radioModeForSummary(result)
+	if probe, probeErr := s.store.EPDGProbeStatus(context.Background(), config.ID); probeErr == nil {
+		result["epdg_probe"] = map[string]any{
+			"device_id":       probe.DeviceID,
+			"iccid":           probe.ICCID,
+			"epdg":            probe.EPDG,
+			"port_500_ok":     probe.Port500OK,
+			"port_4500_ok":    probe.Port4500OK,
+			"rtt_500_ms":      probe.RTT500MS,
+			"rtt_4500_ms":     probe.RTT4500MS,
+			"error":           probe.Error,
+			"checked_at":      probe.CheckedAt.Format(time.RFC3339),
+			"last_success_at": formatOptionalTime(probe.LastSuccessAt),
+			"last_failure_at": formatOptionalTime(probe.LastFailureAt),
+			"disabled_vowifi": probe.DisabledVoWiFi,
+		}
+	}
 	// Numbers are SIM-owned data. Resolve the association by the live ICCID
 	// instead of reusing the last VoWiFi runtime attached to this device ID.
 	if entry != nil && entry.Snapshot != nil {

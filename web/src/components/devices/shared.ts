@@ -96,6 +96,36 @@ export function isVoWiFiInUse(device?: {
   return device.vowifiRuntime?.enabled !== false;
 }
 
+// softphoneReadyReason explains why the browser softphone cannot place calls.
+// The softphone is always visible; this text replaces the "IMS not ready"
+// black box with the actual cause (VoWiFi off, ePDG probe failure, IMS phase).
+export function softphoneReadyReason(device?: {
+  vowifiEnabled?: boolean;
+  vowifiRuntime?: { phase?: string; imsReady?: boolean; lastError?: string; lastReason?: string };
+  epdgProbe?: { disabledVoWiFi?: boolean; error?: string; epdg?: string };
+} | null): string {
+  if (!device) return "";
+  if (!device.vowifiEnabled) {
+    return tl("VoWiFi 未开启：请先在设备页打开「VoWiFi」开关，等待 IMS 注册完成。");
+  }
+  if (device.epdgProbe?.disabledVoWiFi) {
+    const error = device.epdgProbe.error
+      ? `：${device.epdgProbe.error}`
+      : "";
+    return tl("ePDG 健康检查失败，VoWiFi 已被自动关闭") + error;
+  }
+  const runtime = device.vowifiRuntime;
+  if (!runtime?.imsReady) {
+    const phase = runtime?.phase ? tl("当前阶段") + ` ${runtime.phase}` : "";
+    const detail = runtime?.lastError || runtime?.lastReason;
+    if (phase && detail) return `${phase}。${tl("原因")}：${detail}`;
+    if (phase) return phase;
+    if (detail) return tl("IMS 注册未完成") + `：${detail}`;
+    return tl("IMS 尚未注册，请等待注册完成或点击「重连 VoWiFi」。");
+  }
+  return "";
+}
+
 export interface StatusMeta {
   label: string;
   tag: "success" | "warning" | "danger";
