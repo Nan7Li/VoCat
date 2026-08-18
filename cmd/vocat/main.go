@@ -29,6 +29,7 @@ import (
 	"vocat/internal/loghub"
 	"vocat/internal/modem"
 	"vocat/internal/pcsc"
+	localproxy "vocat/internal/proxy"
 	"vocat/internal/server"
 	"vocat/internal/store"
 	"vocat/internal/update"
@@ -838,10 +839,22 @@ func newVoWiFiOrchestrator(
 		return nil, fmt.Errorf("device %q IMS provider: %w", deviceConfig.ID, err)
 	}
 	orchestrator, err := vowifi.New(vowifi.Dependencies{
-		SIM:    adapter,
-		AKA:    adapter,
-		Radio:  adapter,
-		Proxy:  integration.ProxyResolver{Store: database},
+		SIM:   adapter,
+		AKA:   adapter,
+		Radio: adapter,
+		Proxy: integration.ProxyResolver{
+			Store: database,
+			Probe: func(ctx context.Context, upstream store.UpstreamProxy, epdg string) error {
+				result, err := localproxy.ProbeSOCKS5EPDGPorts(ctx, upstream.Addr, upstream.Username, upstream.Password, epdg, 8*time.Second)
+				if err != nil {
+					return err
+				}
+				if !result.Port500OK || !result.Port4500OK {
+					return fmt.Errorf("ePDG UDP/500 and UDP/4500 health check did not pass")
+				}
+				return nil
+			},
+		},
 		Tunnel: tunnelProvider,
 		IMS:    imsProvider,
 		Phones: integration.PhoneStore{Store: database, DeviceID: deviceConfig.ID},

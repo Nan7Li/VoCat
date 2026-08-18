@@ -132,6 +132,7 @@ func (s *Server) StartTelegramBot(ctx context.Context) {
 	}
 	go bot.poll(ctx)
 	go bot.notifyInboundSMS(ctx)
+	go bot.notifyInboundCalls(ctx)
 }
 
 func (bot *telegramBot) poll(ctx context.Context) {
@@ -2308,8 +2309,8 @@ func (bot *telegramBot) loadConfig(ctx context.Context) (telegramRuntimeConfig, 
 		return telegramRuntimeConfig{}, false, fmt.Errorf("decode Telegram config: %w", err)
 	}
 	config := telegramRuntimeConfig{
-		Token:   configString(raw, "bot_token"),
-		ChatID:  configString(raw, "chat_id"),
+		Token:        configString(raw, "bot_token"),
+		ChatID:       configString(raw, "chat_id"),
 		BaseURL:      configString(raw, "base_url"),
 		Proxy:        configString(raw, "proxy"),
 		ViaInterface: configString(raw, "via_interface"),
@@ -2534,5 +2535,68 @@ func waitTelegram(ctx context.Context, duration time.Duration) bool {
 		return false
 	case <-timer.C:
 		return true
+	}
+}
+
+func (bot *telegramBot) notifyInboundCalls(ctx context.Context) {
+	previous := map[string]map[string]string{}
+	for ctx.Err() == nil {
+		config, enabled, err := bot.loadConfig(ctx)
+		if err != nil {
+			bot.warn("load Telegram call notification configuration", err)
+		} else if enabled {
+			controller, ok := bot.server.vowifi.(VoWiFiCallController)
+			if ok {
+				devices, listErr := bot.server.store.ListDevices(ctx)
+				if listErr != nil {
+					bot.warn("list devices for Telegram call notifications", listErr)
+				} else {
+					for _, device := range devices {
+						calls, callErr := controller.Calls(device.ID)
+						if callErr != nil {
+							continue
+						}
+						seen := previous[device.ID]
+						if seen == nil {
+							seen = map[string]string{}
+						}
+						next := map[string]string{}
+						for _, call := range calls {
+							before := seen[call.ID]
+							next[call.ID] = call.State
+							if call.Direction != "incoming" {
+								continue
+							}
+							number := strings.TrimSpace(call.Number)
+							if number == "" {
+								number = "未知号码"
+							}
+							label := strings.TrimSpace(device.Name)
+							if label == "" {
+								label = device.ID
+							}
+							if call.State == "ringing" && before != "ringing" {
+								text := fmt.Sprintf("📞 来电\n设备：%s\n号码：%s", label, number)
+								if sendErr := bot.sendText(ctx, config, 0, text, nil); sendErr != nil {
+									bot.warn("send Telegram incoming-call notification", sendErr)
+									break
+								}
+							}
+							if (call.State == "ended" || call.State == "failed") && before == "ringing" {
+								text := fmt.Sprintf("📵 未接来电\n设备：%s\n号码：%s", label, number)
+								if sendErr := bot.sendText(ctx, config, 0, text, nil); sendErr != nil {
+									bot.warn("send Telegram missed-call notification", sendErr)
+									break
+								}
+							}
+						}
+						previous[device.ID] = next
+					}
+				}
+			}
+		}
+		if !waitTelegram(ctx, telegramNotificationPeriod) {
+			return
+		}
 	}
 }

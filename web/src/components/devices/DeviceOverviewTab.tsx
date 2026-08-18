@@ -8,6 +8,7 @@ import { OperatorSelectionDialog } from "./OperatorSelectionDialog";
 import type { DeviceDetail } from "./types";
 import { useI18n } from "../../lib/i18n";
 import { isVoWiFiInUse } from "./shared";
+import { BrowserSoftphone } from "./BrowserSoftphone";
 
 export interface DeviceOverviewTabProps {
   device: DeviceDetail;
@@ -68,6 +69,7 @@ export function DeviceOverviewTab(props: DeviceOverviewTabProps) {
           onUpdated={props.onRefresh}
         />
       ) : null}
+      <BrowserSoftphone deviceId={device.id} enabled={isVoWiFiInUse(device) && !!device.vowifiRuntime?.imsReady} />
     </div>
   );
 }

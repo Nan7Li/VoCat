@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertRegular, CheckmarkRegular } from "@fluentui/react-icons";
+import { AlertRegular, ArrowDownloadRegular, CheckmarkRegular } from "@fluentui/react-icons";
 import { api, apiMessage, getSecuritySettings, updateSecuritySettings } from "../api";
 import type { AutoUpdateSettings, DeveloperSettings, HTTPSSettings, NotificationSettings, SecuritySettings, SystemInfo, UpstreamVocatStatus } from "../types";
 import { Button, PageHeader, confirmDialog, message } from "../components/ui";
@@ -491,9 +491,19 @@ export default function SettingsPage() {
     }
   }, [updateInfo]);
 
+  const onDownloadDiagnostics = useCallback(() => {
+    window.open("/api/system/diagnostics", "_blank", "noopener,noreferrer");
+  }, []);
+
   return (
     <div className="mx-auto max-w-5xl">
-      <PageHeader title={t("系统设置")} subtitle={t("管理网关参数与运行信息")} />
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+        <PageHeader title={t("系统设置")} subtitle={t("管理网关参数与运行信息")} />
+        <Button variant="default" onClick={onDownloadDiagnostics}>
+          <ArrowDownloadRegular className="mr-1.5 h-4 w-4" />
+          {t("下载脱敏诊断包")}
+        </Button>
+      </div>
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
         <AppearanceCard />
         <SecurityCard

@@ -28,6 +28,18 @@ export interface ApiErrorBody {
   busy?: boolean;
 }
 
+export interface VoWiFiCall {
+  id: string;
+  number?: string;
+  direction: string;
+  state: string;
+  startedAt?: string;
+  answeredAt?: string;
+  mediaReady?: boolean;
+  codec?: string;
+  endedAt?: string;
+}
+
 export interface VoWiFiRuntime {
   deviceId: string;
   phase: string;
@@ -114,6 +126,7 @@ export interface DeviceListItem {
 	  networkEnabled: boolean;
   vowifiEnabled: boolean;
   vowifiActive?: boolean;
+  radioMode?: "cellular" | "airplane" | "vowifi" | "transition" | "offline";
   vowifiRuntime: VoWiFiRuntime;
   modem: ModemSummary;
   networkConnected: boolean;

@@ -1391,11 +1391,7 @@ func (s *Server) liveCardPolicyFlags(ctx context.Context, iccid string) (vowifi,
 		if !strings.EqualFold(strings.TrimSpace(entry.Snapshot.ICCID), clean) {
 			continue
 		}
-		// VoWiFi is an RF-off service mode. Surface that fact explicitly: while
-		// VoWiFi is selected both switches are on, but the airplane switch is
-		// read-only in the UI. Once VoWiFi is disabled, airplane remains on until
-		// the user explicitly turns it off.
-		return config.VoWiFiEnabled, config.VoWiFiEnabled || entry.Snapshot.FlightMode, true
+		return config.VoWiFiEnabled, entry.Snapshot.FlightMode, true
 	}
 	return false, false, false
 }
@@ -1494,13 +1490,6 @@ func (s *Server) handleCardPolicy(w http.ResponseWriter, r *http.Request, iccid 
 		}
 		if request.AirplaneEnabled != nil {
 			policy.AirplaneEnabled = *request.AirplaneEnabled
-		}
-		// VoWiFi always owns an RF-off modem. Store airplane=true even when an
-		// older client omits that implication, so disabling VoWiFi cannot expose a
-		// brief cellular attach window.
-		if policy.VoWiFiEnabled {
-			policy.AirplaneEnabled = true
-			policy.NetworkEnabled = false
 		}
 		if policy.IPVersion == "" {
 			policy.IPVersion = "IPV4V6"

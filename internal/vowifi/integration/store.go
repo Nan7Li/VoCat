@@ -17,6 +17,10 @@ import (
 
 type ProxyResolver struct {
 	Store *store.Store
+	// Probe is injected by the production wiring so country-bound routes are
+	// fail-closed when the upstream cannot carry the VoWiFi UDP path. Tests can
+	// leave it nil to exercise pure persistence resolution.
+	Probe func(context.Context, store.UpstreamProxy, string) error
 }
 
 func (resolver ProxyResolver) Resolve(
@@ -78,6 +82,16 @@ func (resolver ProxyResolver) Resolve(
 			deviceID,
 		)
 	}
+	if resolver.Probe != nil {
+		epdg, _ := vowifi.DeriveEPDG(vowifi.SIMIdentity{
+			HomeMCC: strings.TrimSpace(request.HomeMCC),
+			HomeMNC: strings.TrimSpace(request.HomeMNC),
+		})
+		if err := resolver.Probe(ctx, upstream, epdg); err != nil {
+			resolver.disableSIMVoWiFi(ctx, deviceID, iccid)
+			return vowifi.ProxyRoute{}, errors.New("UDP health check failed for the selected country-bound proxy")
+		}
+	}
 	if matchedCountryRule && iccid != "" {
 		created, bindErr := resolver.Store.InsertDeviceProxyBindingIfAbsent(ctx, store.DeviceProxyBinding{
 			DeviceID:        deviceID,
@@ -113,6 +127,33 @@ func (resolver ProxyResolver) Resolve(
 		Username: upstream.Username,
 		Password: upstream.Password,
 	}, nil
+}
+
+func (resolver ProxyResolver) disableSIMVoWiFi(ctx context.Context, deviceID, iccid string) {
+	if resolver.Store == nil {
+		return
+	}
+	iccid = strings.TrimSpace(iccid)
+	deviceID = strings.TrimSpace(deviceID)
+	if iccid != "" {
+		policy, err := resolver.Store.CardPolicy(ctx, iccid)
+		if errors.Is(err, store.ErrNotFound) {
+			policy = store.CardPolicy{ICCID: iccid, IPVersion: "IPV4V6"}
+			err = nil
+		}
+		if err == nil {
+			policy.VoWiFiEnabled = false
+			policy.Source = "epdg_probe"
+			_ = resolver.Store.UpsertCardPolicy(ctx, policy)
+		}
+	}
+	if deviceID != "" {
+		device, err := resolver.Store.Device(ctx, deviceID)
+		if err == nil {
+			device.VoWiFiEnabled = false
+			_ = resolver.Store.UpsertDevice(ctx, device)
+		}
+	}
 }
 
 type PhoneStore struct {

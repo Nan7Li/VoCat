@@ -856,10 +856,6 @@ func (s *Server) handleVoWiFiEnabled(
 		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this Linux host")
 		return true
 	}
-	if request.Enabled && config.NetworkEnabled {
-		writeError(w, http.StatusConflict, "cellular_data_active", "disable roaming data before enabling VoWiFi")
-		return true
-	}
 	if request.Enabled {
 		entry, _, _ := s.physicalForConfig(config)
 		imsi := snapshotString(entry.Snapshot, func(snapshot *device.Snapshot) string { return snapshot.IMSI })
@@ -876,7 +872,7 @@ func (s *Server) handleVoWiFiEnabled(
 	previous := config.VoWiFiEnabled
 	liveICCID := ""
 	entry, physicalID, present := s.physicalForConfig(config)
-	if present {
+	if present && request.Enabled {
 		if _, err := s.devices.SetFlight(r.Context(), physicalID, true); err != nil {
 			s.writeDeviceError(w, err)
 			return true
@@ -896,8 +892,9 @@ func (s *Server) handleVoWiFiEnabled(
 				return true
 			}
 			policy.VoWiFiEnabled = request.Enabled
-			policy.AirplaneEnabled = true
-			policy.NetworkEnabled = false
+			if request.Enabled {
+				policy.AirplaneEnabled = true
+			}
 			policy.Source = "manual"
 			if err := s.store.UpsertCardPolicy(r.Context(), policy); err != nil {
 				s.writeStoreError(w, err)
@@ -915,8 +912,6 @@ func (s *Server) handleVoWiFiEnabled(
 			return
 		}
 		policy.VoWiFiEnabled = previous
-		policy.AirplaneEnabled = true
-		policy.NetworkEnabled = false
 		_ = s.store.UpsertCardPolicy(context.Background(), policy)
 	}
 	config.VoWiFiEnabled = request.Enabled
@@ -1604,6 +1599,7 @@ func (s *Server) configuredDeviceSummary(
 	runtimeEnabled, _ := runtimeResponse["enabled"].(bool)
 	runtimeTunnelReady, _ := runtimeResponse["tunnel_ready"].(bool)
 	result["vowifi_active"] = config.VoWiFiEnabled && runtimeMatchesCard && runtimeEnabled && runtimeTunnelReady
+	result["radio_mode"] = radioModeForSummary(result)
 	// Numbers are SIM-owned data. Resolve the association by the live ICCID
 	// instead of reusing the last VoWiFi runtime attached to this device ID.
 	if entry != nil && entry.Snapshot != nil {
@@ -1645,6 +1641,7 @@ func (s *Server) configuredDeviceOverview(
 	result["network_enabled"] = developerActive && config.NetworkEnabled
 	result["vowifi_enabled"] = config.VoWiFiEnabled
 	result["radio_live_ok"] = present && entry.Snapshot != nil && entry.Snapshot.Responsive
+	result["radio_mode"] = radioModeForSummary(result)
 
 	// Live network state: on-demand sample of the cellular interface counters,
 	// kept warm by the 2s overview SSE cadence. Only meaningful when the modem
@@ -1671,6 +1668,25 @@ func (s *Server) configuredDeviceOverview(
 		result["traffic_meta"] = map[string]any{}
 	}
 	return result
+}
+
+func radioModeForSummary(result map[string]any) string {
+	if running, ok := result["running"].(bool); ok && !running {
+		return "offline"
+	}
+	if active, _ := result["vowifi_active"].(bool); active {
+		return "vowifi"
+	}
+	if phase, _ := result["lifecycle_phase"].(string); phase == "rebooting" || phase == "recovering" || phase == "worker_starting" || phase == "qmi_starting" || phase == "stopping" {
+		return "transition"
+	}
+	if flight, _ := result["flight_mode"].(bool); flight {
+		return "airplane"
+	}
+	if network, _ := result["network_enabled"].(bool); network {
+		return "cellular"
+	}
+	return "airplane"
 }
 
 func (s *Server) configuredDeviceStatus(

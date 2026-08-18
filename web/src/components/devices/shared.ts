@@ -62,6 +62,32 @@ export function isRegistered(device?: { modem?: { regStatus?: number } } | null)
 // The stored device flag is the desired policy, while runtime.enabled is the
 // live owner of RF/IKE/IMS. A stale desired flag must not replace a healthy
 // cellular overview with an all-red "disabled" VoWiFi pipeline.
+
+export type RadioMode = "cellular" | "airplane" | "vowifi" | "transition" | "offline";
+
+export function radioMode(device?: {
+  running?: boolean;
+  radioMode?: RadioMode;
+  vowifiActive?: boolean;
+  vowifiEnabled?: boolean;
+  vowifiRuntime?: { enabled?: boolean; tunnelReady?: boolean };
+  flightMode?: boolean;
+  networkEnabled?: boolean;
+  lifecyclePhase?: string;
+} | null): RadioMode {
+  if (device?.radioMode) return device.radioMode;
+  if (!device?.running) return "offline";
+  if (device.vowifiActive || (device.vowifiEnabled && device.vowifiRuntime?.enabled !== false && device.vowifiRuntime?.tunnelReady)) {
+    return "vowifi";
+  }
+  if (device.lifecyclePhase === "rebooting" || device.lifecyclePhase === "recovering" || device.lifecyclePhase === "worker_starting" || device.lifecyclePhase === "qmi_starting" || device.lifecyclePhase === "stopping") {
+    return "transition";
+  }
+  if (device.flightMode) return "airplane";
+  if (device.networkEnabled) return "cellular";
+  return "airplane";
+}
+
 export function isVoWiFiInUse(device?: {
   vowifiEnabled?: boolean;
   vowifiRuntime?: { enabled?: boolean };
