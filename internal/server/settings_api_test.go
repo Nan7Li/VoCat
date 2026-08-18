@@ -714,11 +714,11 @@ func TestCardPolicyDefaultValidationAndPersistence(t *testing.T) {
 	response = decodeSettingsResponse(t, recorder)
 	policy = response["data"].(map[string]any)
 	if policy["source"] != "manual" || policy["vowifi_enabled"] != true ||
-		policy["airplane_enabled"] != true || policy["ip_version"] != "IPV4V6" {
+		policy["airplane_enabled"] != false || policy["ip_version"] != "IPV4V6" {
 		t.Fatalf("saved policy = %#v", policy)
 	}
 	stored, err := test.database.CardPolicy(context.Background(), iccid)
-	if err != nil || !stored.VoWiFiEnabled || !stored.AirplaneEnabled || stored.APN != "ims" || stored.CustomPhoneNumber != "+8613800138000" {
+	if err != nil || !stored.VoWiFiEnabled || stored.AirplaneEnabled || stored.APN != "ims" || stored.CustomPhoneNumber != "+8613800138000" {
 		t.Fatalf("stored policy = %+v, %v", stored, err)
 	}
 

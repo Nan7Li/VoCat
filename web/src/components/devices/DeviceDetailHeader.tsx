@@ -3,7 +3,7 @@ import { Button, Switch } from "../ui";
 import type { DeviceDetail } from "./types";
 import { useI18n } from "../../lib/i18n";
 import { deviceTypeImage } from "../../lib/deviceTypes";
-import { isVoWiFiInUse } from "./shared";
+import { isVoWiFiInUse, radioMode } from "./shared";
 
 export interface DeviceDetailHeaderProps {
   device: DeviceDetail;
@@ -23,6 +23,8 @@ export function DeviceDetailHeader(props: DeviceDetailHeaderProps) {
   const { t } = useI18n();
   const { device } = props;
 	const vowifiInUse = isVoWiFiInUse(device);
+	const mode = radioMode(device);
+	const modeLabel = mode === "vowifi" ? t("VoWiFi") : mode === "cellular" ? t("4G 数据") : mode === "airplane" ? t("飞行模式") : mode === "transition" ? t("切换中") : t("离线");
   return (
     <div className="ui-card p-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -36,6 +38,7 @@ export function DeviceDetailHeader(props: DeviceDetailHeaderProps) {
                   {device.id}
                 </span>
               </div>
+              <div className="mt-1 text-[11px] font-semibold text-[var(--color-primary)]">{t("当前射频模式")}：{modeLabel}</div>
             </div>
           </div>
         </div>

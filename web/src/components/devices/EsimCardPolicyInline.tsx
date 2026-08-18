@@ -82,7 +82,7 @@ export function EsimCardPolicyInline({ deviceId, iccid, isActiveCard, deviceOnli
               compact
               title={t("飞行")}
               checked={local.airplaneEnabled}
-              disabled={local.vowifiEnabled || toggles.airplanePending}
+              disabled={toggles.airplanePending}
               pending={toggles.airplanePending}
               failed={toggles.airplaneFailed}
               onToggle={toggles.onAirplaneToggle}

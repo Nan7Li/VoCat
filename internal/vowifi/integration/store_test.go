@@ -3,6 +3,8 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,6 +102,48 @@ func TestProxyResolverUsesCountryRuleWithoutICCIDBinding(t *testing.T) {
 	}
 	if route.Mode != vowifi.ProxyModeSOCKS5 || route.ID != "legacy" {
 		t.Fatalf("route = %#v, want MCC country fallback", route)
+	}
+}
+
+func TestProxyResolverFailsClosedWhenCountryProxyUDPHealthFails(t *testing.T) {
+	database := testStore(t)
+	ctx := context.Background()
+	if err := database.UpsertUpstreamProxy(ctx, store.UpstreamProxy{
+		ID: "gb", Name: "GB", Addr: "127.0.0.1:1080", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.UpsertCountryRule(ctx, store.CountryRule{
+		CountryCode: "GB", CountryName: "United Kingdom", UpstreamProxyID: "gb", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.UpsertDevice(ctx, store.Device{ID: "ec20", Name: "EC20", VoWiFiEnabled: true, NetworkEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.UpsertCardPolicy(ctx, store.CardPolicy{ICCID: "8901000000000000001", VoWiFiEnabled: true, NetworkEnabled: true, AirplaneEnabled: true, IPVersion: "IPV4V6"}); err != nil {
+		t.Fatal(err)
+	}
+	resolver := ProxyResolver{
+		Store: database,
+		Probe: func(context.Context, store.UpstreamProxy, string) error {
+			return errors.New("udp 500/4500 health check failed")
+		},
+	}
+	_, err := resolver.Resolve(ctx, vowifi.ProxyRequest{DeviceID: "ec20", ICCID: "8901000000000000001", HomeMCC: "234"})
+	if err == nil || !strings.Contains(err.Error(), "UDP health") {
+		t.Fatalf("Resolve error = %v, want fail-closed UDP health error", err)
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "united") || strings.Contains(err.Error(), "234") || strings.Contains(strings.ToLower(err.Error()), "gb") {
+		t.Fatalf("error leaked country: %v", err)
+	}
+	device, err := database.Device(ctx, "ec20")
+	if err != nil || device.VoWiFiEnabled || !device.NetworkEnabled {
+		t.Fatalf("device after probe fail = %+v, %v", device, err)
+	}
+	policy, err := database.CardPolicy(ctx, "8901000000000000001")
+	if err != nil || policy.VoWiFiEnabled || !policy.NetworkEnabled {
+		t.Fatalf("card policy after probe fail = %+v, %v", policy, err)
 	}
 }
 

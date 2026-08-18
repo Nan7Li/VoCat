@@ -52,6 +52,8 @@ func (s *Server) routeGeneralAPI(w http.ResponseWriter, r *http.Request) bool {
 		s.handleLogStream(w, r)
 	case "system/info":
 		s.handleSystemInfo(w, r)
+	case "system/diagnostics":
+		s.handleDiagnostics(w, r)
 	case "system/update/check":
 		s.handleUpdateCheck(w, r)
 	case "system/update/apply":
