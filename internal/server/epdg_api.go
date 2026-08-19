@@ -65,8 +65,23 @@ func (s *Server) handleEPDGProbe(w http.ResponseWriter, r *http.Request, config 
 	} else if !result.Port500OK || !result.Port4500OK {
 		status.Error = "ePDG UDP/500 and UDP/4500 health check did not pass"
 	}
-	if saveErr := s.store.SaveEPDGProbeStatus(r.Context(), status); saveErr != nil {
-		writeError(w, http.StatusInternalServerError, "epdg_probe_save_failed", saveErr.Error())
+	if s.logger != nil {
+		s.logger.Info("ePDG probe",
+			"device_id", config.ID,
+			"epdg", host,
+			"via", map[bool]string{true: "socks5", false: "direct"}[upstream != nil],
+			"port_500_ok", result.Port500OK,
+			"port_4500_ok", result.Port4500OK,
+			"rtt_500_ms", result.RTT500MS,
+			"rtt_4500_ms", result.RTT4500MS,
+			"error", status.Error,
+		)
+	}
+	if saveErr := s.store.SaveEPDGProbeStatus(context.Background(), status); saveErr != nil {
+		if s.logger != nil {
+			s.logger.Error("save ePDG probe status", "device_id", config.ID, "error", saveErr)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": epdgProbePayload(status)})
 		return true
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": epdgProbePayload(status)})

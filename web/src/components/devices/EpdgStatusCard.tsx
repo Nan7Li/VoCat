@@ -17,7 +17,10 @@ export function EpdgStatusCard({ device, onRefreshed }: { device: DeviceDetail; 
     if (!device.id || busy) return;
     setBusy(true);
     try {
-      const result = await api<EPDGProbeStatus>(`/devices/${encodeURIComponent(device.id)}/epdg/probe`, { method: "POST" });
+      const result = await api<EPDGProbeStatus>(`/devices/${encodeURIComponent(device.id)}/epdg/probe`, {
+        method: "POST",
+        signal: AbortSignal.timeout(20000),
+      });
       setLocalProbe(result);
       if (result.port500Ok && result.port4500Ok) message.success(t("ePDG 探测通过"));
       else message.warning(result.error || t("ePDG 探测未通过"));
