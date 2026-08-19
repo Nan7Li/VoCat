@@ -1340,4 +1340,11 @@ export const EN_DICT: Record<string, string> = {
   "对方已振铃，正在建立通话": "The other party is ringing; connecting the call",
   "通话进行中": "Call in progress",
   "点击接听开始通话": "Tap Answer to start the call",
+  "立即检测": "Check now",
+  "检测中": "Checking",
+  "ePDG 探测通过": "ePDG probe passed",
+  "ePDG 探测未通过": "ePDG probe did not pass",
+  "ePDG 探测失败": "ePDG probe failed",
+  "尚无探测记录。点「立即检测」会按当前 SIM 推导 ePDG，走已绑定的 SOCKS5 或本机默认路由探测 UDP/500 与 UDP/4500。":
+    "No probe yet. Check now derives the ePDG from the current SIM and tests UDP/500 and UDP/4500 via the bound SOCKS5 proxy or the host default route.",
 };

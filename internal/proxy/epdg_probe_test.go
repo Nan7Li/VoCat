@@ -63,3 +63,10 @@ func TestProbeSOCKS5EPDGPortsRejectsEmptyHost(t *testing.T) {
 		t.Fatal("empty ePDG host was accepted")
 	}
 }
+
+func TestProbeDirectEPDGPortsRejectsEmptyHost(t *testing.T) {
+	_, err := ProbeDirectEPDGPorts(context.Background(), "", 0)
+	if err == nil {
+		t.Fatal("empty ePDG host was accepted")
+	}
+}

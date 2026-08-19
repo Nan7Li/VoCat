@@ -8,8 +8,7 @@ import { OperatorSelectionDialog } from "./OperatorSelectionDialog";
 import { EpdgStatusCard } from "./EpdgStatusCard";
 import type { DeviceDetail } from "./types";
 import { useI18n } from "../../lib/i18n";
-import { isVoWiFiInUse, softphoneReadyReason } from "./shared";
-import { BrowserSoftphone } from "./BrowserSoftphone";
+import { isVoWiFiInUse } from "./shared";
 
 export interface DeviceOverviewTabProps {
   device: DeviceDetail;
@@ -57,7 +56,7 @@ export function DeviceOverviewTab(props: DeviceOverviewTabProps) {
 		/> : null}
       </div>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <EpdgStatusCard device={device} />
+        <EpdgStatusCard device={device} onRefreshed={props.onRefresh} />
       </div>
       {device.developerEnabled && device.networkEnabled && device.id ? <OverviewTrafficChart deviceId={device.id} /> : null}
 	  {device?.id && !wifiCallingOnly ? (
@@ -73,13 +72,6 @@ export function DeviceOverviewTab(props: DeviceOverviewTabProps) {
           onUpdated={props.onRefresh}
         />
       ) : null}
-      <BrowserSoftphone
-        deviceId={device.id}
-        deviceName={device.name}
-        ready={isVoWiFiInUse(device) && !!device.vowifiRuntime?.imsReady}
-        reason={softphoneReadyReason(device)}
-        layout="compact"
-      />
     </div>
   );
 }

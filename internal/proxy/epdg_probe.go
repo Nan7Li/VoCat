@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -86,6 +87,83 @@ func ProbeSOCKS5EPDGPorts(ctx context.Context, address, username, password, host
 				break
 			}
 		}
+	}
+	if !result.Port500OK || !result.Port4500OK {
+		return result, errors.New("ePDG UDP/500 and UDP/4500 did not both respond")
+	}
+	return result, nil
+}
+
+// ProbeDirectEPDGPorts sends the same IKE-shaped datagrams to UDP/500 and
+// UDP/4500 on the host's default route (WireGuard, policy routing, or
+// unproxied WAN). Use this when VoWiFi is not bound to a SOCKS5 upstream.
+func ProbeDirectEPDGPorts(ctx context.Context, host string, timeout time.Duration) (EPDGProbeResult, error) {
+	host = strings.TrimSpace(host)
+	if host == "" || strings.ContainsAny(host, " \t\r\n/") || len(host) > 253 {
+		return EPDGProbeResult{}, errors.New("ePDG host is invalid")
+	}
+	if timeout <= 0 {
+		timeout = 8 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return EPDGProbeResult{}, err
+	}
+	var target net.IP
+	for _, item := range ips {
+		if item.IP.To4() != nil {
+			target = item.IP.To4()
+			break
+		}
+	}
+	if target == nil && len(ips) > 0 {
+		target = ips[0].IP
+	}
+	if target == nil {
+		return EPDGProbeResult{}, errors.New("ePDG host did not resolve")
+	}
+
+	result := EPDGProbeResult{}
+	perAttempt := timeout / 2
+	if perAttempt < 2*time.Second {
+		perAttempt = 2 * time.Second
+	}
+	for _, item := range []struct {
+		port int
+		natt bool
+		ok   *bool
+		rtt  *int64
+	}{
+		{500, false, &result.Port500OK, &result.RTT500MS},
+		{4500, true, &result.Port4500OK, &result.RTT4500MS},
+	} {
+		started := time.Now()
+		dialer := net.Dialer{}
+		conn, err := dialer.DialContext(ctx, "udp", net.JoinHostPort(target.String(), strconv.Itoa(item.port)))
+		if err != nil {
+			continue
+		}
+		packet, initiatorSPI := ikeSAInitProbe(item.natt)
+		_, _ = conn.Write(packet)
+		_ = conn.SetReadDeadline(time.Now().Add(perAttempt))
+		buffer := make([]byte, 4096)
+		for {
+			if err := ctx.Err(); err != nil {
+				break
+			}
+			n, readErr := conn.Read(buffer)
+			if readErr != nil {
+				break
+			}
+			if validIKESAInitResponse(buffer[:n], initiatorSPI) {
+				*item.ok = true
+				*item.rtt = time.Since(started).Milliseconds()
+				break
+			}
+		}
+		_ = conn.Close()
 	}
 	if !result.Port500OK || !result.Port4500OK {
 		return result, errors.New("ePDG UDP/500 and UDP/4500 did not both respond")

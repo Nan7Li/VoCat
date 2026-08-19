@@ -192,6 +192,20 @@ export function previewApiPlugin(): Plugin {
             return;
           }
 
+          if (path.endsWith("/epdg/probe") && method === "POST") {
+            send(res, {
+              device_id: "ec25-uk",
+              epdg: "epdg.epc.mnc015.mcc234.pub.3gppnetwork.org",
+              port_500_ok: true,
+              port_4500_ok: true,
+              rtt_500_ms: 28,
+              rtt_4500_ms: 31,
+              checked_at: new Date().toISOString(),
+              disabled_vowifi: false,
+            });
+            return;
+          }
+
           if (path === "/api/devices/ec25-uk/overview" || path === "/api/devices/ec25-off/overview") {
             const online = path.includes("ec25-uk");
             const base = previewDevice(online ? "ec25-uk" : "ec25-off", online ? "EC25-UK" : "EC25-OFF", online, online);
