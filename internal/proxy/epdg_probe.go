@@ -5,10 +5,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"io"
+	"math/big"
 	"net"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -23,9 +24,9 @@ type EPDGProbeResult struct {
 	RTT4500MS  int64 `json:"rtt_4500_ms,omitempty"`
 }
 
-// ProbeSOCKS5EPDGPorts sends a minimal IKE_SA_INIT-shaped datagram to UDP/500
-// and a NAT-T framed copy to UDP/4500 through the SOCKS5 UDP ASSOCIATE. The
-// ePDG hostname is placed in the SOCKS datagram so the host resolver never
+// ProbeSOCKS5EPDGPorts sends a real IKE_SA_INIT to UDP/500 and a NAT-T
+// framed copy to UDP/4500 through the SOCKS5 UDP ASSOCIATE. The ePDG
+// hostname is placed in the SOCKS datagram so the host resolver never
 // sees a country-identifying 3GPP name.
 func ProbeSOCKS5EPDGPorts(ctx context.Context, address, username, password, host string, timeout time.Duration) (EPDGProbeResult, error) {
 	host = strings.TrimSpace(host)
@@ -64,17 +65,24 @@ func ProbeSOCKS5EPDGPorts(ctx context.Context, address, username, password, host
 		if err != nil {
 			return result, err
 		}
+		deadline := time.Now().Add(perAttempt)
+		_ = relay.SetReadDeadline(deadline)
 		if _, err := relay.Write(datagram); err != nil {
 			continue
 		}
-		_ = relay.SetReadDeadline(time.Now().Add(perAttempt))
 		buffer := make([]byte, 4096)
+		retransmitted := false
 		for {
 			if err := ctx.Err(); err != nil {
 				break
 			}
 			n, readErr := relay.Read(buffer)
 			if readErr != nil {
+				if !retransmitted && time.Now().Before(deadline) && ctx.Err() == nil {
+					_, _ = relay.Write(datagram)
+					retransmitted = true
+					continue
+				}
 				break
 			}
 			if n < 4 {
@@ -94,7 +102,7 @@ func ProbeSOCKS5EPDGPorts(ctx context.Context, address, username, password, host
 	return result, nil
 }
 
-// ProbeDirectEPDGPorts sends the same IKE-shaped datagrams to UDP/500 and
+// ProbeDirectEPDGPorts sends the same IKE_SA_INIT datagrams to UDP/500 and
 // UDP/4500 on the host's default route (WireGuard, policy routing, or
 // unproxied WAN). Use this when VoWiFi is not bound to a SOCKS5 upstream.
 func ProbeDirectEPDGPorts(ctx context.Context, host string, timeout time.Duration) (EPDGProbeResult, error) {
@@ -107,22 +115,9 @@ func ProbeDirectEPDGPorts(ctx context.Context, host string, timeout time.Duratio
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	targets, err := resolveEPDGProbeIPs(ctx, host)
 	if err != nil {
 		return EPDGProbeResult{}, err
-	}
-	var target net.IP
-	for _, item := range ips {
-		if item.IP.To4() != nil {
-			target = item.IP.To4()
-			break
-		}
-	}
-	if target == nil && len(ips) > 0 {
-		target = ips[0].IP
-	}
-	if target == nil {
-		return EPDGProbeResult{}, errors.New("ePDG host did not resolve")
 	}
 
 	result := EPDGProbeResult{}
@@ -130,45 +125,104 @@ func ProbeDirectEPDGPorts(ctx context.Context, host string, timeout time.Duratio
 	if perAttempt < 2*time.Second {
 		perAttempt = 2 * time.Second
 	}
-	for _, item := range []struct {
-		port int
-		natt bool
-		ok   *bool
-		rtt  *int64
-	}{
-		{500, false, &result.Port500OK, &result.RTT500MS},
-		{4500, true, &result.Port4500OK, &result.RTT4500MS},
-	} {
-		started := time.Now()
-		dialer := net.Dialer{}
-		conn, err := dialer.DialContext(ctx, "udp", net.JoinHostPort(target.String(), strconv.Itoa(item.port)))
-		if err != nil {
-			continue
-		}
-		packet, initiatorSPI := ikeSAInitProbe(item.natt)
-		_, _ = conn.Write(packet)
-		_ = conn.SetReadDeadline(time.Now().Add(perAttempt))
-		buffer := make([]byte, 4096)
-		for {
-			if err := ctx.Err(); err != nil {
-				break
-			}
-			n, readErr := conn.Read(buffer)
-			if readErr != nil {
-				break
-			}
-			if validIKESAInitResponse(buffer[:n], initiatorSPI) {
-				*item.ok = true
-				*item.rtt = time.Since(started).Milliseconds()
-				break
-			}
-		}
-		_ = conn.Close()
+	if ok, rtt := probeDirectPort(ctx, targets, 500, false, perAttempt); ok {
+		result.Port500OK = true
+		result.RTT500MS = rtt
+	}
+	if ok, rtt := probeDirectPort(ctx, targets, 4500, true, perAttempt); ok {
+		result.Port4500OK = true
+		result.RTT4500MS = rtt
 	}
 	if !result.Port500OK || !result.Port4500OK {
 		return result, errors.New("ePDG UDP/500 and UDP/4500 did not both respond")
 	}
 	return result, nil
+}
+
+func resolveEPDGProbeIPs(ctx context.Context, host string) ([]net.IP, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		if v4 := ip.To4(); v4 != nil {
+			return []net.IP{v4}, nil
+		}
+		return []net.IP{ip}, nil
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	var v4, v6 []net.IP
+	for _, item := range ips {
+		if item.IP == nil {
+			continue
+		}
+		if ip := item.IP.To4(); ip != nil {
+			v4 = appendUniqueIP(v4, ip)
+			continue
+		}
+		v6 = appendUniqueIP(v6, item.IP)
+	}
+	targets := append(v4, v6...)
+	if len(targets) == 0 {
+		return nil, errors.New("ePDG host did not resolve")
+	}
+	return targets, nil
+}
+
+func appendUniqueIP(dst []net.IP, ip net.IP) []net.IP {
+	for _, existing := range dst {
+		if existing.Equal(ip) {
+			return dst
+		}
+	}
+	return append(dst, append(net.IP(nil), ip...))
+}
+
+func probeDirectPort(ctx context.Context, targets []net.IP, port int, natt bool, timeout time.Duration) (bool, int64) {
+	if len(targets) == 0 {
+		return false, 0
+	}
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
+	if err != nil {
+		conn, err = net.ListenUDP("udp", &net.UDPAddr{})
+	}
+	if err != nil {
+		return false, 0
+	}
+	defer conn.Close()
+
+	packet, initiatorSPI := ikeSAInitProbe(natt)
+	started := time.Now()
+	deadline := started.Add(timeout)
+	send := func() {
+		for _, ip := range targets {
+			_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: ip, Port: port})
+		}
+	}
+	send()
+	buffer := make([]byte, 4096)
+	retransmitted := false
+	for {
+		if err := ctx.Err(); err != nil {
+			return false, 0
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false, 0
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(remaining))
+		n, _, readErr := conn.ReadFromUDP(buffer)
+		if readErr != nil {
+			if !retransmitted && time.Now().Before(deadline) && ctx.Err() == nil {
+				send()
+				retransmitted = true
+				continue
+			}
+			return false, 0
+		}
+		if validIKESAInitResponse(buffer[:n], initiatorSPI) {
+			return true, time.Since(started).Milliseconds()
+		}
+	}
 }
 
 func openUDPRelay(ctx context.Context, address, username, password string) (net.Conn, *net.UDPConn, error) {
@@ -244,21 +298,96 @@ func openUDPRelay(ctx context.Context, address, username, password string) (net.
 	return control, relay, nil
 }
 
+// RFC 2409 Group 2 (1024-bit MODP). Vodafone ePDG negotiates this group.
+const modp1024PrimeHex = "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1" +
+	"29024E088A67CC74020BBEA63B139B22514A08798E3404DD" +
+	"EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245" +
+	"E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED" +
+	"EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE65381" +
+	"FFFFFFFFFFFFFFFF"
+
 func ikeSAInitProbe(natt bool) ([]byte, [8]byte) {
-	packet := make([]byte, 28)
 	var initiatorSPI [8]byte
 	_, _ = rand.Read(initiatorSPI[:])
+	nonce := make([]byte, 32)
+	if _, err := rand.Read(nonce); err != nil {
+		nonce = bytesRepeat(0x11, 32)
+	}
+	public := dhGroup2Public()
+	sa := ikeProbeSA()
+	ke := make([]byte, 4+len(public))
+	binary.BigEndian.PutUint16(ke[0:2], 2) // DH group 2
+	copy(ke[4:], public)
+
+	// SA (33) -> KE (34) -> Nonce (40)
+	body := appendIKEPayload(34, sa)
+	body = append(body, appendIKEPayload(40, ke)...)
+	body = append(body, appendIKEPayload(0, nonce)...)
+
+	packet := make([]byte, 28+len(body))
 	copy(packet[:8], initiatorSPI[:])
+	packet[16] = 33
 	packet[17] = 0x20
 	packet[18] = 34
 	packet[19] = 0x08
-	binary.BigEndian.PutUint32(packet[24:], 28)
+	binary.BigEndian.PutUint32(packet[24:], uint32(len(packet)))
+	copy(packet[28:], body)
 	if natt {
 		framed := make([]byte, 4+len(packet))
 		copy(framed[4:], packet)
 		return framed, initiatorSPI
 	}
 	return packet, initiatorSPI
+}
+
+func bytesRepeat(value byte, n int) []byte {
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = value
+	}
+	return out
+}
+
+func appendIKEPayload(next uint8, body []byte) []byte {
+	packet := make([]byte, 4+len(body))
+	packet[0] = next
+	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
+	copy(packet[4:], body)
+	return packet
+}
+
+func ikeProbeSA() []byte {
+	// One IKE proposal: AES-CBC-128, PRF-HMAC-SHA1, AUTH-HMAC-SHA1-96, DH2.
+	// Transform attribute 0x800e = key length, value 128.
+	encr := []byte{3, 0, 0, 12, 1, 0, 0, 12, 0x80, 0x0e, 0x00, 0x80}
+	prf := []byte{3, 0, 0, 8, 2, 0, 0, 2}
+	integ := []byte{3, 0, 0, 8, 3, 0, 0, 2}
+	dh := []byte{0, 0, 0, 8, 4, 0, 0, 2}
+	transforms := append(append(append(encr, prf...), integ...), dh...)
+	proposal := make([]byte, 8+len(transforms))
+	binary.BigEndian.PutUint16(proposal[2:4], uint16(len(proposal)))
+	proposal[4] = 1
+	proposal[5] = 1
+	proposal[7] = 4
+	copy(proposal[8:], transforms)
+	return proposal
+}
+
+func dhGroup2Public() []byte {
+	primeBytes, err := hex.DecodeString(modp1024PrimeHex)
+	if err != nil || len(primeBytes) != 128 {
+		return append(bytesRepeat(0, 127), 4)
+	}
+	prime := new(big.Int).SetBytes(primeBytes)
+	sample := make([]byte, 128)
+	if _, err := io.ReadFull(rand.Reader, sample); err != nil {
+		return append(bytesRepeat(0, 127), 4)
+	}
+	private := new(big.Int).SetBytes(sample)
+	private.Mod(private, new(big.Int).Sub(prime, big.NewInt(3)))
+	private.Add(private, big.NewInt(2))
+	public := new(big.Int).Exp(big.NewInt(2), private, prime)
+	return public.FillBytes(make([]byte, 128))
 }
 
 func socksUDPDatagram(host string, port int, payload []byte) ([]byte, error) {
@@ -285,15 +414,14 @@ func validIKESAInitResponse(payload []byte, initiatorSPI [8]byte) bool {
 	if len(payload) < 28 || string(payload[:8]) != string(initiatorSPI[:]) {
 		return false
 	}
-	// IKEv2 response: version 2.x, IKE_SA_INIT exchange, response flag,
-	// and a non-zero responder SPI. This rejects unrelated UDP traffic.
+	// IKEv2 IKE_SA_INIT reply. A zero responder SPI is still a reply: COOKIE
+	// and some error notifies prove the ePDG is reachable.
 	if payload[17]>>4 != 2 || payload[18] != 34 || payload[19]&0x20 == 0 {
 		return false
 	}
-	for _, value := range payload[8:16] {
-		if value != 0 {
-			return true
-		}
+	encoded := binary.BigEndian.Uint32(payload[24:28])
+	if encoded != 0 && (encoded < 28 || int(encoded) > len(payload)) {
+		return false
 	}
-	return false
+	return true
 }

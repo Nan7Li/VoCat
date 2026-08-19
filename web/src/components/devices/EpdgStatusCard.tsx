@@ -67,7 +67,7 @@ export function EpdgStatusCard({ device, onRefreshed }: { device: DeviceDetail; 
 
       {!probe ? (
         <div className="text-xs text-gray-400 dark:text-[var(--color-text-muted)]">
-          {t("尚无探测记录。点「立即检测」会按当前 SIM 推导 ePDG，走已绑定的 SOCKS5 或本机默认路由探测 UDP/500 与 UDP/4500。")}
+          {t("尚无探测记录。点「立即检测」会按当前 SIM 推导 ePDG，走已绑定的 SOCKS5 或本机默认路由发送 IKE_SA_INIT，探测 UDP/500 与 UDP/4500。")}
         </div>
       ) : (
         <>

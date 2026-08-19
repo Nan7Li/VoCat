@@ -1345,6 +1345,6 @@ export const EN_DICT: Record<string, string> = {
   "ePDG 探测通过": "ePDG probe passed",
   "ePDG 探测未通过": "ePDG probe did not pass",
   "ePDG 探测失败": "ePDG probe failed",
-  "尚无探测记录。点「立即检测」会按当前 SIM 推导 ePDG，走已绑定的 SOCKS5 或本机默认路由探测 UDP/500 与 UDP/4500。":
-    "No probe yet. Check now derives the ePDG from the current SIM and tests UDP/500 and UDP/4500 via the bound SOCKS5 proxy or the host default route.",
+  "尚无探测记录。点「立即检测」会按当前 SIM 推导 ePDG，走已绑定的 SOCKS5 或本机默认路由发送 IKE_SA_INIT，探测 UDP/500 与 UDP/4500。":
+    "No probe yet. Check now derives the ePDG from the current SIM and sends IKE_SA_INIT to UDP/500 and UDP/4500 via the bound SOCKS5 proxy or the host default route.",
 };
