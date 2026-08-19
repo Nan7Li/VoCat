@@ -25,7 +25,7 @@ export function Switch({ checked, onChange, disabled, loading, size = "default",
         "focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-[#1A1610]",
         "disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.97]",
         small ? "h-[22px] w-[38px]" : "h-[31px] w-[51px]",
-        checked ? "bg-[#34C759] dark:bg-[#30D158]" : "bg-[#E8D9C8] dark:bg-[#39393D]",
+        checked ? "bg-[var(--color-success)]" : "bg-[#E8D9C8] dark:bg-[#3A342E]",
       )}
     >
       <span

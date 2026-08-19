@@ -244,55 +244,107 @@ export function CardPolicyAPN({ deviceId, iccid, policy, deviceOnline, onSaved }
           <Spinner className="h-4 w-4 animate-spin" /> {t("正在读取 APN 列表...")}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200/70 dark:border-white/10">
-          <table className="w-full min-w-[1050px] text-left text-xs">
-            <thead className="bg-gray-50 text-gray-500 dark:bg-white/5 dark:text-gray-400">
-              <tr>
-                <th className="px-3 py-2 font-semibold">APN</th>
-                <th className="px-3 py-2 font-semibold">{t("账号 / 认证")}</th>
-                <th className="px-3 py-2 font-semibold">MCC / MNC</th>
-                <th className="px-3 py-2 font-semibold">{t("协议 / 漫游")}</th>
-                <th className="px-3 py-2 font-semibold">Proxy</th>
-                <th className="px-3 py-2 font-semibold">{t("来源")}</th>
-                <th className="px-3 py-2 font-semibold">{t("状态")}</th>
-                <th className="px-3 py-2 text-right font-semibold">{t("操作")}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-white/10">
-              {rows.map((row) => {
-                const active = isActive(row);
-                return (
-                  <tr key={row.key} className={active ? "bg-sky-50/60 dark:bg-sky-500/5" : "bg-white/40 dark:bg-transparent"}>
-                    <td className="px-3 py-2.5 font-mono text-gray-800 dark:text-gray-100">
-                      {row.source === "automatic" ? t("运营商自动配置") : row.apn}
-                      {row.cid ? <span className="ml-2 text-[10px] text-gray-400">CID {row.cid}</span> : null}
-                    </td>
-                    <td className="px-3 py-2.5 text-gray-600 dark:text-gray-300">
-                      <div>{row.username || "—"}{row.hasPassword ? <span className="ml-1 text-[10px] text-gray-400">{t("已设密码")}</span> : null}</div>
-                      {row.authType && row.authType !== "NONE" ? <div className="mt-0.5 text-[10px] text-gray-400">{row.authType.replace("PAP_OR_CHAP", "PAP / CHAP")}</div> : null}
-                    </td>
-                    <td className="px-3 py-2.5 text-gray-600 dark:text-gray-300">{row.mcc || "—"} / {row.mnc || "—"}</td>
-                    <td className="px-3 py-2.5 text-gray-600 dark:text-gray-300"><div>{protocolLabel(row.ipVersion)}</div><div className="mt-0.5 text-[10px] text-gray-400">{t("漫游")}：{protocolLabel(row.roamingIPVersion)}</div></td>
-                    <td className="max-w-[150px] truncate px-3 py-2.5 text-gray-600 dark:text-gray-300">{row.proxy || "—"}</td>
-                    <td className="px-3 py-2.5"><Tag type={row.source === "custom" ? "primary" : "info"}>{sourceLabel(row)}</Tag></td>
-                    <td className="px-3 py-2.5">{active ? <Tag type="success">{t("使用中")}</Tag> : <span className="text-gray-400">—</span>}</td>
-                    <td className="whitespace-nowrap px-3 py-2.5 text-right">
-                      <Button size="small" variant={active ? "default" : "primary"} plain={!active} disabled={active} loading={pendingKey === row.key} onClick={() => enable(row)}>
-                        {active ? t("已启用") : t("启用")}
-                      </Button>
-                      {row.source === "custom" ? (
-                        <>
-                          <Button className="ml-1" size="small" onClick={() => edit(row)}>{t("修改")}</Button>
-                          <Button className="ml-1" size="small" variant="danger" plain loading={pendingKey === row.key} onClick={() => remove(row)}>{t("删除")}</Button>
-                        </>
-                      ) : null}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <div className="hidden overflow-x-auto rounded-lg border border-gray-200/70 dark:border-white/10 md:block">
+            <table className="w-full min-w-[1050px] text-left text-xs">
+              <thead className="bg-gray-50 text-gray-500 dark:bg-white/5 dark:text-gray-400">
+                <tr>
+                  <th className="px-3 py-2 font-semibold">APN</th>
+                  <th className="px-3 py-2 font-semibold">{t("账号 / 认证")}</th>
+                  <th className="px-3 py-2 font-semibold">MCC / MNC</th>
+                  <th className="px-3 py-2 font-semibold">{t("协议 / 漫游")}</th>
+                  <th className="px-3 py-2 font-semibold">Proxy</th>
+                  <th className="px-3 py-2 font-semibold">{t("来源")}</th>
+                  <th className="px-3 py-2 font-semibold">{t("状态")}</th>
+                  <th className="px-3 py-2 text-right font-semibold">{t("操作")}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-white/10">
+                {rows.map((row) => {
+                  const active = isActive(row);
+                  return (
+                    <tr key={row.key} className={active ? "bg-sky-50/60 dark:bg-sky-500/5" : "bg-white/40 dark:bg-transparent"}>
+                      <td className="px-3 py-2.5 font-mono text-gray-800 dark:text-gray-100">
+                        {row.source === "automatic" ? t("运营商自动配置") : row.apn}
+                        {row.cid ? <span className="ml-2 text-[10px] text-gray-400">CID {row.cid}</span> : null}
+                      </td>
+                      <td className="px-3 py-2.5 text-gray-600 dark:text-gray-300">
+                        <div>{row.username || "—"}{row.hasPassword ? <span className="ml-1 text-[10px] text-gray-400">{t("已设密码")}</span> : null}</div>
+                        {row.authType && row.authType !== "NONE" ? <div className="mt-0.5 text-[10px] text-gray-400">{row.authType.replace("PAP_OR_CHAP", "PAP / CHAP")}</div> : null}
+                      </td>
+                      <td className="px-3 py-2.5 text-gray-600 dark:text-gray-300">{row.mcc || "—"} / {row.mnc || "—"}</td>
+                      <td className="px-3 py-2.5 text-gray-600 dark:text-gray-300"><div>{protocolLabel(row.ipVersion)}</div><div className="mt-0.5 text-[10px] text-gray-400">{t("漫游")}：{protocolLabel(row.roamingIPVersion)}</div></td>
+                      <td className="max-w-[150px] truncate px-3 py-2.5 text-gray-600 dark:text-gray-300">{row.proxy || "—"}</td>
+                      <td className="px-3 py-2.5"><Tag type={row.source === "custom" ? "primary" : "info"}>{sourceLabel(row)}</Tag></td>
+                      <td className="px-3 py-2.5">{active ? <Tag type="success">{t("使用中")}</Tag> : <span className="text-gray-400">—</span>}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-right">
+                        <Button size="small" variant={active ? "default" : "primary"} plain={!active} disabled={active} loading={pendingKey === row.key} onClick={() => enable(row)}>
+                          {active ? t("已启用") : t("启用")}
+                        </Button>
+                        {row.source === "custom" ? (
+                          <>
+                            <Button className="ml-1" size="small" onClick={() => edit(row)}>{t("修改")}</Button>
+                            <Button className="ml-1" size="small" variant="danger" plain loading={pendingKey === row.key} onClick={() => remove(row)}>{t("删除")}</Button>
+                          </>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="space-y-2 md:hidden">
+            {rows.map((row) => {
+              const active = isActive(row);
+              return (
+                <div key={row.key} className={`rounded-xl border px-3 py-3 ${active ? "border-sky-200 bg-sky-50/70 dark:border-sky-500/30 dark:bg-sky-500/10" : "border-gray-200/80 bg-white/70 dark:border-white/10 dark:bg-white/5"}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="break-all font-mono text-sm font-semibold text-gray-800 dark:text-gray-100">
+                        {row.source === "automatic" ? t("运营商自动配置") : row.apn}
+                      </div>
+                      {row.cid ? <div className="mt-0.5 text-[10px] text-gray-400">CID {row.cid}</div> : null}
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <Tag type={row.source === "custom" ? "primary" : "info"}>{sourceLabel(row)}</Tag>
+                      {active ? <Tag type="success">{t("使用中")}</Tag> : null}
+                    </div>
+                  </div>
+                  <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] text-gray-500">
+                    <div>
+                      <dt className="text-[10px] uppercase tracking-wider text-gray-400">{t("账号 / 认证")}</dt>
+                      <dd className="mt-0.5 break-all text-gray-700 dark:text-gray-200">{row.username || "—"}{row.hasPassword ? ` · ${t("已设密码")}` : ""}{row.authType && row.authType !== "NONE" ? ` · ${row.authType.replace("PAP_OR_CHAP", "PAP / CHAP")}` : ""}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[10px] uppercase tracking-wider text-gray-400">MCC / MNC</dt>
+                      <dd className="mt-0.5 text-gray-700 dark:text-gray-200">{row.mcc || "—"} / {row.mnc || "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[10px] uppercase tracking-wider text-gray-400">{t("协议 / 漫游")}</dt>
+                      <dd className="mt-0.5 text-gray-700 dark:text-gray-200">{protocolLabel(row.ipVersion)} · {t("漫游")} {protocolLabel(row.roamingIPVersion)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[10px] uppercase tracking-wider text-gray-400">Proxy</dt>
+                      <dd className="mt-0.5 break-all text-gray-700 dark:text-gray-200">{row.proxy || "—"}</dd>
+                    </div>
+                  </dl>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <Button size="small" variant={active ? "default" : "primary"} plain={!active} disabled={active} loading={pendingKey === row.key} onClick={() => enable(row)}>
+                      {active ? t("已启用") : t("启用")}
+                    </Button>
+                    {row.source === "custom" ? (
+                      <>
+                        <Button size="small" onClick={() => edit(row)}>{t("修改")}</Button>
+                        <Button className="col-span-2" size="small" variant="danger" plain loading={pendingKey === row.key} onClick={() => remove(row)}>{t("删除")}</Button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
       {!deviceOnline ? <div className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">{t("设备离线：自定义列表仍可管理，模组已有 APN 将在上线后读取")}</div> : null}
       <Modal

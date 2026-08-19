@@ -92,17 +92,20 @@ export function ContactList(props: ContactListProps) {
               >
                 <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onSelect(t.key)}>
                   <div className="flex items-start justify-between gap-3">
-<div className="min-w-0">
+<div className="min-w-0 flex-1">
   <div className="flex items-center gap-2">
-    <div className="truncate font-extrabold text-gray-900 dark:text-white">{t.peer}</div>
-    {isUnread(t) ? <span className="h-2 w-2 rounded-full bg-indigo-500" /> : null}
+    <div className="truncate font-semibold text-gray-900 dark:text-[var(--color-text)]">{t.displayName || t.peer}</div>
+    {isUnread(t) ? <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-primary)]" /> : null}
   </div>
-  <div className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">{t.lastMessage}</div>
+  {t.displayName && t.displayName !== t.peer ? (
+    <div className="mt-0.5 truncate text-[11px] text-gray-400 dark:text-[var(--color-text-muted)]">{t.peer}</div>
+  ) : null}
+  <div className="mt-1 truncate text-xs text-gray-500 dark:text-[var(--color-text-body)]">{t.lastMessage}</div>
 </div>
-<div className="sms-thread-meta text-right">
-  <div className="font-mono text-[11px] text-gray-400">{timeLabel(t.lastTs)}</div>
+<div className="sms-thread-meta shrink-0 text-right">
+  <div className="font-mono text-[11px] text-gray-400 dark:text-[var(--color-text-weak)]">{timeLabel(t.lastTs)}</div>
   {t.localPhone || t.lastDeviceName ? (
-    <div className="mt-1 truncate text-[10px] text-gray-400">{t.localPhone || t.lastDeviceName}</div>
+    <div className="mt-1 max-w-[7rem] truncate text-[10px] text-gray-400 dark:text-[var(--color-text-weak)]">{t.localPhone || t.lastDeviceName}</div>
   ) : null}
 </div>
                   </div>

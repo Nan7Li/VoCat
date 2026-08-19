@@ -1,5 +1,5 @@
 import { cx } from "../../lib/utils";
-import { Switch, Spinner } from "../ui";
+import { Switch } from "../ui";
 import { useI18n } from "../../lib/i18n";
 
 export interface PolicySwitchCardProps {
@@ -19,14 +19,13 @@ export function PolicySwitchCard({ title, subtitle, checked, disabled, pending, 
   const status = (
     <div className="flex items-center gap-2">
       {failed ? <span className="text-xs text-orange-500 dark:text-orange-400">{t("未生效")}</span> : null}
-      {pending ? <Spinner className="h-4 w-4 animate-spin text-gray-400" /> : null}
       <Switch checked={checked} disabled={disabled} onChange={onToggle} />
     </div>
   );
 
   if (compact) {
     return (
-      <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2 dark:bg-white/5">
+      <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2 dark:bg-[var(--color-input)] dark:ring-1 dark:ring-[var(--color-border)]">
         <span className="text-sm text-gray-700 dark:text-gray-200">{title}</span>
         {status}
       </div>

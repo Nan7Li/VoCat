@@ -26,10 +26,10 @@ export function FieldRow({ label, value, prefix, copyable, monospace, placeholde
 
   return (
     <div className="flex w-full min-w-0 items-center justify-between gap-3 overflow-hidden">
-      <span className="shrink-0 whitespace-nowrap text-gray-500">{label}</span>
+      <span className="shrink-0 whitespace-nowrap text-[13px] text-gray-500 dark:text-[var(--color-text-muted)]">{label}</span>
       <span
         className={cx(
-          "flex min-w-0 max-w-full flex-1 items-center justify-end gap-1.5 text-right",
+          "flex min-w-0 max-w-full flex-1 items-center justify-end gap-1.5 text-right text-sm font-medium text-gray-800 dark:text-[var(--color-text)]",
           monospace && "font-mono",
           canCopy && "cursor-pointer hover:underline",
           sensitive && "select-none blur-sm transition-all",

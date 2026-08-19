@@ -1,5 +1,4 @@
 import { ArrowSyncRegular } from "@fluentui/react-icons";
-import { cx } from "../../lib/utils";
 import { Button } from "./Button";
 import { useI18n } from "../../lib/i18n";
 
@@ -13,7 +12,7 @@ export function RefreshButton({ loading, onClick }: { loading?: boolean; onClick
       onClick={onClick}
       disabled={loading}
       className="!border-0 !shadow-none"
-      icon={<ArrowSyncRegular className={cx("transition-transform duration-500", loading && "animate-spin")} />}
+      icon={<ArrowSyncRegular />}
     >
       {t("刷新")}
     </Button>

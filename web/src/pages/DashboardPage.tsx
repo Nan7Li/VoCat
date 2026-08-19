@@ -82,7 +82,7 @@ export default function DashboardPage() {
         subtitle={t("实时监测模组检测状态与出口连通性")}
         actions={<RefreshButton loading={devicesLoading} onClick={fetchDevices} />}
       />
-      <div className="vocat-stagger mb-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="vocat-stagger mb-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
         <HostInfoCard info={host?.host} />
         <HostPerfCard perf={host?.perf} />
         <UpcomingTasksCard tasks={upcomingTasks} />
@@ -96,7 +96,7 @@ export default function DashboardPage() {
       ) : devices.length === 0 ? (
         <EmptyState title={t("暂无设备接入")} subtitle={t("请先在设备管理中添加或接管设备")} />
       ) : (
-        <div className="vocat-stagger grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+        <div className="vocat-stagger grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           {devices.map((d) => (
             <DeviceCard key={d.id} device={d} onOpen={openDevice} />
           ))}

@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 
 export const ACCENT_KEY = "halo.accent";
-export const DEFAULT_ACCENT = "#E85D3C";
+export const DEFAULT_ACCENT = "#F15A3B";
 
 export const ACCENT_PRESETS = [
-  { id: "apricot", label: "杏橙", hex: "#E85D3C" },
+  { id: "apricot", label: "杏橙", hex: "#F15A3B" },
   { id: "grok", label: "Grok 金", hex: "#C9A46A" },
   { id: "cream", label: "奶油", hex: "#E4D2B0" },
   { id: "copper", label: "赤铜", hex: "#C47A4A" },
@@ -66,8 +66,8 @@ export function applyAccent(hex: string, persist = true) {
   const rgb = parseHex(hex);
   if (!rgb) return DEFAULT_ACCENT;
   const value = toHex(rgb);
-  const hover = toHex(mix(rgb, { r: 0, g: 0, b: 0 }, 0.16));
-  const active = toHex(mix(rgb, { r: 0, g: 0, b: 0 }, 0.28));
+  const hover = value === "#F15A3B" ? "#FF6949" : toHex(mix(rgb, { r: 255, g: 255, b: 255 }, 0.12));
+  const active = value === "#F15A3B" ? "#D94D31" : toHex(mix(rgb, { r: 0, g: 0, b: 0 }, 0.18));
   const ink = toHex(mix(rgb, { r: 0, g: 0, b: 0 }, 0.22));
   const root = document.documentElement;
   root.style.setProperty("--color-primary", value);

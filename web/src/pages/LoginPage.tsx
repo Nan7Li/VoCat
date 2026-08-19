@@ -76,16 +76,12 @@ export default function LoginPage() {
             disabled={working}
             className="vocat-enter vocat-enter-3 flex h-[50px] w-full items-center justify-center rounded-full bg-[var(--color-primary)] text-[17px] font-semibold text-[var(--color-on-primary)] shadow-[0_8px_22px_rgb(var(--color-primary-rgb)/0.32)] transition-transform duration-[180ms] ease-[cubic-bezier(0.32,0.72,0,1)] active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-70"
           >
-            {working ? (
-              <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-            ) : (
-              t("登录")
-            )}
+            {t("登录")}
           </button>
         </form>
 
         <p className="vocat-enter vocat-enter-4 mt-8 text-center text-[12px] leading-relaxed tracking-tight text-black/30 dark:text-white/30">
-          Halo 1.1.2
+          Halo 1.1.5
           <br />
           {t("基于 VoCat，原作者 Vocat Project Authors")}
         </p>

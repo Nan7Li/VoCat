@@ -24,7 +24,7 @@ export function AppearanceCard() {
               key={preset.id}
               type="button"
               onClick={() => withViewTransition(() => setAccent(preset.hex))}
-              className="flex items-center gap-2 rounded-full border border-[#E8D9C8] bg-white px-3 py-1.5 text-[13px] font-medium tracking-tight transition-[transform,background-color,border-color,color] duration-[180ms] ease-[cubic-bezier(0.32,0.72,0,1)] active:scale-[0.97] dark:border-white/10 dark:bg-white/8"
+              className="flex items-center gap-2 rounded-full border border-[#E8D9C8] bg-white px-3 py-1.5 text-[13px] font-medium tracking-tight transition-[transform,background-color,border-color,color] duration-[180ms] ease-[cubic-bezier(0.32,0.72,0,1)] active:scale-[0.97] dark:border-[var(--color-border)] dark:bg-[var(--color-input)] dark:text-[var(--color-text)]"
               style={active ? { borderColor: preset.hex, background: "var(--color-primary-soft)", color: "var(--color-primary)" } : undefined}
             >
               <span className="h-4 w-4 rounded-full ring-2 ring-white/70 dark:ring-black/40" style={{ background: preset.hex }} />
@@ -32,7 +32,7 @@ export function AppearanceCard() {
             </button>
           );
         })}
-        <label className="flex items-center gap-2 rounded-full border border-black/8 bg-black/[0.03] px-3 py-1.5 text-[13px] font-medium tracking-tight dark:border-white/10 dark:bg-white/8">
+        <label className="flex items-center gap-2 rounded-full border border-black/8 bg-black/[0.03] px-3 py-1.5 text-[13px] font-medium tracking-tight dark:border-[var(--color-border)] dark:bg-[var(--color-input)] dark:text-[var(--color-text)]">
           <input
             type="color"
             value={normalizeHex(accent) || accent}

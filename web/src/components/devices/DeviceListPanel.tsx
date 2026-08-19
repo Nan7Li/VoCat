@@ -48,7 +48,7 @@ export function DeviceListPanel(props: DeviceListPanelProps) {
   const { t } = useI18n();
   const { loading, query, statusFilter, sortKey, sortDir, selectedId, filteredDevices, deviceCount, deviceLimit } = props;
   return (
-    <div className="ui-card p-5">
+    <div className="ui-card p-4 sm:p-5">
       <div className="mb-4 flex items-center gap-3">
         <Input value={query} onChange={(e) => props.onQueryChange(e.target.value)} placeholder={t("搜索设备 / ICCID / IMEI / 网卡")} />
       </div>

@@ -7,6 +7,7 @@ export interface SmsThread {
   modemImei: string;
   imsi: string;
   peer: string;
+  displayName?: string;
   deviceId: string;
   lastTs: number;
   lastSmsId: number;
@@ -86,6 +87,7 @@ export function deriveThread(c: SMSContact): SmsThread {
     modemImei,
     imsi: c.imsi,
     peer: c.peer,
+    displayName: String(c.displayName || "").trim(),
     deviceId: c.deviceId,
     lastTs: toTs(c.lastTimestamp),
     lastSmsId: c.lastSmsId || 0,
@@ -109,7 +111,7 @@ export function sortMessages(list: SMSMessage[]): SMSMessage[] {
 export function filterThreads(list: SmsThread[], query: string): SmsThread[] {
   const q = String(query || "").trim().toLowerCase();
   if (!q) return list;
-  return list.filter((t) => t.peerLower.includes(q) || t.lastMessageLower.includes(q));
+  return list.filter((t) => t.peerLower.includes(q) || t.lastMessageLower.includes(q) || (t.displayName || "").toLowerCase().includes(q));
 }
 
 // Backend encodes direction numerically (1 = received, 2 = sent); fall back to direction text.

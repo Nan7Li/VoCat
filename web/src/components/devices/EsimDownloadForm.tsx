@@ -33,9 +33,9 @@ export function EsimDownloadForm(props: EsimDownloadFormProps) {
     label: tf("eUICC #{n} (...{tail}) — {free} 可用", { n: i + 1, tail: e.eid.slice(-4), free: e.freeNvram }),
   }));
   return (
-    <div className="ui-panel-muted p-4">
+    <div className="ui-panel-muted p-3 sm:p-4">
       <div className="mb-3 flex items-center gap-2">
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400">
           <AddRegular className="text-[16px]" />
         </div>
         <div className="text-sm font-bold text-gray-900 dark:text-white">{t("下载新 Profile")}</div>
@@ -51,7 +51,7 @@ export function EsimDownloadForm(props: EsimDownloadFormProps) {
           <Input value={form.confirmationCode} onChange={(e) => set({ confirmationCode: e.target.value })} placeholder={t("可选")} />
         </Field>
         <Field label={t("目标 eUICC")}>
-          <Select value={form.aidHex} onChange={(v) => set({ aidHex: v })} placeholder={t("选择目标 eUICC")} options={eidOptions} />
+          <Select className="min-w-0" value={form.aidHex} onChange={(v) => set({ aidHex: v })} placeholder={t("选择目标 eUICC")} options={eidOptions} />
         </Field>
       </div>
       {props.downloading || props.downloadErr ? (
@@ -70,8 +70,8 @@ export function EsimDownloadForm(props: EsimDownloadFormProps) {
           </div>
         </div>
       ) : null}
-      <div className="mt-4 flex justify-end">
-        <Button variant="primary" loading={props.downloading} disabled={props.downloading} onClick={props.onDownload} className="!border-0" icon={<ArrowDownloadRegular />}>
+      <div className="mt-4 flex justify-stretch sm:justify-end">
+        <Button variant="primary" loading={props.downloading} disabled={props.downloading || !form.smdp.trim()} onClick={props.onDownload} className="!border-0 w-full sm:w-auto" icon={<ArrowDownloadRegular />}>
           {t("开始下载")}
         </Button>
       </div>

@@ -3,10 +3,10 @@ import { cx } from "../../lib/utils";
 export type StatusTone = "success" | "warning" | "danger" | "neutral";
 
 const TONE: Record<StatusTone, string> = {
-  success: "bg-green-500",
-  warning: "bg-amber-500",
-  danger: "bg-red-500",
-  neutral: "bg-gray-400",
+  success: "bg-[var(--color-success)]",
+  warning: "bg-[var(--color-warning)]",
+  danger: "bg-[var(--color-danger)]",
+  neutral: "bg-[var(--color-text-disabled)]",
 };
 
 // StatusLight: colored pulsing status dot.

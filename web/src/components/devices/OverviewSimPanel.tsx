@@ -30,7 +30,7 @@ export function OverviewSimPanel({ device, simOperatorDisplay, customPhoneNumber
   return (
     <div className="ui-panel-muted relative min-w-0 overflow-hidden p-4">
       <div className="mb-2 flex items-center justify-between">
-        <div className="text-xs font-bold uppercase tracking-wider text-gray-500">{t("SIM / 设备")}</div>
+        <div className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-[var(--color-text-muted)]">{t("SIM / 设备")}</div>
         <div
           className="-mr-1 -mt-1 cursor-pointer text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
           onClick={toggleSensitive}

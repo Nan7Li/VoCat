@@ -25,6 +25,7 @@ web/dist/
 web/build/
 web/node_modules/
 web/scripts/*-out/
+web/preview-shots/
 
 # ---- Local Halo binaries ----
 /halo-linux-*

@@ -78,6 +78,7 @@ export function DeviceOverviewTab(props: DeviceOverviewTabProps) {
         deviceName={device.name}
         ready={isVoWiFiInUse(device) && !!device.vowifiRuntime?.imsReady}
         reason={softphoneReadyReason(device)}
+        layout="compact"
       />
     </div>
   );

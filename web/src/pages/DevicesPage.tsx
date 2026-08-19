@@ -664,7 +664,7 @@ export default function DevicesPage() {
         title={t("设备管理")}
         subtitle={t("接管 EC20 模组并执行射频、网络、SIM 与终端功能检测")}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <RefreshButton loading={listLoading} onClick={refreshAll} />
             <Button loading={rescanning} onClick={handleRescan} icon={<ArrowSyncRegular />}>
               {t("重新扫描")}
@@ -737,7 +737,7 @@ export default function DevicesPage() {
 				wifiCallingOnly={isReader}
 				modemControlOnly={isNative410}
               />
-              <div className="device-detail-tabs ui-card p-6">
+              <div className="device-detail-tabs ui-card p-4 sm:p-6">
                 <Tabs tabs={tabItems} value={activeTab} onChange={handleTabChange} />
                 <div className="mt-5">
                   {activeTab === "overview" ? overviewNode : null}

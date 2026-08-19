@@ -21,7 +21,7 @@ export function Tabs({
 }) {
   return (
     <div className={cx("relative", className)}>
-      <div className="relative flex items-center gap-1 overflow-x-auto border-b border-gray-200/70 dark:border-white/10">
+      <div className="relative flex items-center gap-0.5 overflow-x-auto overscroll-x-contain border-b border-gray-200/70 [-ms-overflow-style:none] [scrollbar-width:none] dark:border-white/10 [&::-webkit-scrollbar]:hidden">
         {tabs.map((tab) => {
           const active = tab.key === value;
           return (
@@ -31,7 +31,7 @@ export function Tabs({
               disabled={tab.disabled}
               onClick={() => onChange(tab.key)}
               className={cx(
-                "relative whitespace-nowrap px-4 py-2.5 text-sm font-medium outline-none",
+                "relative shrink-0 whitespace-nowrap px-3 py-2 text-[13px] font-medium outline-none sm:px-4 sm:py-2.5 sm:text-sm",
                 "transition-[color,transform] duration-[180ms] ease-[cubic-bezier(0.32,0.72,0,1)]",
                 "disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.97]",
                 active

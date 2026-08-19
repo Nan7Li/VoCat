@@ -9,15 +9,15 @@ function percentText(value: number) {
 
 // 利用率越高颜色越危险：<70 绿，<90 黄，其余红。
 function barColor(percent: number) {
-  if (percent >= 90) return "bg-red-500";
-  if (percent >= 70) return "bg-amber-500";
-  return "bg-emerald-500";
+  if (percent >= 90) return "bg-[var(--color-danger)]";
+  if (percent >= 70) return "bg-[var(--color-warning)]";
+  return "bg-[var(--color-success)]";
 }
 
 function textColor(percent: number) {
-  if (percent >= 90) return "text-red-600 dark:text-red-400";
-  if (percent >= 70) return "text-amber-600 dark:text-amber-400";
-  return "text-emerald-600 dark:text-emerald-400";
+  if (percent >= 90) return "text-[var(--color-danger)]";
+  if (percent >= 70) return "text-[var(--color-warning)]";
+  return "text-[var(--color-success)]";
 }
 
 function UsageBar({ label, percent, detail }: { label: string; percent: number; detail?: string }) {
@@ -45,10 +45,10 @@ function UsageBar({ label, percent, detail }: { label: string; percent: number; 
 export function HostPerfCard({ perf }: { perf?: DashboardHostPerf | null }) {
   const { t } = useI18n();
   return (
-    <div className="ui-card p-5">
+    <div className="ui-card p-4">
       <div className="mb-3 flex items-center gap-2">
         <GaugeRegular className="h-4 w-4 text-[var(--color-primary)]" />
-        <h3 className="text-[15px] font-semibold tracking-tight text-black dark:text-white">{t("性能信息")}</h3>
+        <h3 className="text-[18px] font-semibold tracking-tight text-black dark:text-[var(--color-text)]">{t("性能信息")}</h3>
       </div>
       <div className="space-y-2.5">
         <UsageBar label={t("CPU 使用率")} percent={perf?.cpuPercent ?? 0} />

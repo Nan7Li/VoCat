@@ -44,11 +44,13 @@ function previewDevice(id: string, name: string, healthy: boolean, vowifi: boole
     proxy_port: 1080,
     public_ip: healthy ? "51.89.12.10" : "",
     healthy,
+    running: healthy,
     operator: vowifi ? "Vodafone UK" : "",
     signal_dbm: healthy ? -81 : 0,
     network_mode: healthy ? "LTE" : "",
     network_duplex: healthy ? "FDD" : "",
     vowifi_active: vowifi,
+    vowifi_enabled: vowifi,
     network_connected: healthy,
     model: "EC25",
     vowifi_runtime: {
@@ -185,7 +187,113 @@ export function previewApiPlugin(): Plugin {
                 previewDevice("ec25-uk", "EC25-UK", true, true),
                 previewDevice("ec25-off", "EC25-OFF", false, false),
               ],
+              device_limit: 8,
             });
+            return;
+          }
+
+          if (path === "/api/devices/ec25-uk/overview" || path === "/api/devices/ec25-off/overview") {
+            const online = path.includes("ec25-uk");
+            const base = previewDevice(online ? "ec25-uk" : "ec25-off", online ? "EC25-UK" : "EC25-OFF", online, online);
+            send(res, {
+              devices: [{
+                ...base,
+                running: online,
+                flight_mode: online,
+                network_enabled: !online,
+                vowifi_enabled: online,
+                local_phone: "+447700900123",
+                active_esim_profile_name: "Vodafone UK",
+                modem: {
+                  imei: "860000000000001",
+                  iccid: "8944100000000000001",
+                  imsi: "234159876543210",
+                  operator: "Vodafone UK",
+                  firmware: "EC25EFAR06A06M4G",
+                  sim_inserted: true,
+                  signal_dbm: online ? -81 : 0,
+                  network_mode: online ? "LTE" : "",
+                  network_duplex: online ? "FDD" : "",
+                  operating_mode: online ? 0 : 1,
+                },
+                epdg_probe: {
+                  epdg: "epdg.epc.mnc015.mcc234.pub.3gppnetwork.org",
+                  checked_at: new Date().toISOString(),
+                  port500_ok: online,
+                  port4500_ok: online,
+                  rtt500_ms: 28,
+                  rtt4500_ms: 31,
+                },
+              }],
+            });
+            return;
+          }
+
+          if (path === "/api/devices/ec25-uk/esim" || path === "/api/devices/ec25-off/esim") {
+            send(res, {
+              chip_info: {
+                sku_name: "ST33J2M0",
+                firmware: "2.2.1",
+                serial_number: "ST33-8841",
+                eids: [{
+                  eid: "89049032007008882600012230000001",
+                  aid: "A0000005591010FFFFFFFF8900000100",
+                  free_nvram: "184 KB",
+                  free_nvram_bytes: 188416,
+                  manufacturer: "STMicroelectronics",
+                  certificates: ["GSMA CI"],
+                  default_smdp_address: "rsp.truphone.com",
+                }],
+              },
+              profiles: [{
+                aid_hex: "A0000005591010FFFFFFFF8900000100",
+                eid: "89049032007008882600012230000001",
+                profiles: [{
+                  iccid: "8944100000000000001",
+                  name: "Vodafone UK",
+                  service_provider_name: "Vodafone",
+                  state: 1,
+                  state_text: "已启用",
+                }, {
+                  iccid: "8944100000000000002",
+                  name: "giffgaff",
+                  service_provider_name: "giffgaff",
+                  state: 0,
+                  state_text: "已禁用",
+                }],
+              }],
+            });
+            return;
+          }
+
+          if (path === "/api/calls/history") {
+            send(res, {
+              records: [
+                { id: 1, device_id: "ec25-uk", number: "+447911123456", direction: "outgoing", state: "answered", started_at: new Date().toISOString(), duration_seconds: 86, transport: "vowifi" },
+                { id: 2, device_id: "ec25-uk", number: "+447700900999", direction: "incoming", state: "missed", started_at: new Date(Date.now() - 3600000).toISOString(), duration_seconds: 0, transport: "vowifi" },
+              ],
+            });
+            return;
+          }
+
+          if (path === "/api/sms/devices") {
+            send(res, { devices: [previewDevice("ec25-uk", "EC25-UK", true, true)] });
+            return;
+          }
+
+          if (path === "/api/sms/contacts") {
+            send(res, [
+              { device_id: "ec25-uk", device_name: "EC25-UK", imsi: "234159876543210", peer: "447700900111", display_name: "Vodafone", last_content: "Your voicemail has 1 new message", last_timestamp: new Date().toISOString(), unread_count: 1, local_phone: "+447700900123" },
+              { device_id: "ec25-uk", device_name: "EC25-UK", imsi: "234159876543210", peer: "+447911123456", display_name: "", last_content: "See you at 6", last_timestamp: new Date(Date.now() - 7200000).toISOString(), unread_count: 0, local_phone: "+447700900123" },
+            ]);
+            return;
+          }
+
+          if (path === "/api/sms/thread") {
+            send(res, [
+              { id: 11, device_id: "ec25-uk", device_name: "EC25-UK", imsi: "23415", peer: "447700900111", direction: "inbound", content: "Your voicemail has 1 new message", sender: "Vodafone", timestamp: new Date().toISOString(), status: "received" },
+              { id: 12, device_id: "ec25-uk", device_name: "EC25-UK", imsi: "23415", peer: "447700900111", direction: "outbound", content: "Thanks", timestamp: new Date().toISOString(), status: "accepted_by_ims" },
+            ]);
             return;
           }
 

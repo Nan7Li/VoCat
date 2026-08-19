@@ -204,7 +204,7 @@ export function AuthenticatedShell({
       )}
 
       <Drawer open={isMobile && mobileOpen} onClose={() => setMobileOpen(false)} className="mobile-drawer">
-        <div className="sidebar-shell relative h-full bg-[#FDF8F2] dark:bg-[#241F1A]">
+        <div className="sidebar-shell relative h-full bg-[#FDF8F2] dark:bg-[#211D18]">
           <div className="flex h-16 items-center px-4">
             <BrandLogo className="sidebar-brand-logo" />
             <div className="ml-3">

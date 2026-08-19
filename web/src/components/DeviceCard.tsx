@@ -35,17 +35,17 @@ export function DeviceCard({ device, onOpen }: { device: DashboardDevice; onOpen
     <button
       type="button"
       onClick={() => onOpen(device.id)}
-      className="ui-card ui-card-hover group relative block w-full overflow-hidden text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#F7F4EF] dark:focus-visible:ring-offset-[#1A1610]"
+      className="ui-card ui-card-hover group relative block w-full overflow-hidden text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#F7F4EF] dark:focus-visible:ring-offset-[#17140F]"
     >
-      <div className="relative z-10 p-5">
-        <div className="mb-6 flex items-start justify-between">
+      <div className="relative z-10 p-4">
+        <div className="mb-4 flex items-start justify-between">
           <div className="flex items-center gap-3">
             <img src={deviceTypeImage(device.deviceType)} alt="" className="h-10 w-10 flex-shrink-0 object-contain" />
             <div>
-              <h3 className="text-[17px] font-semibold tracking-tight text-black dark:text-white">{device.name || device.id}</h3>
+              <h3 className="text-[17px] font-semibold tracking-tight text-black dark:text-[var(--color-text)]">{device.name || device.id}</h3>
               <div className="mt-0.5 flex items-center gap-1.5">
                 <StatusDot tone={device.healthy ? "success" : "danger"} size="md" animated={device.healthy} />
-                <span className={cx("text-xs font-medium", device.healthy ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400")}>
+                <span className={cx("text-xs font-medium", device.healthy ? "text-[var(--color-success)]" : "text-[var(--color-danger)]")}>
                   {device.healthy ? t("在线") : t("离线")}
                 </span>
               </div>
@@ -53,7 +53,7 @@ export function DeviceCard({ device, onOpen }: { device: DashboardDevice; onOpen
           </div>
         </div>
         <div className="space-y-4">
-          <div className="flex items-center justify-between rounded-[16px] bg-black/[0.04] p-3 dark:bg-white/[0.06]">
+          <div className="flex items-center justify-between rounded-[14px] bg-black/[0.04] p-3 dark:bg-[var(--color-card-2)]">
             <div className="flex min-w-0 items-center gap-2">
               <div className="flex items-center gap-1.5 opacity-80">
                 <NetIcon className={cx("h-[18px] w-[18px]", netColor)} />

@@ -52,7 +52,7 @@ export function EsimCardPolicyInline({ deviceId, iccid, isActiveCard, deviceOnli
   const { local } = toggles;
 
   return (
-    <div className="space-y-3 rounded-lg bg-gray-50/60 px-4 py-3 dark:bg-white/5">
+    <div className="space-y-3 rounded-lg bg-gray-50/60 px-3 py-3 dark:bg-white/5 sm:px-4">
       {loading ? (
         <div className="flex items-center gap-1 text-xs text-gray-400">
           <Spinner className="h-3.5 w-3.5 animate-spin" />

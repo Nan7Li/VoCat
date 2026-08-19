@@ -45,13 +45,13 @@ export function EpdgStatusCard({ device }: { device: DeviceDetail }) {
       </div>
 
       <div className="space-y-1.5">
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-gray-500">{t("ePDG 主机")}</span>
-          <span className="font-mono text-gray-700 dark:text-gray-200">{probe.epdg || "--"}</span>
+        <div className="flex items-start justify-between gap-3 text-xs">
+          <span className="shrink-0 text-gray-500">{t("ePDG 主机")}</span>
+          <span className="min-w-0 break-all text-right font-mono text-gray-700 dark:text-gray-200">{probe.epdg || "--"}</span>
         </div>
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-gray-500">{t("检查时间")}</span>
-          <span className="text-gray-700 dark:text-gray-200">{checked}</span>
+        <div className="flex items-start justify-between gap-3 text-xs">
+          <span className="shrink-0 text-gray-500">{t("检查时间")}</span>
+          <span className="min-w-0 break-all text-right text-gray-700 dark:text-gray-200">{checked}</span>
         </div>
         {portRow(500, probe.port500Ok, probe.rtt500Ms)}
         {portRow(4500, probe.port4500Ok, probe.rtt4500Ms)}
