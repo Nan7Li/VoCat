@@ -239,6 +239,8 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 		go watchDeveloperDisable(pollContext, logger, database, deviceManager, exportProxyManager, legacyExportProxyConfig)
 	}
 
+	var onIncomingCall func(context.Context, ims.ReceivedCall) error
+
 	vowifiManager, err := configureVoWiFiRuntime(
 		startupContext,
 		logger,
@@ -246,6 +248,12 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 		deviceManager,
 		cardReaders,
 		filepath.Join(filepath.Dir(cfg.DatabasePath), "recordings"),
+		func(ctx context.Context, call ims.ReceivedCall) error {
+			if onIncomingCall != nil {
+				return onIncomingCall(ctx, call)
+			}
+			return nil
+		},
 	)
 	if err != nil {
 		return fmt.Errorf("configure VoWiFi runtime: %w", err)
@@ -288,11 +296,25 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 	if err != nil {
 		return err
 	}
+	onIncomingCall = func(ctx context.Context, call ims.ReceivedCall) error {
+		deviceConfig, _ := database.Device(ctx, call.DeviceID)
+		handler.NotifyIncomingCall(ctx, server.IncomingCallNotification{
+			DeviceID:    call.DeviceID,
+			DeviceName:  strings.TrimSpace(deviceConfig.Name),
+			DeviceLabel: firstNonEmpty(deviceConfig.Name, deviceConfig.ID, "--"),
+			Caller:      call.Caller,
+			Called:      call.Called,
+			Time:        call.Timestamp,
+			Environment: "vowifi",
+		})
+		return nil
+	}
 	go handler.StartLogRetentionLoop(pollContext, time.Minute)
 	go handler.RunCallHistoryWatcher(pollContext)
 	go handler.StartSMSSyncLoop(pollContext, 15*time.Second)
 	handler.StartTelegramBot(pollContext)
 	handler.StartSMSNotificationDispatchers(pollContext)
+	go handler.StartCellularCallMonitor(pollContext)
 	handler.StartAutomaticTasks(pollContext)
 	handler.StartAutoUpdate(pollContext)
 
@@ -590,6 +612,7 @@ func configureVoWiFiRuntime(
 	deviceManager *device.Manager,
 	cardReaders *pcsc.Service,
 	recordingsDir string,
+	onIncomingCall func(context.Context, ims.ReceivedCall) error,
 ) (*vowifiruntime.Manager, error) {
 	mapper := integration.ATMapper{
 		Store:   database,
@@ -645,7 +668,7 @@ func configureVoWiFiRuntime(
 			} else if deviceConfig.DeviceType == store.DeviceTypeWiFi410 {
 				adapter = nativeQMIAdapter
 			}
-			return newVoWiFiOrchestrator(deviceConfig, database, adapter, logger, recordingsDir)
+			return newVoWiFiOrchestrator(deviceConfig, database, adapter, logger, recordingsDir, onIncomingCall)
 		},
 	})
 
@@ -709,7 +732,7 @@ func protectVoWiFiStartupRadioWithRetry(
 	physicalID string,
 	attempts int,
 	delay time.Duration,
-) error {
+	) error {
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		flightContext, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -746,6 +769,7 @@ func newVoWiFiOrchestrator(
 	adapter vowifiDeviceAdapter,
 	logger *slog.Logger,
 	recordingsDir string,
+	onIncomingCall func(context.Context, ims.ReceivedCall) error,
 ) (*vowifi.Orchestrator, error) {
 	apn := deviceConfig.APN
 	if apn == "" {
@@ -767,6 +791,7 @@ func newVoWiFiOrchestrator(
 		// alternate transport only if no SIP response was observed.
 		Transport:             "tcp",
 		AutoTransportFallback: true,
+		OnIncomingCall:        onIncomingCall,
 		OnSMS: func(ctx context.Context, message ims.ReceivedSMS) error {
 			extra, _ := json.Marshal(map[string]any{
 				"transport":                "ims",
@@ -778,6 +803,7 @@ func newVoWiFiOrchestrator(
 				"service_center_timestamp": message.ServiceCenterTimestamp,
 				"raw_rpdu":                 message.RawRPDU,
 				"raw_tpdu":                 message.RawTPDU,
+				"decode_error":             message.DecodeError,
 			})
 			partsTotal := 1
 			if message.Concat != nil && message.Concat.Total > 0 {
@@ -841,6 +867,31 @@ func newVoWiFiOrchestrator(
 			// A late report from before this process started must still be
 			// acknowledged, otherwise the SMSC will keep retransmitting it.
 			return nil
+		},
+		OnUSSD: func(ctx context.Context, message ims.ReceivedUSSD) error {
+			extra, _ := json.Marshal(map[string]any{
+				"transport":   "ims-ussd",
+				"dcs":         message.DCS,
+				"call_id":     message.CallID,
+				"received_at": message.Timestamp,
+				"raw_body":    message.RawBody,
+			})
+			_, saveErr := database.SaveSMSMessage(ctx, store.SMSMessage{
+				MessageID:  message.MessageID,
+				DeviceID:   message.DeviceID,
+				ModemIMEI:  deviceConfig.ModemIMEI,
+				IMSI:       message.IMSI,
+				Peer:       message.From,
+				Direction:  "inbound",
+				Body:       message.Text,
+				Timestamp:  message.Timestamp,
+				Status:     "received",
+				Source:     "ims-ussd",
+				PartsTotal: 1,
+				Read:       false,
+				Extra:      extra,
+			})
+			return saveErr
 		},
 	})
 	if err != nil {
@@ -1346,4 +1397,14 @@ func liftCardRegionBlock(
 		"region marker removed; allowed SIM remains RF protected",
 		"device_id", id, "iccid", snapshot.ICCID, "imsi", snapshot.IMSI,
 	)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

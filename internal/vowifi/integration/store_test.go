@@ -40,7 +40,7 @@ func TestProxyResolverUsesICCIDProfileBinding(t *testing.T) {
 	}
 	if err := database.UpsertDeviceProxyBinding(context.Background(), store.DeviceProxyBinding{
 		DeviceID:        "ec20",
-		ICCID:           "89441000400128014257",
+		ICCID:           "8944100000000000001",
 		ProfileName:     "Vodafone UK",
 		UpstreamProxyID: "clash",
 	}); err != nil {
@@ -48,7 +48,7 @@ func TestProxyResolverUsesICCIDProfileBinding(t *testing.T) {
 	}
 	route, err := (ProxyResolver{Store: database}).Resolve(
 		context.Background(),
-		vowifi.ProxyRequest{DeviceID: "ec20", ICCID: "89441000400128014257", HomeMCC: "234", HomeMNC: "15"},
+		vowifi.ProxyRequest{DeviceID: "ec20", ICCID: "8944100000000000001", HomeMCC: "234", HomeMNC: "15"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +69,7 @@ func TestProxyResolverDoesNotLeakBindingToAnotherProfileOnSameDevice(t *testing.
 	if err := database.UpsertUpstreamProxy(context.Background(), store.UpstreamProxy{ID: "proxy", Name: "Proxy", Addr: "127.0.0.1:1080", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.UpsertDeviceProxyBinding(context.Background(), store.DeviceProxyBinding{DeviceID: "ec20", ICCID: "89441000400128014257", ProfileName: "A", UpstreamProxyID: "proxy"}); err != nil {
+	if err := database.UpsertDeviceProxyBinding(context.Background(), store.DeviceProxyBinding{DeviceID: "ec20", ICCID: "8944100000000000001", ProfileName: "A", UpstreamProxyID: "proxy"}); err != nil {
 		t.Fatal(err)
 	}
 	route, err := (ProxyResolver{Store: database}).Resolve(context.Background(), vowifi.ProxyRequest{DeviceID: "ec20", ICCID: "89104100000028106378"})
@@ -181,12 +181,12 @@ func TestProxyResolverICCIDBindingWithDisabledProxyFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := database.UpsertDeviceProxyBinding(ctx, store.DeviceProxyBinding{
-		DeviceID: "ec20", ICCID: "89441000400128014257", ProfileName: "Manual", UpstreamProxyID: "disabled",
+		DeviceID: "ec20", ICCID: "8944100000000000001", ProfileName: "Manual", UpstreamProxyID: "disabled",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := (ProxyResolver{Store: database}).Resolve(ctx, vowifi.ProxyRequest{
-		DeviceID: "ec20", ICCID: "89441000400128014257", HomeMCC: "234",
+		DeviceID: "ec20", ICCID: "8944100000000000001", HomeMCC: "234",
 	})
 	if err == nil {
 		t.Fatal("disabled explicit ICCID binding unexpectedly fell back to another route")
@@ -213,7 +213,7 @@ func TestProxyResolverMaterializesCountryRuleAsICCIDBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := vowifi.ProxyRequest{
-		DeviceID: "ec20", ICCID: "89441000400128014257", HomeMCC: "234",
+		DeviceID: "ec20", ICCID: "8944100000000000001", HomeMCC: "234",
 	}
 	resolver := ProxyResolver{Store: database}
 	route, err := resolver.Resolve(ctx, request)
@@ -258,7 +258,7 @@ func TestInsertDeviceProxyBindingIfAbsentDoesNotReplaceExplicitBinding(t *testin
 			t.Fatal(err)
 		}
 	}
-	iccid := "89441000400128014257"
+	iccid := "8944100000000000001"
 	if err := database.UpsertDeviceProxyBinding(ctx, store.DeviceProxyBinding{
 		DeviceID: "ec20", ICCID: iccid, ProfileName: "Manual", UpstreamProxyID: "explicit",
 	}); err != nil {
@@ -301,12 +301,12 @@ func TestProxyResolverPrefersICCIDBindingOverCountryRule(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := database.UpsertDeviceProxyBinding(context.Background(), store.DeviceProxyBinding{
-		DeviceID: "ec20", ICCID: "89441000400128014257", ProfileName: "Physical SIM", UpstreamProxyID: "profile",
+		DeviceID: "ec20", ICCID: "8944100000000000001", ProfileName: "Physical SIM", UpstreamProxyID: "profile",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	route, err := (ProxyResolver{Store: database}).Resolve(context.Background(), vowifi.ProxyRequest{
-		DeviceID: "ec20", ICCID: "89441000400128014257", HomeMCC: "234",
+		DeviceID: "ec20", ICCID: "8944100000000000001", HomeMCC: "234",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -444,10 +444,10 @@ func TestStateProjectorDoesNotAttachOldSessionNumberToNewLiveSIM(t *testing.T) {
 	}
 	if err := projector.Save(context.Background(), vowifi.State{
 		DeviceID:          "ec20",
-		ICCID:             "89441000400128014257",
-		IMSI:              "234159608751160",
+		ICCID:             "8944100000000000001",
+		IMSI:              "234150000000001",
 		Phase:             vowifi.PhaseStopping,
-		PhoneNumber:       "+447386083638",
+		PhoneNumber:       "+447700900123",
 		PhoneNumberSource: vowifi.PhoneSourcePAssociatedURI,
 		UpdatedAt:         time.Now().UTC(),
 	}); err != nil {
@@ -457,10 +457,10 @@ func TestStateProjectorDoesNotAttachOldSessionNumberToNewLiveSIM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runtime.ICCID != "89441000400128014257" || runtime.IMSI != "234159608751160" {
+	if runtime.ICCID != "8944100000000000001" || runtime.IMSI != "234150000000001" {
 		t.Fatalf("runtime identity = %q/%q", runtime.ICCID, runtime.IMSI)
 	}
-	if runtime.LocalPhone != "+447386083638" {
+	if runtime.LocalPhone != "+447700900123" {
 		t.Fatalf("runtime phone = %q", runtime.LocalPhone)
 	}
 }

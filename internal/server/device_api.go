@@ -581,7 +581,7 @@ func (s *Server) handleDevicePath(
 		if !s.requirePhysicalDevice(w, physicalPresent) {
 			return true
 		}
-		return s.handleUSSD(w, r, physicalID)
+		return s.handleUSSD(w, r, config, physicalID)
 	case "actions/ussd/continue":
 		return s.handleUSSDContinue(w, r)
 	case "actions/ussd/cancel":
@@ -1042,13 +1042,14 @@ func (s *Server) handleAT(w http.ResponseWriter, r *http.Request, id string) boo
 	var request struct {
 		Command   string `json:"cmd"`
 		TimeoutMs int    `json:"timeout_ms"`
+		Force     bool   `json:"force"`
 	}
 	if err := s.decodeJSON(w, r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return true
 	}
 	command := strings.TrimSpace(request.Command)
-	if err := validateATCommand(command); err != nil {
+	if err := validateATCommand(command, request.Force); err != nil {
 		writeError(w, http.StatusBadRequest, "unsafe_at_command", err.Error())
 		return true
 	}
@@ -1097,13 +1098,16 @@ func (s *Server) handleAT(w http.ResponseWriter, r *http.Request, id string) boo
 	return true
 }
 
-func validateATCommand(command string) error {
+func validateATCommand(command string, force bool) error {
 	upper := strings.ToUpper(command)
 	if len(command) < 2 || len(command) > 512 || !strings.HasPrefix(upper, "AT") {
 		return errors.New("AT command must start with AT and contain at most 512 characters")
 	}
 	if strings.ContainsAny(command, "\r\n\x00") {
 		return errors.New("AT command must contain exactly one line")
+	}
+	if force {
+		return nil
 	}
 	canonical := strings.NewReplacer(" ", "", "\t", "").Replace(upper)
 	for _, blocked := range []string{
@@ -1135,7 +1139,34 @@ func validateATCommand(command string) error {
 	return nil
 }
 
-func (s *Server) handleUSSD(w http.ResponseWriter, r *http.Request, id string) bool {
+// imsUSSIController is the optional VoWiFi runtime capability used to route a
+// USSD request over IMS (3GPP TS 24.390) when VoWiFi is enabled and the IMS
+// session is registered. device.Manager does not implement it; the VoWiFi
+// runtime manager does.
+type imsUSSIController interface {
+	SendUSSI(context.Context, string, vowifi.USSISubmitRequest) (vowifi.USSISubmitResult, error)
+}
+
+// openUSSDSession mirrors device.Manager.openUSSDSession but lives on the HTTP
+// server so a USSI awaiting-input reply can hand back a token the existing
+// continue/cancel endpoints understand. The token is only a device handle;
+// the IMS session owns the actual dialog.
+func (s *Server) openUSSDSession(deviceID string) string {
+	return s.ussdSessions.open(deviceID)
+}
+
+// ussdSessionDevice resolves a USSD session token created by openUSSDSession
+// back to its device id, matching device.ErrUSSDSessionNotFound semantics.
+func (s *Server) ussdSessionDevice(sessionID string) (string, error) {
+	return s.ussdSessions.device(sessionID)
+}
+
+// dropUSSDSession releases a USSD session token.
+func (s *Server) dropUSSDSession(sessionID string) {
+	s.ussdSessions.drop(sessionID)
+}
+
+func (s *Server) handleUSSD(w http.ResponseWriter, r *http.Request, config store.Device, id string) bool {
 	if !requireMethod(w, r, http.MethodPost) {
 		return true
 	}
@@ -1149,19 +1180,90 @@ func (s *Server) handleUSSD(w http.ResponseWriter, r *http.Request, id string) b
 	}
 	ctx, cancel := actionRequestContext(r.Context(), request.TimeoutMs)
 	defer cancel()
+
+	cmd := strings.TrimSpace(request.Command)
+	if cmd == "*#06#" || cmd == "*#06" {
+		imei := config.ModemIMEI
+		if imei == "" {
+			if runtime, runtimeErr := s.store.DeviceRuntime(ctx, id); runtimeErr == nil {
+				imei = runtime.IMEI
+			}
+		}
+		if imei != "" {
+			writeUSSDResult(w, device.USSDResult{
+				Text:   fmt.Sprintf("IMEI: %s", imei),
+				Status: "final",
+			})
+			return true
+		}
+	}
+	if cmd == "*#0000#" || cmd == "*#0000" {
+		firmware := ""
+		if runtime, runtimeErr := s.store.DeviceRuntime(ctx, id); runtimeErr == nil {
+			firmware = runtime.Firmware
+		}
+		if firmware != "" {
+			writeUSSDResult(w, device.USSDResult{
+				Text:   fmt.Sprintf("Software Version: %s", firmware),
+				Status: "final",
+			})
+			return true
+		}
+	}
+
+	// VoWiFi-first: when VoWiFi owns the radio the cellular CUSD path has no
+	// network to talk to (CFUN=4 returns +CME ERROR: 30). Route over IMS/USSI
+	// when the IMS session is registered, and fall back to cellular CUSD only
+	// when USSI is not ready or the runtime is unavailable.
+	if config.VoWiFiEnabled && s.vowifi != nil {
+		sender, canSendIMS := s.vowifi.(imsUSSIController)
+		if canSendIMS {
+			if state, stateErr := s.vowifi.State(id); stateErr == nil && state.IMSReady {
+				result, sendErr := sender.SendUSSI(ctx, id, vowifi.USSISubmitRequest{Code: request.Command})
+				if sendErr == nil {
+					writeUSSDResult(w, ussdResultFromUSSI(result, id, s))
+					return true
+				}
+				if !errors.Is(sendErr, vowifi.ErrUSSINotReady) {
+					s.writeDeviceError(w, sendErr)
+					return true
+				}
+				// ErrUSSINotReady: fall through to cellular CUSD.
+			}
+		}
+	}
 	result, err := s.devices.USSD(ctx, id, request.Command)
 	if err != nil {
 		s.writeDeviceError(w, err)
 		return true
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"data": map[string]any{
-			"result": result.Text,
-			"raw":    result.Raw,
-			"dcs":    result.DCS,
-		},
-	})
+	writeUSSDResult(w, result)
 	return true
+}
+
+// ussdResultFromUSSI maps a USSI result onto the device.USSDResult shape that
+// writeUSSDResult expects. A USSI awaiting-input reply opens a server-side
+// session token via the device manager so the existing continue/cancel
+// endpoints keep working; the token maps back to the device and the continue
+// handler re-enters the USSI path through the same imsUSSIController.
+func ussdResultFromUSSI(result vowifi.USSISubmitResult, deviceID string, server *Server) device.USSDResult {
+	mapped := device.USSDResult{
+		Text:         result.Text,
+		Raw:          result.Raw,
+		DCS:          result.DCS,
+		Status:       result.Status,
+		Continueable: result.Continueable,
+	}
+	// USSI has no inline continue/terminate flag in the 2xx response body, so
+	// treat any non-empty successful reply as potentially multi-round. The cancel
+	// endpoint drops the local token; the network will time the dialog out if it
+	// was actually final.
+	if mapped.Status != "failed" && mapped.Status != "terminated" && mapped.Text != "" {
+		mapped.Status = "awaiting_input"
+		mapped.Continueable = true
+		mapped.SessionID = server.openUSSDSession(deviceID)
+	}
+	return mapped
 }
 
 func (s *Server) handleFlightMode(w http.ResponseWriter, r *http.Request, config store.Device, physicalID string) bool {
@@ -1637,7 +1739,14 @@ func (s *Server) configuredDeviceOverview(
 	result["id"] = config.ID
 	result["name"] = config.Name
 	result["interface"] = config.Interface
-	result["at_port"] = config.ATPort
+	// ttyUSB allocation changes across USB reconnects and boot cycles. The AT
+	// terminal must use only the currently discovered physical port; a stored
+	// path may point at another modem after enumeration order changes.
+	liveATPort := ""
+	if present {
+		liveATPort = entry.Candidate.ATPort.OpenPath()
+	}
+	result["at_port"] = liveATPort
 	result["audio_device"] = config.AudioDevice
 	result["backend_mode"] = config.DeviceBackend
 	result["control_device"] = config.ControlDevice

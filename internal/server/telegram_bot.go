@@ -238,10 +238,10 @@ func (bot *telegramBot) getUpdates(
 func (bot *telegramBot) handleUpdate(ctx context.Context, config telegramRuntimeConfig, update telegramUpdate) {
 	if callback := update.CallbackQuery; callback != nil {
 		if callback.Message == nil || !bot.authorized(config, callback.Message.Chat.ID, callback.From.ID) {
-			_ = bot.answerCallback(ctx, config, callback.ID, "无权限")
+			go func() { _ = bot.answerCallback(context.Background(), config, callback.ID, "无权限") }()
 			return
 		}
-		_ = bot.answerCallback(ctx, config, callback.ID, "")
+		go func() { _ = bot.answerCallback(context.Background(), config, callback.ID, "") }()
 		bot.handleCallback(ctx, config, callback)
 		return
 	}
@@ -1983,7 +1983,7 @@ func (bot *telegramBot) handleATCommand(ctx context.Context, config telegramRunt
 
 func (bot *telegramBot) executeATCommand(ctx context.Context, deviceID, command string) (string, error) {
 	command = strings.TrimSpace(command)
-	if err := validateATCommand(command); err != nil {
+	if err := validateATCommand(command, false); err != nil {
 		return "", err
 	}
 	_, _, physicalID, err := bot.device(deviceID)

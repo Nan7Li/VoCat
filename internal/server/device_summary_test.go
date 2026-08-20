@@ -40,12 +40,12 @@ func TestConfiguredDeviceSummaryIgnoresVoWiFiRuntimeFromPreviousSIM(t *testing.T
 	if err := database.UpsertVoWiFiRuntime(context.Background(), store.VoWiFiRuntime{
 		DeviceID:          "ec20_1",
 		Phase:             "stopping",
-		ICCID:             "89441000400128014257",
-		IMSI:              "234159608751160",
+		ICCID:             "8944100000000000001",
+		IMSI:              "234150000000001",
 		TunnelReady:       true,
 		IMSReady:          true,
 		SMSReady:          true,
-		LocalPhone:        "+447386083638",
+		LocalPhone:        "+447700900123",
 		PhoneNumberSource: "ims_p_associated_uri",
 		UpdatedAt:         time.Now().UTC(),
 	}); err != nil {
@@ -60,7 +60,7 @@ func TestConfiguredDeviceSummaryIgnoresVoWiFiRuntimeFromPreviousSIM(t *testing.T
 	if got["vowifi_active"] != false {
 		t.Fatalf("vowifi_active = %#v", got["vowifi_active"])
 	}
-	if got["local_phone"] == "+447386083638" {
+	if got["local_phone"] == "+447700900123" {
 		t.Fatalf("old phone leaked into current SIM summary: %#v", got)
 	}
 	runtime, ok := got["vowifi_runtime"].(map[string]any)
@@ -134,6 +134,29 @@ func TestConfiguredDeviceSummaryMarksIdleRuntimeAsNotInUse(t *testing.T) {
 	}
 }
 
+func TestConfiguredDeviceOverviewAlwaysUsesLiveDiscoveredATPort(t *testing.T) {
+	database, err := store.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	s := &Server{store: database}
+	config := store.Device{ID: "ec20_1", ATPort: "/dev/ttyUSB9"}
+	entry := device.Device{Candidate: modem.Candidate{
+		ATPort: modem.Port{Path: "/dev/ttyUSB2", Role: modem.PortRoleAT},
+	}}
+
+	connected := s.configuredDeviceOverview(config, entry, true)
+	if got := connected["at_port"]; got != "/dev/ttyUSB2" {
+		t.Fatalf("connected AT port = %#v, want live /dev/ttyUSB2", got)
+	}
+
+	offline := s.configuredDeviceOverview(config, entry, false)
+	if got := offline["at_port"]; got != "" {
+		t.Fatalf("offline AT port = %#v, want empty instead of stored port", got)
+	}
+}
+
 func TestSnapshotHasSIMDoesNotTreatUnknownStatusAsInserted(t *testing.T) {
 	for _, snapshot := range []*device.Snapshot{
 		{IMEI: "867123456789012"},
@@ -146,7 +169,7 @@ func TestSnapshotHasSIMDoesNotTreatUnknownStatusAsInserted(t *testing.T) {
 	}
 	for _, snapshot := range []*device.Snapshot{
 		{SIMStatus: "pin_required"},
-		{ICCID: "89441000400128014257"},
+		{ICCID: "8944100000000000001"},
 		{SIMReady: true},
 	} {
 		if !snapshotHasSIM(snapshot) {

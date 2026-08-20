@@ -24,7 +24,7 @@
 
 **English** | [العربية](docs/README.ar.md) | [简体中文](docs/README.zh-CN.md) | [繁體中文](docs/README.zh-TW.md) | [Français](docs/README.fr.md) | [Русский](docs/README.ru.md) | [Español](docs/README.es.md) | [日本語](docs/README.ja.md)
 
-> **Halo 1.1.0** is a personal interface and release based on [VoCat](https://github.com/MengMengCode/VoCat) v0.2.7 by the Vocat Project Authors. The modem, IMS, WiFi Calling, eSIM, and proxy stack is their work. This branch only adds a different UI, Halo branding, a customizable accent color, and a few local fixes. The [Vocat Research & Evaluation License](LICENSE) still applies. See [ATTRIBUTION.md](ATTRIBUTION.md).
+> **Halo 1.1.6** is a personal interface and release based on [VoCat](https://github.com/MengMengCode/VoCat) v0.2.12 by the Vocat Project Authors. The modem, IMS, WiFi Calling, eSIM, and proxy stack is their work. This branch only adds a different UI, Halo branding, a customizable accent color, and a few local fixes. The [Vocat Research & Evaluation License](LICENSE) still applies. See [ATTRIBUTION.md](ATTRIBUTION.md).
 
 Vocat is an open-source web control panel and engineering toolkit for Quectel EC20/EC25-class cellular modems. It combines modem discovery, live radio status, AT and USSD terminals, SMS, WiFi Calling, eSIM management, network selection, proxy routing, notifications, audit logs, and release automation in one self-contained service.
 
@@ -99,6 +99,14 @@ to install matching `ip-full`, `kmod-ipsec`, `kmod-ipsec4/6`,
 `kmod-crypto-authenc`, AES-CBC and SHA1 packages from the firmware's own feed.
 If matching kernel modules are unavailable, use a firmware that includes them;
 never force-install kmods built for a different kernel.
+
+If your kernel cannot provide XFRM/IPsec and you only need non-VoWiFi features
+such as cellular SMS or data, install with `--skip-vowifi-check`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MengMengCode/VoCat/master/scripts/install.sh -o install.sh
+sudo bash install.sh --skip-vowifi-check
+```
 
 The installer:
 
@@ -192,6 +200,11 @@ those fixed nodes and does not provide complete multi-device or hot-plug discove
 
 The GHCR image is published for `linux/amd64` and `linux/arm64`.
 
+> [!TIP]
+> **NAS / QNAP Container Station Deployment Note**:
+> On NAS operating systems like QNAP QTS / QuTS hero (Container Station), custom non-root administrator accounts and volume isolation mechanisms may cause Docker named volumes (e.g. `-v vocat-data:/opt/vocat/data`) to resolve to different isolated paths between the one-off `bootstrap-admin` initialization and the daemon service container, leading to "Incorrect password" errors during Web login.
+> For NAS environments, it is strongly recommended to replace named volumes with a host absolute path bind mount (e.g. `-v /share/Container/vocat/data:/opt/vocat/data` on QNAP) for both initialization and runtime to guarantee consistent SQLite database persistence.
+
 ### USB SIM readers
 
 USB SIM readers use the Linux PC/SC service. The one-click installer installs
@@ -200,6 +213,19 @@ managers. On Debian/Ubuntu, the equivalent manual setup is
 `apt install pcscd libccid`. If USB sees a CCID reader but PC/SC is unavailable,
 VoCat keeps the reader visible in the add-device dialog and reports the missing
 service or driver instead of silently hiding it.
+
+### QMI command-line utilities
+
+VoCat uses `qmicli` to verify that a QMI control channel is ready and
+`qmi-network` to manage packet-data sessions. The one-click installer installs
+and verifies the corresponding utilities automatically. For manual deployment,
+Debian/Ubuntu uses `apt install libqmi-utils`; Arch Linux uses
+`pacman -S libqmi`, Alpine uses `apk add qmi-utils`, and OpenWrt uses
+`opkg install qmi-utils`.
+
+`vocat doctor --repair-dji-qmi` checks for `qmicli` before changing any USB
+driver binding or asserting DTR. If the utility is unavailable, the command
+stops with an installation hint and leaves the current device state untouched.
 
 ## Configuration
 
@@ -358,7 +384,7 @@ cd web && npm run build
 ## Thanks
 - [Nodeseek.com](https://www.nodeseek.com) — A community dedicated to servers
 - [Linux.do](https://linux.do) — An inspiring tech community
-- [iniwex5](https://github.com/iniwex5) - Style and Functionality Guidelines
+- [iniwex5](https://github.com/iniwex5) — Style and Functionality Guidelines
 
 ## Buy me a coffee
 

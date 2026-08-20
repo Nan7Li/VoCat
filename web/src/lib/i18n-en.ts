@@ -751,6 +751,8 @@ export const EN_DICT: Record<string, string> = {
   "AT 终端暂不可用": "AT terminal unavailable",
   "AT=串口 / QMI=纯 QMI": "AT=serial / QMI=pure QMI",
   "AT=传统串口 / QMI=纯 QMI": "AT=legacy serial / QMI=pure QMI",
+  "强制发送 AT 指令": "Force-send AT command",
+  "强制模式允许发送默认被拦截的 AT 指令（如切网、拨号、短信、USSD），误操作可能导致断网或费用扣除。": "Force mode allows sending AT commands that are normally blocked (e.g. mode switching, dialing, SMS, USSD). Mistakes may disconnect the network or incur charges.",
   "E911地址": "E911 Address",
   "E911地址设置页面打开失败": "Failed to open the E911 address setup page",
   "IMEI 绑定": "IMEI Binding",
@@ -900,6 +902,8 @@ export const EN_DICT: Record<string, string> = {
   "匹配依据": "Profile Match",
   "方向": "Direction",
   "无法读取 IMEI（控制口可能挂死），暂不可添加。": "Cannot read the IMEI (the control port may be stuck); cannot add for now.",
+  "已发现该模组，但未找到 AT 串口：通常是 option 驱动未认该 PID 或模组处于 MBIM/RNDIS 组态。可 `echo 2c7c <pid> | sudo tee /sys/bus/usb-serial/drivers/option1/new_id` 后重扫，或用 AT+QCFG 切到 QMI+AT 组态。":
+    "The modem was discovered, but no AT serial port was found. This usually means the `option` driver does not recognize this PID, or the module is in an MBIM/RNDIS composition. Run `echo 2c7c <pid> | sudo tee /sys/bus/usb-serial/drivers/option1/new_id` then rescan, or use AT+QCFG to switch to a QMI+AT composition.",
   "未找到可用的 AT 端口（串口可能仍在枚举），系统会自动重试；也可点击重新扫描。":
     "No usable AT port was found (serial interfaces may still be enumerating). The system retries automatically; you can also rescan now.",
   "无法读取该设备 IMEI（可能控制口挂死），请执行 AT!RESET 或切换组态后重试": "Cannot read the device IMEI (the control port may be stuck); run AT!RESET or switch the USB composition and retry",
@@ -1024,6 +1028,7 @@ export const EN_DICT: Record<string, string> = {
   "通知重试发送失败": "Notification resend failed",
   "通知重试发送成功": "Notification resent",
   "配置存储在数据库中，部分字段可能需要重启生效": "Configuration is stored in the database; some fields may require a restart to take effect",
+  "配置策略": "Profile Policy",
   "配置已保存，但部分变更需要重启服务后生效": "Configuration saved, but some changes require a service restart",
   "采样中断": "Sampling interrupted",
   "重启中": "Rebooting",
@@ -1347,4 +1352,31 @@ export const EN_DICT: Record<string, string> = {
   "ePDG 探测失败": "ePDG probe failed",
   "尚无探测记录。点「立即检测」会按当前 SIM 推导 ePDG，走已绑定的 SOCKS5 或本机默认路由发送 IKE_SA_INIT，探测 UDP/500 与 UDP/4500。":
     "No probe yet. Check now derives the ePDG from the current SIM and sends IKE_SA_INIT to UDP/500 and UDP/4500 via the bound SOCKS5 proxy or the host default route.",
+
+  // Uptime & Monitoring translations
+  "运行优秀": "Excellent",
+  "正常监控": "Optimal",
+  "14天前": "14d ago",
+  "持续监测中": "Monitored",
+  "今天": "Today",
+  "昨天": "Yesterday",
+  "天前": "days ago",
+  "{days}天前": "{days}d ago",
+  "正常在线": "Online",
+  "部分离线": "Degraded",
+  "完全离线": "Offline",
+
+  // Additional missing system strings
+  "端口": "Port",
+  "错误详情": "Error Details",
+  "正在搜索网络": "Searching network",
+  "SM-DP+ 的公开 Profile 库存已耗尽，请稍后重试或更换服务。":
+    "The public profile inventory on the SM-DP+ is exhausted. Please try again later or use a different service.",
+  "此 SM-DP+ 的证书链不受当前 eUICC 信任；该卡不能使用此测试服务器。":
+    "The SM-DP+ certificate chain is not trusted by this eUICC; this card cannot use this test server.",
+  "激活码已被使用、已过期或被 SM-DP+ 拒绝，请更换新的 Matching ID。":
+    "The activation code has already been used, expired, or was rejected by SM-DP+. Please use a new Matching ID.",
+  "已发现该模组，但未找到 AT 串口：通常是 option 驱动未认该 PID 或模组处于 MBIM/RNDIS 组态。可 ":
+    "Modem detected, but no AT serial port found: option driver may not recognize this PID or modem is in MBIM/RNDIS mode. You can ",
 };
+

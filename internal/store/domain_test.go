@@ -128,7 +128,7 @@ func TestMigration12ConvertsOnlyKnownActiveDeviceBindingToICCID(t *testing.T) {
 		INSERT INTO device_proxy_bindings (device_id, upstream_proxy_id, created_at, updated_at) VALUES
 			('known', 'route', 100, 100), ('unknown', 'route', 100, 100);
 		INSERT INTO vowifi_runtime (device_id, iccid, updated_at)
-			VALUES ('known', '89441000400128014257', 100);
+			VALUES ('known', '8944100000000000001', 100);
 		PRAGMA user_version = 11;
 	`); err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestMigration12ConvertsOnlyKnownActiveDeviceBindingToICCID(t *testing.T) {
 	}
 
 	database := openTestStore(t, path)
-	binding, err := database.DeviceProxyBinding(ctx, "89441000400128014257")
+	binding, err := database.DeviceProxyBinding(ctx, "8944100000000000001")
 	if err != nil || binding.DeviceID != "known" || binding.UpstreamProxyID != "route" {
 		t.Fatalf("migrated binding = %+v, %v", binding, err)
 	}
@@ -579,6 +579,20 @@ func TestSMSPersistenceAndDerivedThreads(t *testing.T) {
 	if len(contacts) != 1 || contacts[0].UnreadCount != 0 {
 		t.Fatalf("thread should be read: %+v", contacts)
 	}
+
+	// A subsequent periodic modem AT sync with raw unread state must not revert is_read back to 0.
+	if _, err := database.SaveSMSMessage(ctx, SMSMessage{
+		MessageID: "network-1", DeviceID: "ec20-1", IMSI: "46000",
+		Peer: "10086", Direction: "inbound", Body: "第一条（完整）",
+		Timestamp: base, Status: "received", Read: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	contacts, err = database.ListSMSContacts(ctx, SMSFilter{Peer: "10086"})
+	if err != nil || len(contacts) != 1 || contacts[0].UnreadCount != 0 {
+		t.Fatalf("thread read state must survive modem rescan: %+v", contacts)
+	}
+
 	deleted, err := database.DeleteSMSThread(ctx, "ec20-1", "46000", "10086")
 	if err != nil || deleted != 2 {
 		t.Fatalf("DeleteSMSThread() = %d, %v", deleted, err)
@@ -789,11 +803,11 @@ func TestProxyCredentialsAndCountryRules(t *testing.T) {
 		t.Fatalf("CountryRule() = %+v, %v", rule, err)
 	}
 	if err := database.UpsertDeviceProxyBinding(ctx, DeviceProxyBinding{
-		DeviceID: "ec20-1", ICCID: "89441000400128014257", ProfileName: "Vodafone", UpstreamProxyID: "up-1",
+		DeviceID: "ec20-1", ICCID: "8944100000000000001", ProfileName: "Vodafone", UpstreamProxyID: "up-1",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	binding, err := database.DeviceProxyBinding(ctx, "89441000400128014257")
+	binding, err := database.DeviceProxyBinding(ctx, "8944100000000000001")
 	if err != nil || binding.UpstreamProxyID != "up-1" || binding.DeviceID != "ec20-1" || binding.ProfileName != "Vodafone" {
 		t.Fatalf("DeviceProxyBinding() = %+v, %v", binding, err)
 	}
@@ -803,7 +817,7 @@ func TestProxyCredentialsAndCountryRules(t *testing.T) {
 	if _, err := database.CountryRule(ctx, "CN"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("country rule should cascade with upstream deletion, got %v", err)
 	}
-	if _, err := database.DeviceProxyBinding(ctx, "89441000400128014257"); !errors.Is(err, ErrNotFound) {
+	if _, err := database.DeviceProxyBinding(ctx, "8944100000000000001"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("device binding should cascade with upstream deletion, got %v", err)
 	}
 }

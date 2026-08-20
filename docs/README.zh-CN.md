@@ -24,7 +24,7 @@
 
 [English](../README.md) | [العربية](README.ar.md) | **简体中文** | [繁體中文](README.zh-TW.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [Español](README.es.md) | [日本語](README.ja.md)
 
-> **Halo 1.1.0** 是基于 [VoCat](https://github.com/MengMengCode/VoCat) v0.2.7 的个人界面与发行版，原作者为 Vocat Project Authors。模组、IMS、WiFi Calling、eSIM 和代理等核心能力都是原项目的工作。本分支只改了界面、Halo 品牌、可自定义主色，以及少量本地修复。仍适用 [Vocat Research & Evaluation License](../LICENSE)。详见 [ATTRIBUTION.md](../ATTRIBUTION.md)。
+> **Halo 1.1.6** 是基于 [VoCat](https://github.com/MengMengCode/VoCat) v0.2.12 的个人界面与发行版，原作者为 Vocat Project Authors。模组、IMS、WiFi Calling、eSIM 和代理等核心能力都是原项目的工作。本分支只改了界面、Halo 品牌、可自定义主色，以及少量本地修复。仍适用 [Vocat Research & Evaluation License](../LICENSE)。详见 [ATTRIBUTION.md](../ATTRIBUTION.md)。
 
 Vocat 是一款面向 Quectel EC20/EC25 系列蜂窝模组的开源 Web 控制面板与工程工具套件。它在一个自包含的服务中整合了模组发现、实时射频状态、AT 与 USSD 终端、短信、WiFi Calling(WiFi 通话)、eSIM 管理、网络选择、代理路由、通知、审计日志以及发布自动化。
 
@@ -95,6 +95,13 @@ sudo bash install.sh 0.0.2
 ```
 
 VoWiFi IMS 必须使用 Linux XFRM/IPsec。OpenWrt/Kwrt 上安装脚本会从当前固件自己的软件源尝试安装严格匹配的 `ip-full`、`kmod-ipsec`、`kmod-ipsec4/6`、`kmod-crypto-authenc`、AES-CBC 和 SHA1 组件。若软件源没有与当前内核匹配的模块，必须更换包含这些组件的固件，禁止强装其他内核版本的 kmod。
+
+如果你的内核确实无法提供 XFRM/IPsec，且仅需要非 VoWiFi 功能（蜂窝短信、数据等），可在安装时加上 `--skip-vowifi-check`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MengMengCode/VoCat/master/scripts/install.sh -o install.sh
+sudo bash install.sh --skip-vowifi-check
+```
 
 安装程序会:
 
@@ -172,12 +179,27 @@ docker run -d \
 
 GHCR 镜像发布为 `linux/amd64` 与 `linux/arm64`。
 
+> [!TIP]
+> **NAS / 威联通 (QNAP Container Station) 部署说明**：
+> 在威联通等 NAS 系统的 Container Station 下部署时，由于系统的非 Root 自定义管理员权限与卷隔离机制，使用 Docker 命名卷（如 `-v vocat-data:/opt/vocat/data`）在执行一次性初始化 `bootstrap-admin` 和启动常驻服务时，两者的卷极易被解析至不同的隔离路径，导致 Web 端登录时提示密码错误。
+> 建议在 NAS 环境下部署时，将 `-v vocat-data:/opt/vocat/data` 替换为宿主机的绝对路径挂载（例如威联通上的 `-v /share/Container/vocat/data:/opt/vocat/data`），以确保初始化与运行期读写同一个 SQLite 数据库文件。
+
 ### USB SIM 读卡器
 
 USB SIM 读卡器通过 Linux PC/SC 服务访问。一键安装脚本会在支持的软件包管理器上
 自动安装并启动 `pcscd` 和 CCID 驱动；Debian/Ubuntu 手动安装命令为
 `apt install pcscd libccid`。如果 USB 已识别 CCID 读卡器但 PC/SC 尚未就绪，
 VoCat 会继续在添加设备窗口显示该硬件，并明确提示缺少服务或驱动，不再静默隐藏。
+
+### QMI 命令行工具
+
+VoCat 使用 `qmicli` 验证 QMI 控制通道是否就绪，并使用 `qmi-network` 管理
+分组数据会话。一键安装脚本会自动安装并验证对应工具。手动部署时，
+Debian/Ubuntu 使用 `apt install libqmi-utils`；Arch Linux 使用
+`pacman -S libqmi`，Alpine 使用 `apk add qmi-utils`，OpenWrt 使用 `opkg install qmi-utils`。
+
+`vocat doctor --repair-dji-qmi` 会在修改 USB 驱动绑定或触发 DTR 之前检查
+`qmicli`。如果工具不可用，命令会给出安装提示并停止，保持设备当前状态不变。
 
 ## 配置
 
