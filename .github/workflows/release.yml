@@ -5,6 +5,12 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag such as v1.1.8"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -15,6 +21,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.sha }}
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -40,6 +48,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.sha }}
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -83,6 +93,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.sha }}
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -103,7 +115,7 @@ jobs:
           GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: "0"
           OUTPUT: dist/${{ matrix.filename }}
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ inputs.tag || github.ref_name }}
         run: |
           mkdir -p dist
           VERSION="${VERSION#v}"
@@ -130,11 +142,12 @@ jobs:
           retention-days: 1
 
   github-release:
-    if: github.ref_type == 'tag'
+    if: ${{ github.ref_type == 'tag' || inputs.tag != '' }}
     needs: binaries
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Download binaries
         uses: actions/download-artifact@v4
@@ -151,12 +164,12 @@ jobs:
           sha256sum vocat-linux-* halo-linux-* | sort > SHA256SUMS
       - name: Create or update GitHub Release
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" dist/* \
+            gh release create "$RELEASE_TAG" dist/* \
               --repo "$GITHUB_REPOSITORY" \
-              --title "$GITHUB_REF_NAME" \
+              --title "$RELEASE_TAG" \
               --generate-notes \
               --verify-tag
           fi

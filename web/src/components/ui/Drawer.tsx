@@ -1,7 +1,8 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode, type TransitionEvent } from "react";
 import { cx } from "../../lib/utils";
 
-// el-drawer equivalent (slides in from the left) used for the mobile sidebar.
+// Left drawer for the mobile sidebar. Stays mounted through the close
+// animation so opening and closing both ease instead of popping.
 export function Drawer({
   open,
   onClose,
@@ -15,6 +16,20 @@ export function Drawer({
   widthClass?: string;
   className?: string;
 }) {
+  const [mounted, setMounted] = useState(open);
+  const [shown, setShown] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      const id = requestAnimationFrame(() => {
+        requestAnimationFrame(() => setShown(true));
+      });
+      return () => cancelAnimationFrame(id);
+    }
+    setShown(false);
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     function onKey(event: KeyboardEvent) {
@@ -24,17 +39,19 @@ export function Drawer({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!mounted) return null;
+
+  function onPanelTransitionEnd(event: TransitionEvent<HTMLDivElement>) {
+    if (event.propertyName !== "transform") return;
+    if (!open) setMounted(false);
+  }
 
   return (
-    <div className="fixed inset-0 z-[2900]">
-      <div className="ui-overlay absolute inset-0 bg-[#2C2C2C]/20" onClick={onClose} />
+    <div className={cx("halo-drawer-root", shown && "is-open")} style={shown ? undefined : { pointerEvents: "none" }}>
+      <div className="halo-drawer-overlay" onClick={onClose} />
       <div
-        className={cx(
-          "absolute inset-y-2 left-2 overflow-hidden rounded-[20px] shadow-[0_4px_20px_rgba(180,140,100,0.16)] animate-[drawer-in_0.34s_cubic-bezier(0.32,0.72,0,1)]",
-          widthClass,
-          className,
-        )}
+        className={cx("halo-drawer-panel", widthClass, className)}
+        onTransitionEnd={onPanelTransitionEnd}
       >
         {children}
       </div>

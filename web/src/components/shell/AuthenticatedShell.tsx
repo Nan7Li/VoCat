@@ -186,12 +186,9 @@ export function AuthenticatedShell({
     <div className="vocat-app-shell">
       {!isMobile && (
         <aside
-          className={cx(
-            "vocat-sidebar sidebar-shell relative h-full",
-            collapsed ? "is-collapsed w-[68px]" : "w-[248px]",
-          )}
+          className={cx("vocat-sidebar sidebar-shell relative h-full", collapsed && "is-collapsed")}
         >
-          <div className={cx("relative z-[1] flex h-16 items-center px-4", collapsed && "justify-center px-0")}>
+          <div className="relative z-[1] flex h-16 items-center px-4">
             <BrandLogo className="sidebar-brand-logo" />
             <div className={cx("sidebar-fade ml-3", collapsed && "is-hidden")}>
               <div className="sidebar-brand-title">Halo</div>
@@ -199,7 +196,7 @@ export function AuthenticatedShell({
             </div>
           </div>
           {menuList(collapsed)}
-          <div className={cx("absolute bottom-4 z-[1] w-full px-3 sidebar-fade", collapsed && "is-hidden")}>{userCard()}</div>
+          <div className={cx("absolute bottom-4 z-[1] w-full px-3 sidebar-user", collapsed && "is-hidden")}>{userCard()}</div>
         </aside>
       )}
 

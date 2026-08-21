@@ -254,14 +254,14 @@ export function SystemInfoCard({
             <div>
               <div className="text-[13px] font-semibold text-black/80 dark:text-white/80">{t("VoCat 上游")}</div>
               <p className="text-[12px] text-black/40 dark:text-white/45">
-                {t("跟踪官方 VoCat 的新功能和说明。Halo 程序更新仍从本仓库 GitHub Releases 安装。")}
+                {t("跟踪官方 VoCat 的新功能和说明。GitHub 每 4 小时尝试把官方新版本合进 Halo 并自动编译发布；冲突会开 Issue 而不会覆盖 Halo 自己的改动。本机程序仍从 Nan7Li/VoCat Releases 安装。")}
               </p>
             </div>
             <Button size="small" loading={checkingUpstream} onClick={onCheckUpstream}>
               {t("检查 VoCat")}
             </Button>
           </div>
-          <FieldRow label={t("已同步")} value={upstream?.syncedVersion || "0.2.7"} monospace />
+          <FieldRow label={t("已同步")} value={upstream?.syncedVersion || "0.2.12"} monospace />
           {upstream?.latestVersion ? <FieldRow label={t("官方最新")} value={upstream.latestVersion} monospace /> : null}
           {upstream?.available ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/20 dark:bg-amber-500/10">
