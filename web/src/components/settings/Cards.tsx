@@ -160,12 +160,10 @@ export function SystemInfoCard({
       <div className="relative z-10 space-y-4 text-sm">
         <div className="rounded-lg bg-gray-50 p-3 dark:bg-white/5">
           <FieldRow label={t("版本")} value={info.version} monospace>
-            <div className="flex items-center justify-end gap-3">
-              <Button size="small" variant="primary" className="!border-0" loading={checkingUpdate} onClick={onCheckUpdate}>
-                {t("检查更新")}
-              </Button>
-              <span>{info.version || "Unknown"}</span>
-            </div>
+            <span className="font-mono text-sm">{info.version || "Unknown"}</span>
+            <Button size="small" variant="primary" className="!border-0" loading={checkingUpdate} onClick={onCheckUpdate}>
+              {checkingUpdate ? t("正在检查更新") : t("检查更新")}
+            </Button>
           </FieldRow>
         </div>
         {updateInfo?.hasUpdate ? (
@@ -177,9 +175,11 @@ export function SystemInfoCard({
               {updateInfo.releaseNote || t("暂无更新说明")}
             </div>
             <Button variant="warning" loading={applyingUpdate} onClick={onApplyUpdate} className="w-full !border-0">
-              {t("立即更新并重启")}
+              {applyingUpdate ? t("正在更新...") : t("立即更新并重启")}
             </Button>
           </div>
+        ) : updateInfo ? (
+          <p className="text-[12px] text-black/45 dark:text-white/50">{t("当前已是最新版本")}</p>
         ) : null}
         <div className="space-y-3 rounded-lg bg-gray-50 p-3 dark:bg-white/5">
           <div className="flex items-center justify-between gap-3">

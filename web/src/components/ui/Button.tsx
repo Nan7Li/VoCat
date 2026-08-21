@@ -1,5 +1,6 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { cx } from "../../lib/utils";
+import { Spinner } from "./Spinner";
 
 export type ButtonVariant = "default" | "primary" | "danger" | "success" | "warning" | "text";
 export type ButtonSize = "small" | "default" | "large";
@@ -78,16 +79,22 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         "inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-[12px] border font-semibold tracking-tight outline-none",
         "transition-[transform,background-color,border-color,box-shadow,color] duration-[180ms] ease-[cubic-bezier(0.32,0.72,0,1)]",
         "focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/35 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-[var(--color-page)]",
-        "active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60 dark:disabled:opacity-100",
+        "active:scale-[0.97] disabled:cursor-not-allowed",
+        loading ? "opacity-80" : "disabled:opacity-60 dark:disabled:opacity-100",
         SIZE[size],
         isText && "px-2 shadow-none",
         block && "w-full",
         variantClass,
         className,
       )}
+      aria-busy={loading || undefined}
       {...rest}
     >
-      {icon ? <span className="inline-flex shrink-0 items-center text-[1.1em]">{icon}</span> : null}
+      {loading ? (
+        <Spinner className={size === "small" ? "h-3 w-3" : "h-3.5 w-3.5"} />
+      ) : icon ? (
+        <span className="inline-flex shrink-0 items-center text-[1.1em]">{icon}</span>
+      ) : null}
       {children ? <span className="inline-flex items-center gap-1.5">{children}</span> : null}
     </button>
   );

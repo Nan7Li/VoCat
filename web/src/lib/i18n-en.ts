@@ -345,6 +345,8 @@ export const EN_DICT: Record<string, string> = {
   运行环境: "Runtime environment",
   版本: "Version",
   检查更新: "Check for Updates",
+  正在检查更新: "Checking…",
+  "请求超时，请稍后重试": "The request timed out. Please try again.",
   "发现新版本:": "New version available:",
   暂无更新说明: "No release notes.",
   立即更新并重启: "Update & Restart Now",

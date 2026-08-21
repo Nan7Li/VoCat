@@ -431,7 +431,7 @@ export default function SettingsPage() {
     setCheckingUpdate(true);
     try {
       // vocat 后端返回 {available, version, message}（参考实现是 has_update 等）
-      const data = await api<{ available?: boolean; version?: string; message?: string; is_docker?: boolean }>("/system/update/check");
+      const data = await api<{ available?: boolean; version?: string; message?: string; is_docker?: boolean }>("/system/update/check", { timeoutMs: 30000 });
       const info: UpdateInfo = {
         hasUpdate: !!data?.available,
         latestVersion: data?.version,
@@ -478,14 +478,14 @@ export default function SettingsPage() {
     if (!confirmed) return;
     setApplyingUpdate(true);
     try {
-      const data = await api<{ message?: string; reauthenticationRequired?: boolean }>("/system/update/apply", { method: "POST", body: {} });
+      const data = await api<{ message?: string; reauthenticationRequired?: boolean }>("/system/update/apply", { method: "POST", body: {}, timeoutMs: 180000 });
       message.success(data?.message || t("正在更新..."));
       window.setTimeout(() => {
         if (data?.reauthenticationRequired) window.location.replace("/login");
         else window.location.reload();
       }, 1500);
     } catch (e) {
-      message.error(e instanceof Error ? e.message : t("应用更新失败"));
+      message.error(apiMessage(e) || t("应用更新失败"));
     } finally {
       setApplyingUpdate(false);
     }

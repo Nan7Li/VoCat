@@ -78,9 +78,13 @@ export class ApiError extends Error {
   }
 }
 
-export interface RequestOptions extends Omit<RequestInit, "body"> {
+export interface RequestOptions extends Omit<RequestInit, "body" | "signal"> {
   body?: unknown;
   raw?: boolean;
+  signal?: AbortSignal;
+  // Default 4s keeps the UI snappy. Update check/apply must opt into a longer
+  // window because they wait on GitHub and may download a 20MB+ binary.
+  timeoutMs?: number;
 }
 
 async function refreshCSRFToken(): Promise<boolean> {
@@ -106,30 +110,32 @@ async function refreshCSRFToken(): Promise<boolean> {
 }
 
 async function requestAPI<T>(path: string, options: RequestOptions, retryCSRF: boolean): Promise<T> {
-  const method = (options.method || "GET").toUpperCase();
-  const headers = new Headers(options.headers);
-  const formBody = typeof FormData !== "undefined" && options.body instanceof FormData;
-  headers.set("Accept", options.raw ? "*/*" : "application/json");
-  if (options.body !== undefined && !formBody) headers.set("Content-Type", "application/json");
+  const { body, raw, timeoutMs, signal, headers: inputHeaders, ...rest } = options;
+  const method = (rest.method || "GET").toUpperCase();
+  const headers = new Headers(inputHeaders);
+  const formBody = typeof FormData !== "undefined" && body instanceof FormData;
+  headers.set("Accept", raw ? "*/*" : "application/json");
+  if (body !== undefined && !formBody) headers.set("Content-Type", "application/json");
   if (isMutation(method)) {
     const csrf = sessionStorage.getItem(CSRF_KEY);
     if (csrf) headers.set("X-CSRF-Token", csrf);
   }
 
+  const timeout = timeoutMs ?? 4000;
   const response = await fetch(path.startsWith("/api") ? path : `/api${path}`, {
-    ...options,
+    ...rest,
     method,
     headers,
     credentials: "include",
-    signal: options.signal ?? AbortSignal.timeout(4000),
-    body: options.body === undefined
+    signal: signal ?? (timeout > 0 ? AbortSignal.timeout(timeout) : undefined),
+    body: body === undefined
       ? undefined
       : formBody
-        ? options.body as FormData
-        : JSON.stringify(snakeize(options.body)),
+        ? body as FormData
+        : JSON.stringify(snakeize(body)),
   });
 
-  if (options.raw) {
+  if (raw) {
     if (response.status === 401) notifyUnauthorized();
     return response as T;
   }
@@ -222,7 +228,14 @@ export function apiMessage(error: unknown) {
     const suffix = error.requestId ? `（${tl("请求")} ${error.requestId}）` : "";
     return `${error.message}${suffix}`;
   }
-  if (error instanceof Error) return error.message;
+  if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) {
+    return tl("请求超时，请稍后重试");
+  }
+  if (error instanceof Error) {
+    const text = error.message || "";
+    if (/timeout|aborted/i.test(text)) return tl("请求超时，请稍后重试");
+    return text;
+  }
   return tl("请求未完成，检查服务状态后重试");
 }
 

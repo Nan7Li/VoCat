@@ -107,19 +107,23 @@ export function FieldRow({
   const canCopy = !!copyable && !!text && text !== "--" && text !== "---";
   const title = text === "--" || text === "---" ? "" : text;
   return (
-    <div className="flex w-full min-w-0 items-center justify-between gap-3 overflow-hidden">
+    <div className="flex w-full min-w-0 items-center justify-between gap-3">
       <span className="shrink-0 whitespace-nowrap text-gray-500">{label}</span>
-      <div
-        className={cx(
-          "block min-w-0 max-w-full flex-1 truncate text-right",
-          monospace && "font-mono",
-          canCopy && "cursor-pointer hover:underline",
-        )}
-        title={children ? undefined : title}
-        onClick={children ? undefined : () => void (canCopy && copyText(text))}
-      >
-        {children ?? text}
-      </div>
+      {children ? (
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">{children}</div>
+      ) : (
+        <div
+          className={cx(
+            "block min-w-0 max-w-full flex-1 truncate text-right",
+            monospace && "font-mono",
+            canCopy && "cursor-pointer hover:underline",
+          )}
+          title={title}
+          onClick={() => void (canCopy && copyText(text))}
+        >
+          {text}
+        </div>
+      )}
     </div>
   );
 }
