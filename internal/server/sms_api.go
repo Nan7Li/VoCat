@@ -47,6 +47,7 @@ func (s *Server) handleSMSContacts(w http.ResponseWriter, r *http.Request) {
 	}
 	deviceID := normalizeSMSDeviceFilter(r.URL.Query().Get("device_id"))
 	s.syncModemSMS(r.Context(), deviceID)
+	s.repairUndecodedIMSMS(r.Context(), deviceID)
 	filter := s.smsStoreFilter(r.Context(), deviceID, "")
 	filter.Limit = queryLimit(r, 100)
 	contacts, err := s.store.ListSMSContacts(r.Context(), filter)
@@ -89,6 +90,7 @@ func (s *Server) handleSMSThread(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.syncModemSMS(r.Context(), deviceID)
+		s.repairUndecodedIMSMS(r.Context(), deviceID)
 		filter := s.smsStoreFilter(r.Context(), deviceID, modemIMEI)
 		filter.IMSI = imsi
 		filter.Peer = peer
@@ -710,6 +712,63 @@ func (s *Server) StartSMSSyncLoop(ctx context.Context, interval time.Duration) {
 			s.syncModemSMS(ctx, "")
 		}
 	}
+}
+
+func (s *Server) repairUndecodedIMSMS(ctx context.Context, deviceID string) {
+	if s == nil || s.store == nil {
+		return
+	}
+	filter := s.smsStoreFilter(ctx, deviceID, "")
+	filter.Limit = 100
+	messages, err := s.store.ListSMSMessages(ctx, filter)
+	if err != nil {
+		return
+	}
+	for _, message := range messages {
+		repaired, ok := redecodedIMSMS(message)
+		if !ok {
+			continue
+		}
+		if _, saveErr := s.store.SaveSMSMessage(ctx, repaired); saveErr != nil && s.logger != nil {
+			s.logger.Warn("repair undecoded IMS SMS failed", "id", message.ID, "error", saveErr)
+		}
+	}
+}
+
+func redecodedIMSMS(message store.SMSMessage) (store.SMSMessage, bool) {
+	if strings.TrimSpace(message.Body) != "" {
+		return message, false
+	}
+	extra := map[string]any{}
+	if len(message.Extra) > 0 {
+		if err := json.Unmarshal(message.Extra, &extra); err != nil {
+			return message, false
+		}
+	}
+	decodeError, _ := extra["decode_error"].(string)
+	rawHex, _ := extra["raw_tpdu"].(string)
+	if strings.TrimSpace(decodeError) == "" || strings.TrimSpace(rawHex) == "" {
+		return message, false
+	}
+	raw, err := hex.DecodeString(strings.TrimSpace(rawHex))
+	if err != nil || len(raw) == 0 {
+		return message, false
+	}
+	decoded, err := device.DecodeSMSDeliverTPDU(raw)
+	if err != nil || strings.TrimSpace(decoded.Text) == "" {
+		return message, false
+	}
+	message.Body = decoded.Text
+	if from := strings.TrimSpace(decoded.From); from != "" {
+		message.Peer = from
+	}
+	delete(extra, "decode_error")
+	extra["encoding"] = decoded.Encoding
+	encoded, err := json.Marshal(extra)
+	if err == nil {
+		message.Extra = encoded
+	}
+	return message, true
 }
 
 func storedSMSResponse(message store.SMSMessage) map[string]any {

@@ -766,23 +766,10 @@ func readTPAddress(cursor *pduCursor) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var byteCount int
-	var septetCount int
+	byteCount := (int(length) + 1) / 2
+	septetCount := 0
 	if toa&0x70 == 0x50 {
-		// 3GPP TS 23.040 §9.1.2.5: For alphanumeric addresses, the length field
-		// indicates the number of useful semi-octets (i.e. characters * 7 / 4, rounded up).
-		// The number of characters is (length * 4) / 7 and byte count is (length + 1) / 2.
-		// However, some non-standard sources specify length as the direct count of septets
-		// (e.g. length=4 for 4 chars, which needs 4 bytes instead of (4+1)/2=2 bytes).
-		if length >= 7 {
-			byteCount = (int(length) + 1) / 2
-			septetCount = int(length) * 4 / 7
-		} else {
-			byteCount = (int(length)*7 + 7) / 8
-			septetCount = int(length)
-		}
-	} else {
-		byteCount = (int(length) + 1) / 2
+		byteCount, septetCount = alphanumericTPAddressSize(length, cursor.data[cursor.index:])
 	}
 	value, err := cursor.bytes(byteCount)
 	if err != nil {
@@ -796,6 +783,57 @@ func readTPAddress(cursor *pduCursor) (string, error) {
 		return decodeGSM7(septets)
 	}
 	return decodeNumericAddress(value, int(length), toa), nil
+}
+
+// alphanumericTPAddressSize chooses how many packed GSM-7 bytes belong to an
+// alphanumeric TP address. 3GPP TS 23.040 §9.1.2.5 stores the length as the
+// number of useful semi-octets, so "Ria" is length=6 with 3 payload bytes.
+// Some sources instead write the septet count directly (length=4 for "TEST").
+// The two encodings collide for length 1-6, so the remaining PDU is used to
+// pick the layout whose user-data length actually fits. Isolated address
+// fields (tests and truncated traces) fall back to whichever size matches
+// the remaining bytes exactly, then to the 3GPP layout.
+func alphanumericTPAddressSize(length byte, rest []byte) (byteCount, septetCount int) {
+	stdBytes := (int(length) + 1) / 2
+	stdSeptets := int(length) * 4 / 7
+	altBytes := (int(length)*7 + 7) / 8
+	altSeptets := int(length)
+	if stdBytes == altBytes {
+		return stdBytes, stdSeptets
+	}
+	stdOK := stdBytes >= 0 && stdBytes <= len(rest)
+	altOK := altBytes >= 0 && altBytes <= len(rest)
+	if stdOK && len(rest) == stdBytes && len(rest) != altBytes {
+		return stdBytes, stdSeptets
+	}
+	if altOK && len(rest) == altBytes && len(rest) != stdBytes {
+		return altBytes, altSeptets
+	}
+	if stdOK && deliverUserDataFits(rest[stdBytes:]) {
+		return stdBytes, stdSeptets
+	}
+	if altOK && deliverUserDataFits(rest[altBytes:]) {
+		return altBytes, altSeptets
+	}
+	if stdOK {
+		return stdBytes, stdSeptets
+	}
+	return altBytes, altSeptets
+}
+
+func deliverUserDataFits(afterAddress []byte) bool {
+	// PID + DCS + SCTS (7) + UDL must precede user data in SMS-DELIVER.
+	if len(afterAddress) < 10 {
+		return false
+	}
+	dcs := afterAddress[1]
+	udl := int(afterAddress[9])
+	ud := afterAddress[10:]
+	expected := udl
+	if dcs&0x0c == 0 {
+		expected = (udl*7 + 7) / 8
+	}
+	return expected >= 0 && expected <= len(ud)
 }
 
 func decodeNumericAddress(value []byte, digits int, toa byte) string {

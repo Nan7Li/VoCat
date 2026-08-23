@@ -304,6 +304,48 @@ func TestDecodeAlphanumericTPAddressStandard3GPP(t *testing.T) {
 	if addressTest != "TEST" {
 		t.Fatalf("readTPAddress standard 3GPP TEST = %q, want TEST", addressTest)
 	}
+
+	// "Ria" (3 chars) is length=6 under §9.1.2.5 (ceil(3*7/4)=6 semi-octets, 3 bytes).
+	// The old length<7 heuristic treated 6 as a septet count and consumed 6 bytes.
+	cursorRia := &pduCursor{data: []byte{0x06, 0xd0, 0xd2, 0x74, 0x18}}
+	addressRia, err := readTPAddress(cursorRia)
+	if err != nil {
+		t.Fatalf("readTPAddress standard 3GPP Ria error = %v", err)
+	}
+	if addressRia != "Ria" {
+		t.Fatalf("readTPAddress standard 3GPP Ria = %q, want Ria", addressRia)
+	}
+	if cursorRia.index != len(cursorRia.data) {
+		t.Fatalf("Ria cursor did not consume all bytes: %d/%d", cursorRia.index, len(cursorRia.data))
+	}
+}
+
+func TestDecodeVodafoneIMSRiaUCS2Deliver(t *testing.T) {
+	// Live Vodafone IMS RP-DATA TPDU (2026-08-22). A 3-character alphanumeric
+	// originator with length=6 must not steal the PID/DCS/SCTS/UDL bytes, or
+	// decodeUserData reports "SMS user data is truncated" and the UI is blank.
+	message, err := DecodeSMSDeliverTPDU([]byte{
+		0x24, 0x06, 0xd0, 0xd2, 0x74, 0x18, 0x00, 0x08,
+		0x62, 0x80, 0x22, 0x11, 0x81, 0x55, 0x40, 0x26,
+		0x60, 0xa8, 0x76, 0x84, 0x00, 0x20, 0x00, 0x52,
+		0x00, 0x69, 0x00, 0x61, 0x00, 0x20, 0x9a, 0x8c,
+		0x8b, 0xc1, 0x4e, 0xe3, 0x78, 0x01, 0x66, 0x2f,
+		0xff, 0x1a, 0x00, 0x39, 0x00, 0x37, 0x00, 0x30,
+		0x00, 0x30, 0x00, 0x30, 0x00, 0x30,
+	})
+	if err != nil {
+		t.Fatalf("DecodeSMSDeliverTPDU: %v", err)
+	}
+	if message.From != "Ria" {
+		t.Fatalf("From = %q, want Ria", message.From)
+	}
+	if message.Encoding != SMSEncodingUCS2PDU {
+		t.Fatalf("Encoding = %q, want %q", message.Encoding, SMSEncodingUCS2PDU)
+	}
+	want := "您的 Ria 验证代码是：970000"
+	if message.Text != want {
+		t.Fatalf("Text = %q, want %q", message.Text, want)
+	}
 }
 
 func TestDecodeDeliverPDUWithAlphanumericSender(t *testing.T) {

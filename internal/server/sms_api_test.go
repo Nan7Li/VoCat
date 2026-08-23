@@ -57,6 +57,64 @@ func TestSMSThreadAllDevicesUsesIMSIFilter(t *testing.T) {
 	}
 }
 
+func TestSMSThreadRepairsTruncatedAlphanumericIMSMS(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	extra, err := json.Marshal(map[string]any{
+		"transport":    "ims",
+		"encoding":     "unknown",
+		"decode_error": "SMS user data is truncated",
+		"raw_tpdu":     "2406D0D274180008628022118155402660A87684002000520069006100209A8C8BC14EE37801662FFF1A003900370030003000300030",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.SaveSMSMessage(ctx, store.SMSMessage{
+		MessageID: "ims:truncated-ria",
+		DeviceID:  "quectel-0125-1-1",
+		Peer:      "Ria@@A",
+		Direction: "inbound",
+		Body:      "",
+		Source:    "ims",
+		Timestamp: time.Unix(1_787_393_936, 0),
+		Extra:     extra,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := &Server{store: database}
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/sms/thread?device_id=quectel-0125-1-1&peer=Ria",
+		nil,
+	)
+	response := httptest.NewRecorder()
+	server.handleSMSThread(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var envelope struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if len(envelope.Data) != 1 {
+		t.Fatalf("thread data = %#v", envelope.Data)
+	}
+	if envelope.Data[0]["peer"] != "Ria" {
+		t.Fatalf("peer = %#v", envelope.Data[0]["peer"])
+	}
+	if envelope.Data[0]["body"] != "您的 Ria 验证代码是：970000" {
+		t.Fatalf("body = %#v", envelope.Data[0]["body"])
+	}
+}
+
 func TestNative410DoesNotUseModemSMSStorage(t *testing.T) {
 	if supportsModemSMSStorage(store.Device{DeviceType: store.DeviceTypeWiFi410}) {
 		t.Fatal("native OpenStick 410 unexpectedly enabled modem SMS storage polling")
