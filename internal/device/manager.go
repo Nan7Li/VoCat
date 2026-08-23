@@ -636,6 +636,17 @@ func (manager *Manager) Reboot(ctx context.Context, id string) error {
 // This causes the baseband to reload the new eSIM profile files within ~1-2 seconds
 // without disconnecting USB/PCIe or dropping serial communication ports.
 func (manager *Manager) softResetForProfileSwitch(ctx context.Context, id string) error {
+	return manager.softResetSIM(ctx, id, false)
+}
+
+// softResetEuiccOnline always brings the radio back to CFUN=1. Recovery that
+// honours the flight-mode snapshot (CFUN=4) leaves AT+CSIM EnableProfile
+// failing with +CME ERROR: 0 on Quectel modems.
+func (manager *Manager) softResetEuiccOnline(ctx context.Context, id string) error {
+	return manager.softResetSIM(ctx, id, true)
+}
+
+func (manager *Manager) softResetSIM(ctx context.Context, id string, forceOnline bool) error {
 	state, err := manager.lookup(id)
 	if err != nil {
 		return err
@@ -664,7 +675,7 @@ func (manager *Manager) softResetForProfileSwitch(ctx context.Context, id string
 
 	// 2. Restore radio to trigger fresh USIM file reading
 	targetCFUN := "AT+CFUN=1"
-	if state.snapshot != nil && state.snapshot.FlightMode {
+	if !forceOnline && state.snapshot != nil && state.snapshot.FlightMode {
 		targetCFUN = "AT+CFUN=4"
 	}
 	_, err = client.Execute(commandCtx, targetCFUN)

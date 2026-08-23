@@ -264,6 +264,13 @@ func TestEuiccSASTrimsCardPadding(t *testing.T) {
 	}
 }
 
+func TestUsesATCSimEUICCForQuectelATManager(t *testing.T) {
+	manager, id := newStartedTestManager(t, &transcriptClient{})
+	if !manager.usesATCSimEUICC(id) {
+		t.Fatal("EC20 AT-only manager must use AT+CSIM for eUICC")
+	}
+}
+
 func TestTransientEuiccCMEClassification(t *testing.T) {
 	err := fmt.Errorf("select ISD-R: %w", &modem.CommandError{
 		Command: `AT+CSIM=42,"01A40400"`,

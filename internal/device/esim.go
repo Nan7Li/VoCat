@@ -788,6 +788,25 @@ func (manager *Manager) ESIMListProfiles(ctx context.Context, id string) (EsimIn
 }
 
 // ESIMSwitchProfile enables one profile by ICCID via ES10c EnableProfile.
+func (manager *Manager) usesATCSimEUICC(id string) bool {
+	state, err := manager.lookup(id)
+	if err != nil {
+		return false
+	}
+	candidate := manager.candidateFor(state)
+	if candidate.HardwareKind == pcsc.HardwareKind {
+		return false
+	}
+	return !(strings.EqualFold(manager.backendFor(state), "qmi") && isNativeQMICandidate(candidate))
+}
+
+func (manager *Manager) wakeRadioForATCSim(ctx context.Context, id string) error {
+	if _, err := manager.SetFlight(ctx, id, false); err != nil {
+		return fmt.Errorf("esim: wake radio for AT+CSIM: %w", err)
+	}
+	return nil
+}
+
 func (manager *Manager) ESIMSwitchProfile(ctx context.Context, id string, iccid string, aidHex string) error {
 	iccid = strings.TrimSpace(iccid)
 	if iccid == "" {
@@ -801,6 +820,12 @@ func (manager *Manager) ESIMSwitchProfile(ctx context.Context, id string, iccid 
 	if err := manager.waitForESIMRecovery(ctx, id); err != nil {
 		manager.unlockESIM()
 		return err
+	}
+	if manager.usesATCSimEUICC(id) {
+		if err := manager.wakeRadioForATCSim(ctx, id); err != nil {
+			manager.unlockESIM()
+			return err
+		}
 	}
 	channel, err := manager.openEuiccAID(ctx, id, targetEuiccAID(aidHex))
 	if err != nil {
@@ -880,6 +905,20 @@ func (manager *Manager) ESIMSwitchProfile(ctx context.Context, id string, iccid 
 	channel.close(closeContext)
 	cancelClose()
 	if err != nil {
+		if isTransientEuiccCME(err) {
+			attempt, _ := ctx.Value(esimCMERetryKey{}).(int)
+			if attempt < 2 {
+				_ = manager.wakeRadioForATCSim(context.WithoutCancel(ctx), id)
+				_ = manager.softResetEuiccOnline(context.WithoutCancel(ctx), id)
+				manager.unlockESIM()
+				select {
+				case <-ctx.Done():
+					return fmt.Errorf("esim: retry EnableProfile after +CME ERROR: 0: %w", ctx.Err())
+				case <-time.After(800 * time.Millisecond):
+				}
+				return manager.ESIMSwitchProfile(context.WithValue(ctx, esimCMERetryKey{}, attempt+1), id, iccid, aidHex)
+			}
+		}
 		// The card may have committed immediately before the transport error. A
 		// detached reset is safe in either case and prevents an uncertain switch
 		// from leaving the modem's SIM cache unusable.
@@ -954,6 +993,7 @@ func (manager *Manager) ESIMSwitchProfile(ctx context.Context, id string, iccid 
 }
 
 type esimCATBusyRetryKey struct{}
+type esimCMERetryKey struct{}
 
 func (manager *Manager) startProfileSwitchRecovery(id string) {
 	done := make(chan struct{})

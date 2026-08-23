@@ -426,24 +426,15 @@ func (s *Server) handleEsimSwitch(w http.ResponseWriter, r *http.Request, config
 		s.writeDeviceError(w, err)
 		return
 	}
-	// Profile operations run with RF disabled. The eUICC remains accessible in
-	// CFUN=4. Devices that consume the requested eUICC REFRESH stay online;
-	// older AT modems enter the reset recovery path and reapply CFUN=4 when the
-	// port returns.
-	if _, err := s.devices.SetFlight(r.Context(), physicalID, true); err != nil {
-		s.writeDeviceError(w, err)
-		return
-	}
-	// A confirmed profile switch always includes a live ICCID read and may also
-	// include the EC20 reset fallback, so it can exceed the ordinary deadline.
+	// Do not put the radio in airplane / QMI LowPower before EnableProfile.
+	// On Quectel AT+CSIM devices, STORE DATA then fails with +CME ERROR: 0
+	// even though listing profiles still works. VoWiFi is already quiesced
+	// above; the target profile's saved airplane/VoWiFi policy is restored
+	// after the switch is verified.
 	controller := http.NewResponseController(w)
 	_ = controller.SetWriteDeadline(time.Time{})
 	aidHex := firstNonEmpty(request.AIDHex, request.AIDHexCamel)
 	if err := s.devices.ESIMSwitchProfile(r.Context(), physicalID, iccid, aidHex); err != nil {
-		s.writeDeviceError(w, err)
-		return
-	}
-	if _, err := s.devices.SetFlight(r.Context(), physicalID, true); err != nil {
 		s.writeDeviceError(w, err)
 		return
 	}
