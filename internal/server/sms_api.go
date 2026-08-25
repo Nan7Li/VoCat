@@ -244,10 +244,6 @@ func (s *Server) handleSMSSend(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, err)
 		return
 	}
-	if store.NormalizeDeviceType(config.DeviceType) == store.DeviceTypeWiFi410 {
-		writeError(w, http.StatusNotImplemented, "device_feature_unsupported", "SMS is not supported by the native OpenStick 410 backend")
-		return
-	}
 	entry, physicalID, present := s.physicalForConfig(config)
 	if !s.requirePhysicalDevice(w, present) {
 		return
@@ -293,6 +289,9 @@ func (s *Server) handleSMSSend(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Prefer VoWiFi IMS when it is ready. If IMS is unavailable, including on a
+	// native OpenStick 410 registered on a roaming cellular network, use the
+	// modem's discovered auxiliary AT port and the existing AT+CMGS path.
 	result, sendErr := s.devices.SendSMS(
 		r.Context(),
 		physicalID,
@@ -371,16 +370,26 @@ func (s *Server) handleSMSSend(w http.ResponseWriter, r *http.Request) {
 	if sendErr != nil {
 		data["retry_safe"] = false
 		if result.PartsAccepted > 0 {
+			s.logger.Warn("multipart SMS was only partially accepted",
+				"category", "sms", "event", "sms.submission",
+				"device_id", request.DeviceID, "peer", request.Phone,
+				"transport", "cellular_at", "parts_attempted", result.PartsAttempted,
+				"parts_accepted", result.PartsAccepted, "raw_error", sendErr,
+			)
 			data["warning"] = "Only part of the multipart SMS was accepted by the modem. Do not retry the whole message."
 			writeJSON(w, http.StatusAccepted, map[string]any{"data": data})
 			return
 		}
 		s.logger.Warn(
 			"SMS submission failed after modem interaction",
+			"category", "sms",
+			"event", "sms.submission",
 			"device_id", request.DeviceID,
+			"peer", request.Phone,
+			"transport", "cellular_at",
 			"parts_attempted", result.PartsAttempted,
 			"parts_accepted", result.PartsAccepted,
-			"error", sendErr,
+			"raw_error", sendErr,
 		)
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"error": apiError{
@@ -392,6 +401,12 @@ func (s *Server) handleSMSSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !result.AllPartsAccepted {
+		s.logger.Warn("SMS submission was not confirmed",
+			"category", "sms", "event", "sms.submission",
+			"device_id", request.DeviceID, "peer", request.Phone,
+			"transport", "cellular_at", "modem_final", result.ModemFinal,
+			"parts_attempted", result.PartsAttempted, "parts_accepted", result.PartsAccepted,
+		)
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"error": apiError{
 				Code:    "sms_submission_unconfirmed",
@@ -401,6 +416,11 @@ func (s *Server) handleSMSSend(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	s.logger.Info("SMS submission accepted",
+		"category", "sms", "event", "sms.submission",
+		"device_id", request.DeviceID, "peer", request.Phone,
+		"transport", "cellular_at", "parts", result.PartsAccepted,
+	)
 	writeJSON(w, http.StatusAccepted, map[string]any{"data": data})
 }
 
@@ -477,6 +497,12 @@ func (s *Server) writeIMSSMSSendResult(
 		"outcome":             smsSendOutcome(result.AllPartsAccepted, result.PartsAccepted, result.PartsTotal, result.DeliveryConfirmed),
 	}
 	if sendErr != nil {
+		s.logger.Warn("IMS SMS submission failed",
+			"category", "sms", "event", "sms.submission",
+			"device_id", deviceID, "peer", result.To, "transport", "ims",
+			"parts_attempted", result.PartsAttempted, "parts_accepted", result.PartsAccepted,
+			"raw_error", sendErr,
+		)
 		data["retry_safe"] = false
 		data["warning"] = sendErr.Error()
 		if result.PartsAccepted == 0 {
@@ -491,6 +517,11 @@ func (s *Server) writeIMSSMSSendResult(
 		}
 	}
 	if !result.AllPartsAccepted && result.PartsAccepted == 0 {
+		s.logger.Warn("IMS SMS submission was not confirmed",
+			"category", "sms", "event", "sms.submission",
+			"device_id", deviceID, "peer", result.To, "transport", "ims",
+			"parts_attempted", result.PartsAttempted, "parts_accepted", result.PartsAccepted,
+		)
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"error": apiError{
 				Code:    "ims_sms_submission_unconfirmed",
@@ -499,6 +530,19 @@ func (s *Server) writeIMSSMSSendResult(
 			"data": data,
 		})
 		return
+	}
+	if result.AllPartsAccepted {
+		s.logger.Info("IMS SMS submission accepted",
+			"category", "sms", "event", "sms.submission",
+			"device_id", deviceID, "peer", result.To, "transport", "ims",
+			"parts", result.PartsAccepted,
+		)
+	} else {
+		s.logger.Warn("multipart IMS SMS was only partially accepted",
+			"category", "sms", "event", "sms.submission",
+			"device_id", deviceID, "peer", result.To, "transport", "ims",
+			"parts_attempted", result.PartsAttempted, "parts_accepted", result.PartsAccepted,
+		)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"data": data})
 }
@@ -580,6 +624,17 @@ func (s *Server) syncModemSMS(ctx context.Context, onlyDevice string) {
 		if !present {
 			continue
 		}
+		// OpenStick 410 controls cellular registration through QMI but receives
+		// stored SMS through its AT port. Its firmware can reset CNMI after a
+		// profile switch, leaving newly delivered SMS invisible to VoCat.
+		if store.NormalizeDeviceType(config.DeviceType) == store.DeviceTypeWiFi410 {
+			setupContext, cancelSetup := context.WithTimeout(ctx, 5*time.Second)
+			_, setupErr := s.devices.ExecuteAT(setupContext, physicalID, `AT+CNMI=2,1,0,0,0`)
+			cancelSetup()
+			if setupErr != nil {
+				s.logger.Debug("OpenStick 410 cellular SMS notification setup skipped", "device_id", config.ID, "error", setupErr)
+			}
+		}
 		listContext, cancelList := context.WithTimeout(ctx, 30*time.Second)
 		messages, err := s.devices.ListSMS(listContext, physicalID)
 		cancelList()
@@ -654,8 +709,11 @@ func (s *Server) syncModemSMS(ctx context.Context, onlyDevice string) {
 				"message_reference":  message.MessageReference,
 				"delivery_status":    message.DeliveryStatus,
 				"data_coding_scheme": message.DataCodingScheme,
+				// Mark 410 rows so completed multipart messages retain their durable
+				// id when its modem storage is decoded again on the next poll.
+				"keep_durable_id_on_rescan": store.NormalizeDeviceType(config.DeviceType) == store.DeviceTypeWiFi410,
 			})
-			_, saveErr := s.store.SaveSMSMessage(ctx, store.SMSMessage{
+			saved, saveErr := s.store.SaveSMSMessage(ctx, store.SMSMessage{
 				MessageID:     messageID,
 				DeviceID:      config.ID,
 				ModemIMEI:     modemIMEI,
@@ -672,7 +730,14 @@ func (s *Server) syncModemSMS(ctx context.Context, onlyDevice string) {
 				Extra:         extra,
 			})
 			if saveErr != nil {
-				s.logger.Warn("persist modem SMS failed", "device_id", config.ID, "error", saveErr)
+				s.logger.Warn("persist modem SMS failed", "category", "sms", "device_id", config.ID, "raw_error", saveErr)
+			} else if saved.Direction == "inbound" && saved.CreatedAt.Unix() == saved.UpdatedAt.Unix() {
+				s.logger.Info("cellular SMS received",
+					"category", "sms", "event", "sms.received",
+					"device_id", config.ID, "peer", saved.Peer,
+					"transport", "cellular_at", "encoding", message.Encoding,
+					"parts", saved.PartsTotal,
+				)
 			}
 		}
 	}
@@ -680,7 +745,13 @@ func (s *Server) syncModemSMS(ctx context.Context, onlyDevice string) {
 
 func supportsModemSMSStorage(config store.Device) bool {
 	deviceType := store.NormalizeDeviceType(config.DeviceType)
-	return deviceType != store.DeviceTypeUSBSIMReader && deviceType != store.DeviceTypeWiFi410
+	if deviceType == store.DeviceTypeUSBSIMReader {
+		return false
+	}
+	if deviceType == store.DeviceTypeWiFi410 {
+		return strings.TrimSpace(config.ATPort) != ""
+	}
+	return true
 }
 
 func shouldDeferModemSMSSync(state vowifi.State, stateErr error) bool {
@@ -829,6 +900,6 @@ func (s *Server) writeStoreError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", "the requested record was not found")
 		return
 	}
-	s.logger.Error("database operation failed", "error", err)
+	s.logger.Error("database operation failed", "category", "system", "event", "store.operation_failed", "raw_error", err)
 	writeError(w, http.StatusInternalServerError, "database_error", "the database operation failed")
 }

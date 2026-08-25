@@ -42,8 +42,10 @@ type CarrierProfile struct {
 	IMSRegisterProfile                 string
 	IMSIPSecEncryption                 string
 	SMSCenter                          string
+	PANIEnabled                        *bool
 	PANICountry                        string
 	PANINode                           string
+	IMSUserAgent                       string
 	IMSDialURIScheme                   string
 	IMSUserEqPhone                     bool
 	IMSVoiceCodecs                     []string
@@ -57,7 +59,6 @@ type IMSRegisterOptions struct {
 	ContactExtraTags    []string
 	SupportedHeader     *string
 	AllowHeader         *string
-	UserAgent           string
 	PPreferredIdentity  bool
 	PVisitedNetworkID   string
 	PAccessNetworkInfo  *string
@@ -68,6 +69,7 @@ type IMSRegisterOptions struct {
 const (
 	IMSContactFormatStandard = "standard"
 	IMSContactFormatATT      = "att"
+	IMSContactFormatGSMA     = "gsma"
 )
 
 type carrierProfileDocument struct {
@@ -76,13 +78,13 @@ type carrierProfileDocument struct {
 }
 
 type carrierProfileRule struct {
-	ID       string                         `json:"id"`
-	Match    carrierProfileMatch            `json:"match,omitzero"`
-	MatchAny []carrierProfileMatch          `json:"match_any,omitempty"`
-	Route    carrierProfileRoute            `json:"route,omitzero"`
-	EPDG     carrierProfileEPDG             `json:"epdg,omitzero"`
-	IKE      carrierProfileIKE              `json:"ike,omitzero"`
-	IMS      carrierProfileIMS              `json:"ims,omitzero"`
+	ID       string                `json:"id"`
+	Match    carrierProfileMatch   `json:"match,omitzero"`
+	MatchAny []carrierProfileMatch `json:"match_any,omitempty"`
+	Route    carrierProfileRoute   `json:"route,omitzero"`
+	EPDG     carrierProfileEPDG    `json:"epdg,omitzero"`
+	IKE      carrierProfileIKE     `json:"ike,omitzero"`
+	IMS      carrierProfileIMS     `json:"ims,omitzero"`
 }
 
 type carrierProfileMatch struct {
@@ -116,8 +118,10 @@ type carrierProfileIMS struct {
 	RegisterProfile                    string                        `json:"register_profile,omitempty"`
 	IPSecEncryption                    string                        `json:"ipsec_encryption,omitempty"`
 	SMSCenter                          string                        `json:"sms_center,omitempty"`
+	PANIEnabled                        *bool                         `json:"pani_enabled,omitempty"`
 	PANICountry                        string                        `json:"pani_country,omitempty"`
 	PANINode                           string                        `json:"pani_node,omitempty"`
+	UserAgent                          string                        `json:"user_agent,omitempty"`
 	DialURIScheme                      string                        `json:"dial_uri_scheme,omitempty"`
 	UserEqPhone                        *bool                         `json:"user_eq_phone,omitempty"`
 	VoiceCodecs                        []string                      `json:"voice_codecs,omitempty"`
@@ -131,7 +135,6 @@ type carrierProfileRegisterOptions struct {
 	ContactExtraTags    []string `json:"contact_extra_tags,omitempty"`
 	SupportedHeader     *string  `json:"supported_header,omitempty"`
 	AllowHeader         *string  `json:"allow_header,omitempty"`
-	UserAgent           string   `json:"user_agent,omitempty"`
 	PPreferredIdentity  bool     `json:"p_preferred_identity,omitempty"`
 	PVisitedNetworkID   string   `json:"p_visited_network_id,omitempty"`
 	PAccessNetworkInfo  *string  `json:"p_access_network_info,omitempty"`
@@ -322,6 +325,7 @@ func validCarrierProfileRule(rule carrierProfileRule) bool {
 		return false
 	}
 	if country := strings.ToUpper(strings.TrimSpace(rule.IMS.PANICountry)); country != "" &&
+		country != "AUTO" &&
 		(len(country) != 2 || country[0] < 'A' || country[0] > 'Z' || country[1] < 'A' || country[1] > 'Z') {
 		return false
 	}
@@ -340,7 +344,7 @@ func validCarrierProfileRule(rule carrierProfileRule) bool {
 		return false
 	}
 	if format := strings.ToLower(strings.TrimSpace(rule.IMS.RegisterOptions.ContactFormat)); format != "" &&
-		format != IMSContactFormatStandard && format != IMSContactFormatATT {
+		format != IMSContactFormatStandard && format != IMSContactFormatATT && format != IMSContactFormatGSMA {
 		return false
 	}
 	for _, value := range rule.IMS.RegisterOptions.ContactExtraTags {
@@ -353,7 +357,7 @@ func validCarrierProfileRule(rule carrierProfileRule) bool {
 			return false
 		}
 	}
-	for _, value := range []string{rule.IMS.RegisterOptions.UserAgent, rule.IMS.RegisterOptions.PVisitedNetworkID, rule.IMS.RegisterOptions.CellularNetworkInfo} {
+	for _, value := range []string{rule.IMS.UserAgent, rule.IMS.RegisterOptions.PVisitedNetworkID, rule.IMS.RegisterOptions.CellularNetworkInfo} {
 		if strings.ContainsAny(value, "\r\n") {
 			return false
 		}
@@ -479,8 +483,12 @@ func matchCarrierProfile(match carrierProfileMatch, identity SIMIdentity) (int, 
 	}{
 		{name: "imsi", weight: 80, values: match.IMSIPrefixes, actual: identity.IMSI},
 		{name: "iccid", weight: 70, values: match.ICCIDPrefixes, actual: identity.ICCID},
-		{name: "gid1", weight: 50, values: match.GID1Prefixes, actual: identity.GID1, foldCase: true},
-		{name: "gid2", weight: 40, values: match.GID2Prefixes, actual: identity.GID2, foldCase: true},
+		// GID values identify an MVNO/service profile within a host network and
+		// therefore outrank the host issuer's broad ICCID prefix. Otherwise a
+		// home-PLMN+ICCID AT&T rule hides RedPocket/Cricket/etc. even when the SIM
+		// exposes the carrier bundle's exact GID selector.
+		{name: "gid1", weight: 90, values: match.GID1Prefixes, actual: identity.GID1, foldCase: true},
+		{name: "gid2", weight: 85, values: match.GID2Prefixes, actual: identity.GID2, foldCase: true},
 	} {
 		if len(selector.values) == 0 {
 			continue
@@ -584,8 +592,15 @@ func applyCarrierProfileRule(base CarrierProfile, rule carrierProfileRule, sourc
 		base.IMSIPSecEncryption = value
 	}
 	base.SMSCenter = strings.TrimSpace(rule.IMS.SMSCenter)
+	if rule.IMS.PANIEnabled != nil {
+		enabled := *rule.IMS.PANIEnabled
+		base.PANIEnabled = &enabled
+	}
 	base.PANICountry = strings.ToUpper(strings.TrimSpace(rule.IMS.PANICountry))
 	base.PANINode = strings.TrimSpace(rule.IMS.PANINode)
+	if value := strings.TrimSpace(rule.IMS.UserAgent); value != "" {
+		base.IMSUserAgent = value
+	}
 	if value := strings.ToLower(strings.TrimSpace(rule.IMS.DialURIScheme)); value != "" {
 		base.IMSDialURIScheme = value
 	}
@@ -619,9 +634,6 @@ func applyRegisterOptions(base IMSRegisterOptions, rule carrierProfileRegisterOp
 	if rule.AllowHeader != nil {
 		value := strings.TrimSpace(*rule.AllowHeader)
 		base.AllowHeader = &value
-	}
-	if value := strings.TrimSpace(rule.UserAgent); value != "" {
-		base.UserAgent = value
 	}
 	if rule.PPreferredIdentity {
 		base.PPreferredIdentity = true
@@ -719,8 +731,8 @@ func applyAssignedCarrierRoute(identity SIMIdentity) SIMIdentity {
 
 	if strings.TrimSpace(identity.ICCID) != "" {
 		if mcc, mnc, ok := HomePLMNFromICCID(identity.ICCID); ok {
-			imsiCountry := countryCodeForMCC(identity.HomeMCC)
-			iccidCountry := countryCodeForMCC(mcc)
+			imsiCountry := CountryCodeForMCC(identity.HomeMCC)
+			iccidCountry := CountryCodeForMCC(mcc)
 			if identity.HomeMCC == "" || (imsiCountry != "" && iccidCountry != "" && imsiCountry != iccidCountry) {
 				identity.HomeMCC = mcc
 				identity.HomeMNC = mnc
@@ -733,7 +745,9 @@ func applyAssignedCarrierRoute(identity SIMIdentity) SIMIdentity {
 	return identity
 }
 
-func countryCodeForMCC(mcc string) string {
+// CountryCodeForMCC returns the ISO 3166-1 alpha-2 country code associated
+// with an MCC known to the carrier compatibility database.
+func CountryCodeForMCC(mcc string) string {
 	switch strings.TrimSpace(mcc) {
 	case "515":
 		return "PH"

@@ -24,7 +24,7 @@
 
 [English](../README.md) | [العربية](README.ar.md) | **简体中文** | [繁體中文](README.zh-TW.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [Español](README.es.md) | [日本語](README.ja.md)
 
-> **Halo 1.1.6** 是基于 [VoCat](https://github.com/MengMengCode/VoCat) v0.2.12 的个人界面与发行版，原作者为 Vocat Project Authors。模组、IMS、WiFi Calling、eSIM 和代理等核心能力都是原项目的工作。本分支只改了界面、Halo 品牌、可自定义主色，以及少量本地修复。仍适用 [Vocat Research & Evaluation License](../LICENSE)。详见 [ATTRIBUTION.md](../ATTRIBUTION.md)。
+> **Halo 1.1.11** 是基于 [VoCat](https://github.com/MengMengCode/VoCat) v0.2.22 的个人界面与发行版，原作者为 Vocat Project Authors。模组、IMS、WiFi Calling、eSIM 和代理等核心能力都是原项目的工作。本分支只改了界面、Halo 品牌、可自定义主色，以及少量本地修复。仍适用 [Vocat Research & Evaluation License](../LICENSE)。详见 [ATTRIBUTION.md](../ATTRIBUTION.md)。
 
 Vocat 是一款面向 Quectel EC20/EC25 系列蜂窝模组的开源 Web 控制面板与工程工具套件。它在一个自包含的服务中整合了模组发现、实时射频状态、AT 与 USSD 终端、短信、WiFi Calling(WiFi 通话)、eSIM 管理、网络选择、代理路由、通知、审计日志以及发布自动化。
 
@@ -193,8 +193,9 @@ VoCat 会继续在添加设备窗口显示该硬件，并明确提示缺少服�
 
 ### QMI 命令行工具
 
-VoCat 使用 `qmicli` 验证 QMI 控制通道是否就绪，并使用 `qmi-network` 管理
-分组数据会话。一键安装脚本会自动安装并验证对应工具。手动部署时，
+VoCat 使用 `qmicli` 验证 QMI 控制通道是否就绪，并通过 `qmi-proxy` 复用控制
+通道；分组数据会话由内置的 QMI WDS 客户端管理，不再依赖 `qmi-network` 的
+临时 CID/PDH 状态文件。一键安装脚本会自动安装并验证对应工具。手动部署时，
 Debian/Ubuntu 使用 `apt install libqmi-utils`；Arch Linux 使用
 `pacman -S libqmi`，Alpine 使用 `apk add qmi-utils`，OpenWrt 使用 `opkg install qmi-utils`。
 

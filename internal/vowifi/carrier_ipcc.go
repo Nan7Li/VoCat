@@ -635,6 +635,11 @@ func importCarrierIMS(rule *carrierProfileRule, plists []ipccPlist, warnings *ip
 					warnings.add("disabled_ims_ipsec_ignored", "UseIPSec=false was not imported because VoWiFi IMS security cannot be weakened automatically", document.name+":"+strings.Join(signaling.path, ".")+".UseIPSec")
 				}
 			}
+			if strings.EqualFold(plistString(signaling.value["CountryOfOriginationFormat"]), "PANI") {
+				enabled := true
+				rule.IMS.PANIEnabled = &enabled
+				rule.IMS.PANICountry = "AUTO"
+			}
 		}
 	}
 	if useIPSec {

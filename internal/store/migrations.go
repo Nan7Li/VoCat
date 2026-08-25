@@ -441,6 +441,22 @@ func migrationStatements(version int) []string {
 				FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
 				)`,
 		}
+	case 22:
+		return []string{
+			`ALTER TABLE card_policies
+				ADD COLUMN cellular_ims_enabled INTEGER NOT NULL DEFAULT 0
+				CHECK (cellular_ims_enabled IN (0, 1))`,
+			`ALTER TABLE card_policies
+				ADD COLUMN cellular_ims_managed INTEGER NOT NULL DEFAULT 0
+				CHECK (cellular_ims_managed IN (0, 1))`,
+		}
+	case 23:
+		return []string{
+			// IMS is a persistent module-global QCFG setting. Stop all legacy
+			// per-card ownership without changing the modem itself during migration.
+			`UPDATE card_policies SET cellular_ims_managed = 0
+			WHERE cellular_ims_managed <> 0`,
+		}
 	default:
 		return nil
 	}

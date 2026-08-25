@@ -58,42 +58,48 @@ type Options struct {
 
 // Server is the single HTTP handler for the JSON API and embedded SPA.
 type Server struct {
-	store               *store.Store
-	auth                *auth.Service
-	devices             DeviceController
-	vowifi              VoWiFiController
-	ussdSessions        ussdSessionStore
-	logs                *loghub.Hub
-	assets              fs.FS
-	indexHTML           []byte
-	fileServer          http.Handler
-	logger              *slog.Logger
-	secureCookies       bool
-	maxRequestBodyBytes int64
-	startedAt           time.Time
-	handler             http.Handler
-	websheets           *websheetManager
-	accessMu            sync.RWMutex
-	access              parsedAccessConfig
-	loginLimiter        *loginRateLimiter
-	extensions          *extensions.Manager
-	exportProxy         *exportproxy.Manager
-	developerEnabled    bool
-	updateRepository    string
-	updateToken         string
-	updateCheck         func(context.Context, string, string, string) (update.CheckResult, error)
-	updateApply         func(context.Context, *slog.Logger, update.Options, bool) (update.CheckResult, error)
-	updateRestart       func(*slog.Logger) error
-	updateMu            sync.Mutex
-	updateApplying      bool
-	https               *httpsmode.Manager
-	netTraffic          *liveNetTracker
-	hostStats           *hostStatsSampler
-	publicIPMu          sync.RWMutex
-	publicIPs           map[string]cachedPublicIP
-	automaticTasks      *automaticTaskScheduler
-	wireguard           *wireguard.Manager
-	recordingsDir       string
+	store                     *store.Store
+	auth                      *auth.Service
+	devices                   DeviceController
+	vowifi                    VoWiFiController
+	ussdSessions              ussdSessionStore
+	logs                      *loghub.Hub
+	assets                    fs.FS
+	indexHTML                 []byte
+	fileServer                http.Handler
+	logger                    *slog.Logger
+	secureCookies             bool
+	maxRequestBodyBytes       int64
+	startedAt                 time.Time
+	handler                   http.Handler
+	websheets                 *websheetManager
+	accessMu                  sync.RWMutex
+	access                    parsedAccessConfig
+	loginLimiter              *loginRateLimiter
+	extensions                *extensions.Manager
+	exportProxy               *exportproxy.Manager
+	developerEnabled          bool
+	updateRepository          string
+	updateToken               string
+	updateCheck               func(context.Context, string, string, string) (update.CheckResult, error)
+	updateApply               func(context.Context, *slog.Logger, update.Options, bool) (update.CheckResult, error)
+	updateRestart             func(*slog.Logger) error
+	updateMu                  sync.Mutex
+	updateApplying            bool
+	https                     *httpsmode.Manager
+	netTraffic                *liveNetTracker
+	hostStats                 *hostStatsSampler
+	publicIPMu                sync.RWMutex
+	publicIPs                 map[string]cachedPublicIP
+	lookupPublicIP            func(context.Context, string) (exportproxy.PublicIPInfo, error)
+	automaticTasks            *automaticTaskScheduler
+	cellularDataOnce          sync.Once
+	cellularDataMonitorOnce   sync.Once
+	cellularDataEventOnce     sync.Once
+	cellularDataLifecycleOnce sync.Once
+	cellularData              *cellularDataRuntime
+	wireguard                 *wireguard.Manager
+	recordingsDir             string
 }
 
 func New(options Options) (*Server, error) {
@@ -145,12 +151,14 @@ func New(options Options) (*Server, error) {
 		netTraffic:          newLiveNetTracker(),
 		hostStats:           newHostStatsSampler(),
 		publicIPs:           make(map[string]cachedPublicIP),
+		lookupPublicIP:      exportproxy.LookupPublicIP,
 		updateCheck:         update.CheckLatest,
 		updateApply:         update.ApplyLatest,
 		updateRestart:       update.RestartService,
 		wireguard:           options.WireGuard,
 		recordingsDir:       options.RecordingsDir,
 	}
+	server.cellularDataRuntime()
 	server.loadAccessConfig(context.Background())
 	server.loadUILanguage(context.Background())
 
@@ -169,7 +177,7 @@ func New(options Options) (*Server, error) {
 	mux.HandleFunc("/", server.handleSPA)
 
 	server.handler = server.recoverPanics(
-		server.securityHeaders(server.accessControl(server.logRequests(mux))),
+		server.securityHeaders(server.accessControl(server.logUserOperation(mux))),
 	)
 	return server, nil
 }
@@ -566,16 +574,14 @@ func requireMethod(w http.ResponseWriter, r *http.Request, allowed string) bool 
 	return false
 }
 
-type statusWriter struct {
+type operationStatusWriter struct {
 	http.ResponseWriter
 	status int
 }
 
-func (w *statusWriter) Unwrap() http.ResponseWriter {
-	return w.ResponseWriter
-}
+func (w *operationStatusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-func (w *statusWriter) WriteHeader(status int) {
+func (w *operationStatusWriter) WriteHeader(status int) {
 	if w.status != 0 {
 		return
 	}
@@ -583,23 +589,58 @@ func (w *statusWriter) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
-func (s *Server) logRequests(next http.Handler) http.Handler {
+// logUserOperation records state-changing API actions, not request traffic.
+// GET/HEAD polling, assets, health checks and the live log stream are never
+// emitted, keeping the diagnostic page focused on actions a user initiated.
+func (s *Server) logUserOperation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		startedAt := time.Now()
-		writer := &statusWriter{ResponseWriter: w}
+		if !strings.HasPrefix(r.URL.Path, "/api/") ||
+			r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions ||
+			strings.HasPrefix(r.URL.Path, "/api/auth/") || strings.HasPrefix(r.URL.Path, "/api/logs/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		writer := &operationStatusWriter{ResponseWriter: w}
 		next.ServeHTTP(writer, r)
 		status := writer.status
 		if status == 0 {
 			status = http.StatusOK
 		}
-		s.logger.Info(
-			"http request",
-			"method", r.Method,
-			"path", r.URL.Path,
+		level := slog.LevelInfo
+		outcome := "success"
+		message := "user operation completed"
+		if status >= http.StatusBadRequest {
+			level = slog.LevelWarn
+			outcome = "failed"
+			message = "user operation failed"
+		}
+		s.logger.Log(r.Context(), level, message,
+			"category", operationPathCategory(r.URL.Path),
+			"event", "user.operation",
+			"operation", strings.TrimPrefix(r.URL.Path, "/api/"),
+			"outcome", outcome,
 			"status", status,
-			"duration", time.Since(startedAt),
 		)
 	})
+}
+
+func operationPathCategory(path string) string {
+	path = strings.ToLower(path)
+	switch {
+	case strings.Contains(path, "/sms"):
+		return "sms"
+	case strings.Contains(path, "/call"):
+		return "call"
+	case strings.Contains(path, "/vowifi") || strings.Contains(path, "/ims"):
+		return "vowifi"
+	case strings.Contains(path, "/network") || strings.Contains(path, "/operator"):
+		return "network"
+	case strings.Contains(path, "/device") || strings.Contains(path, "/esim") ||
+		strings.Contains(path, "/ussd") || strings.Contains(path, "/at"):
+		return "hardware"
+	default:
+		return "operation"
+	}
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {

@@ -98,11 +98,21 @@ func (s *Server) NotifyIncomingCall(ctx context.Context, notification IncomingCa
 	if notification.Time.IsZero() {
 		notification.Time = time.Now().UTC()
 	}
+	if s.logger != nil {
+		s.logger.Info("incoming call detected",
+			"category", "call",
+			"event", "call.incoming",
+			"device_id", notification.DeviceID,
+			"caller", notification.Caller,
+			"called", notification.Called,
+			"transport", notification.Environment,
+		)
+	}
 
 	dedupKey := fmt.Sprintf("%s:%s", notification.DeviceID, notification.Caller)
 	if shouldSuppressDuplicateCall(dedupKey, notification.Time, callDeduplicationWindow) {
 		if s.logger != nil {
-			s.logger.Debug("suppressed duplicate incoming call notification", "device_id", notification.DeviceID, "caller", notification.Caller)
+			s.logger.Debug("suppressed duplicate incoming call notification", "category", "call", "device_id", notification.DeviceID, "caller", notification.Caller)
 		}
 		return
 	}
@@ -137,7 +147,7 @@ func (s *Server) NotifyIncomingCall(ctx context.Context, notification IncomingCa
 		}
 		if err := sendCallNotification(destCtx, channel, config, notification); err != nil {
 			if s.logger != nil {
-				s.logger.Warn("send incoming call notification", "channel", channel, "device_id", notification.DeviceID, "caller", notification.Caller, "error", err)
+				s.logger.Warn("send incoming call notification", "category", "call", "channel", channel, "device_id", notification.DeviceID, "caller", notification.Caller, "raw_error", err)
 			}
 		}
 	}
@@ -315,11 +325,7 @@ func (s *Server) pollCellularCalls(ctx context.Context) {
 		}
 		calls := parseCLCC(response)
 		for _, call := range calls {
-			direction, _ := call["direction"].(int)
-			state, _ := call["state"].(int)
-			// direction 1 = incoming (Mobile Terminated)
-			// state 4 = incoming/ringing, 5 = waiting, 0 = active, 3 = alerting
-			if direction == 1 && (state == 4 || state == 5 || state == 0 || state == 3) {
+			if isIncomingVoiceCLCC(call) {
 				caller, _ := call["number"].(string)
 				if caller == "" {
 					caller = "未知号码"
@@ -340,4 +346,14 @@ func (s *Server) pollCellularCalls(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func isIncomingVoiceCLCC(call map[string]any) bool {
+	direction, _ := call["direction"].(int)
+	state, _ := call["state"].(int)
+	mode, _ := call["mode"].(int)
+	// direction 1 = incoming (Mobile Terminated)
+	// mode 0 = voice; some modems also expose packet-data sessions as CLCC mode 1
+	// state 4 = incoming/ringing, 5 = waiting, 0 = active, 3 = alerting
+	return direction == 1 && mode == 0 && (state == 4 || state == 5 || state == 0 || state == 3)
 }

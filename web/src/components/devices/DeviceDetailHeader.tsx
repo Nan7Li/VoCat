@@ -10,6 +10,8 @@ import { cx } from "../../lib/utils";
 export interface DeviceDetailHeaderProps {
   device: DeviceDetail;
   dataToggling: boolean;
+  dataToggleTarget?: boolean | null;
+  modemRebooting?: boolean;
   rebooting: boolean;
   reconnectingVoWiFi: boolean;
   onCopyText: (text: string) => void;
@@ -85,6 +87,11 @@ export function DeviceDetailHeader(props: DeviceDetailHeaderProps) {
   const airplaneLocked = vowifiInUse;
   const airplaneActive = airplaneLocked || !!device.flightMode;
   const simLabel = device.modem?.operator || device.activeEsimProfileName || t("SIM");
+  const cellularLabel = props.modemRebooting
+    ? t("重启中")
+    : props.dataToggling && props.dataToggleTarget !== null && props.dataToggleTarget !== undefined
+      ? props.dataToggleTarget ? t("开启中") : t("关闭中")
+      : t("4G");
 
   return (
     <div className="ui-card p-4 sm:p-6">
@@ -112,7 +119,7 @@ export function DeviceDetailHeader(props: DeviceDetailHeaderProps) {
                 disabled={!device.interface}
                 onClick={() => void props.onToggleRoamingData(!networkEnabled)}
                 icon={<Cellular4GRegular className="h-4 w-4" />}
-                label={t("4G")}
+                label={cellularLabel}
                 title={t("蜂窝数据开关（漫游数据，仅供受保护路由使用）")}
                 activeClass="bg-[var(--color-success)] text-white hover:bg-[#23b57c]"
               />

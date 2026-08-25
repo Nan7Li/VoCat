@@ -42,7 +42,13 @@ type Manager struct {
 	cardReaders    *pcsc.Service
 	logger         *slog.Logger
 
+	networkEventsMu         sync.Mutex
+	networkEventSubscribers map[chan string]struct{}
+	deviceEventsMu          sync.Mutex
+	deviceEventSubscribers  map[chan DeviceLifecycleEvent]struct{}
+
 	qmiRadioOpener                qmiRadioSessionOpener
+	qmiDataOpener                 qmiDataSessionOpener
 	nativeQMIRegistrationMu       sync.Mutex
 	nativeQMIRegistrationInFlight map[string]struct{}
 
@@ -77,18 +83,23 @@ type ussdSession struct {
 }
 
 type managedDevice struct {
-	opMu              sync.Mutex
-	candidate         modem.Candidate
-	backend           string
-	lastICCID         string
-	client            modem.Client
-	snapshot          *Snapshot
-	lastError         string
-	lastUpdated       time.Time
-	discovered        bool
-	preFlightMode     *int
-	resetClientOnLock bool
-	simPIN            string
+	opMu               sync.Mutex
+	dataMu             sync.Mutex
+	dataSession        qmiDataSession
+	dataSessionHandle  uint32
+	dataSessionControl string
+	dataEventCancel    context.CancelFunc
+	candidate          modem.Candidate
+	backend            string
+	lastICCID          string
+	client             modem.Client
+	snapshot           *Snapshot
+	lastError          string
+	lastUpdated        time.Time
+	discovered         bool
+	preFlightMode      *int
+	resetClientOnLock  bool
+	simPIN             string
 }
 
 func NewManager(options Options) (*Manager, error) {
@@ -126,7 +137,10 @@ func NewManager(options Options) (*Manager, error) {
 		logger:         options.Logger,
 
 		qmiRadioOpener:                openQMIRadioSession,
+		qmiDataOpener:                 openQMIDataSession,
 		nativeQMIRegistrationInFlight: make(map[string]struct{}),
+		networkEventSubscribers:       make(map[chan string]struct{}),
+		deviceEventSubscribers:        make(map[chan DeviceLifecycleEvent]struct{}),
 
 		devices:        make(map[string]*managedDevice),
 		ussdSessions:   make(map[string]ussdSession),
@@ -177,6 +191,9 @@ func (manager *Manager) Stop(ctx context.Context) error {
 			state.client = nil
 		}
 		state.opMu.Unlock()
+		state.dataMu.Lock()
+		invalidateQMINetworkSession(state, manager.candidateFor(state))
+		state.dataMu.Unlock()
 	}
 	return errors.Join(closeErrors...)
 }
@@ -206,6 +223,11 @@ func (manager *Manager) Discover(ctx context.Context) ([]Device, error) {
 	}
 	seen := make(map[string]struct{}, len(candidates))
 
+	type discoveryEvent struct {
+		connected bool
+		candidate modem.Candidate
+	}
+	events := make([]discoveryEvent, 0)
 	manager.mu.Lock()
 	for _, candidate := range candidates {
 		if strings.TrimSpace(candidate.ID) == "" {
@@ -218,9 +240,14 @@ func (manager *Manager) Discover(ctx context.Context) ([]Device, error) {
 				candidate:  candidate,
 				discovered: true,
 			}
+			events = append(events, discoveryEvent{connected: true, candidate: candidate})
 			continue
 		}
-		if state.candidate.ATPort.OpenPath() != candidate.ATPort.OpenPath() {
+		if !state.discovered {
+			events = append(events, discoveryEvent{connected: true, candidate: candidate})
+		}
+		if state.candidate.ATPort.OpenPath() != candidate.ATPort.OpenPath() ||
+			state.candidate.QMIControl != candidate.QMIControl {
 			state.resetClientOnLock = true
 		}
 		state.candidate = candidate
@@ -231,10 +258,34 @@ func (manager *Manager) Discover(ctx context.Context) ([]Device, error) {
 		if _, ok := seen[id]; ok {
 			continue
 		}
+		if state.discovered {
+			events = append(events, discoveryEvent{candidate: state.candidate})
+		}
 		state.discovered = false
 		stale = append(stale, state)
 	}
 	manager.mu.Unlock()
+	if manager.logger != nil {
+		for _, event := range events {
+			message := "hardware disconnected"
+			if event.connected {
+				message = "hardware connected"
+			}
+			manager.logger.Info(message,
+				"event", "hardware.discovery",
+				"device_id", event.candidate.ID,
+				"hardware_kind", event.candidate.HardwareKind,
+				"vendor_id", event.candidate.VendorID,
+				"product_id", event.candidate.ProductID,
+			)
+		}
+	}
+	for _, event := range events {
+		manager.publishDeviceLifecycleEvent(DeviceLifecycleEvent{
+			ID:      event.candidate.ID,
+			Present: event.connected,
+		})
+	}
 
 	for _, state := range stale {
 		state.opMu.Lock()
@@ -243,6 +294,9 @@ func (manager *Manager) Discover(ctx context.Context) ([]Device, error) {
 			state.client = nil
 		}
 		state.opMu.Unlock()
+		state.dataMu.Lock()
+		invalidateQMINetworkSession(state, manager.candidateFor(state))
+		state.dataMu.Unlock()
 	}
 	manager.resetChangedClients()
 
@@ -278,6 +332,9 @@ func (manager *Manager) resetChangedClients() {
 			state.client = nil
 		}
 		state.opMu.Unlock()
+		state.dataMu.Lock()
+		invalidateQMINetworkSession(state, manager.candidateFor(state))
+		state.dataMu.Unlock()
 	}
 }
 
@@ -382,6 +439,11 @@ func (manager *Manager) setResult(
 		return
 	}
 	previousError := state.lastError
+	var previousSnapshot *Snapshot
+	if state.snapshot != nil {
+		value := *state.snapshot
+		previousSnapshot = &value
+	}
 	if snapshot != nil {
 		value := *snapshot
 		value.Warnings = append([]string(nil), snapshot.Warnings...)
@@ -394,6 +456,13 @@ func (manager *Manager) setResult(
 		state.lastError = ""
 	}
 	shouldLog := err != nil && manager.logger != nil && previousError != err.Error()
+	registrationChanged := snapshot != nil && manager.logger != nil &&
+		(previousSnapshot == nil ||
+			previousSnapshot.RegistrationStatus != snapshot.RegistrationStatus ||
+			previousSnapshot.OperatorCode != snapshot.OperatorCode ||
+			previousSnapshot.AccessTech != snapshot.AccessTech ||
+			previousSnapshot.PSAttached != snapshot.PSAttached ||
+			previousSnapshot.SIMStatus != snapshot.SIMStatus)
 	backend := state.backend
 	hardwareKind := state.candidate.HardwareKind
 	manager.mu.Unlock()
@@ -404,6 +473,21 @@ func (manager *Manager) setResult(
 			"backend", backend,
 			"hardware_kind", hardwareKind,
 			"error", HardwareErrorDetail(err),
+		)
+	}
+	if registrationChanged {
+		manager.logger.Info(
+			"cellular registration state changed",
+			"category", "network",
+			"event", "network.registration",
+			"device_id", id,
+			"sim_status", snapshot.SIMStatus,
+			"registration_status", snapshot.RegistrationStatus,
+			"registration_source", snapshot.RegistrationSource,
+			"operator", snapshot.OperatorName,
+			"operator_code", snapshot.OperatorCode,
+			"access_technology", snapshot.AccessTech,
+			"packet_service_attached", snapshot.PSAttached,
 		)
 	}
 }
@@ -618,6 +702,9 @@ func (manager *Manager) Reboot(ctx context.Context, id string) error {
 		manager.setResult(id, state, nil, err)
 		return err
 	}
+	state.dataMu.Lock()
+	invalidateQMINetworkSession(state, manager.candidateFor(state))
+	state.dataMu.Unlock()
 	commandCtx, cancel := manager.withTimeout(ctx, manager.longTimeout)
 	defer cancel()
 	_, err = client.Execute(commandCtx, "AT+CFUN=1,1")
@@ -661,6 +748,9 @@ func (manager *Manager) softResetSIM(ctx context.Context, id string, forceOnline
 		manager.setResult(id, state, nil, err)
 		return err
 	}
+	state.dataMu.Lock()
+	invalidateQMINetworkSession(state, manager.candidateFor(state))
+	state.dataMu.Unlock()
 	commandCtx, cancel := manager.withTimeout(ctx, manager.commandTimeout)
 	defer cancel()
 

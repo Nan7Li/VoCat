@@ -65,17 +65,34 @@ jobs:
 
           git fetch vocat "refs/tags/v${latest}:refs/tags/v${latest}"
           if ! git merge --no-edit "v${latest}"; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
             git merge --abort || true
             title="Vocat v${latest} 无法自动合进 Halo"
-            if ! gh issue list --state open --search "$title in:title" --json number --jq '.[0].number' | grep -q '[0-9]'; then
-              gh issue create --title "$title" --body "$(cat <<EOF
+            body="$(cat <<EOF
           Official VoCat [v${latest}](https://github.com/MengMengCode/VoCat/releases/tag/v${latest}) is newer than Halo's synced \`v${synced:-unknown}\`, but \`git merge\` hit conflicts.
 
           Halo keeps its own phone page, recording, ePDG UI, radio triad, WireGuard, and branding. Do not force-overwrite those files.
 
+          Conflicted files:
+
+          \`\`\`
+          ${conflicts}
+          \`\`\`
+
           Next step: merge \`v${latest}\` into the \`halo\` branch locally, resolve conflicts, then tag a Halo release. The router can pick that up with automatic install.
           EOF
           )"
+            if [ "$(gh repo view "$GITHUB_REPOSITORY" --json hasIssuesEnabled --jq .hasIssuesEnabled)" = "true" ]; then
+              if ! gh issue list --state open --search "$title in:title" --json number --jq '.[0].number' | grep -q '[0-9]'; then
+                gh issue create --title "$title" --body "$body" || echo "::warning::$title"
+              fi
+            else
+              {
+                echo "## $title"
+                echo
+                echo "$body"
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::warning::$title（仓库 Issues 已关闭，详情已写入任务摘要）"
             fi
             echo "did_sync=false" >> "$GITHUB_OUTPUT"
             exit 1

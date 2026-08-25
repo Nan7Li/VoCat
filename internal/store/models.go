@@ -483,24 +483,27 @@ type LogEvent struct {
 }
 
 type LogFilter struct {
-	Level    string
-	Since    time.Time
-	Until    time.Time
-	BeforeID int64
-	Limit    int
+	Level          string
+	ExcludeMessage string
+	Since          time.Time
+	Until          time.Time
+	BeforeID       int64
+	Limit          int
 }
 
 type CardPolicy struct {
-	ICCID             string
-	NetworkEnabled    bool
-	VoWiFiEnabled     bool
-	AirplaneEnabled   bool
-	APN               string
-	IPVersion         string
-	CustomPhoneNumber string
-	Source            string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ICCID              string
+	NetworkEnabled     bool
+	VoWiFiEnabled      bool
+	AirplaneEnabled    bool
+	APN                string
+	IPVersion          string
+	CustomPhoneNumber  string
+	CellularIMSEnabled bool
+	CellularIMSManaged bool
+	Source             string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type CardAPNProfile struct {

@@ -14,7 +14,7 @@ import (
 
 const (
 	upstreamVocatSettingKey     = "system.upstream_vocat"
-	defaultUpstreamVocatVersion = "0.2.12"
+	defaultUpstreamVocatVersion = "0.2.22"
 )
 
 type upstreamVocatStatus struct {

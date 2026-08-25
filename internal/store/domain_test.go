@@ -338,6 +338,46 @@ func TestMigration19AcceptsDevelopmentColumnsAlreadyPresent(t *testing.T) {
 	}
 }
 
+func TestMigration23StopsLegacyPerCardIMSManagement(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "cellular-ims-policy.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for version := 1; version <= 22; version++ {
+		for _, statement := range migrationStatements(version) {
+			if _, err := raw.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("create v%d schema: %v", version, err)
+			}
+		}
+	}
+	if _, err := raw.ExecContext(ctx, `
+		INSERT INTO card_policies (
+			iccid, source, cellular_ims_enabled, cellular_ims_managed, created_at, updated_at
+		) VALUES
+			('8900000000000000020', 'default', 0, 1, 100, 100),
+			('8900000000000000021', 'manual', 1, 1, 100, 100);
+		PRAGMA user_version = 22;
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	database := openTestStore(t, path)
+	policies, err := database.ListCardPolicies(ctx)
+	if err != nil || len(policies) != 2 {
+		t.Fatalf("migrated policies = %+v, %v", policies, err)
+	}
+	for _, policy := range policies {
+		if policy.CellularIMSManaged {
+			t.Fatalf("legacy IMS ownership survived migration: %+v", policy)
+		}
+	}
+}
+
 func TestMigration4PreservesIMSRedeliveryAndUsesReceiptTime(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "ims-redelivery.db")
@@ -1016,6 +1056,15 @@ func TestEventsPoliciesAndTraffic(t *testing.T) {
 	logs, err := database.ListLogEvents(ctx, LogFilter{Level: "info"})
 	if err != nil || len(logs) != 1 || logs[0].Message != "ready" {
 		t.Fatalf("log filter result = %+v, %v", logs, err)
+	}
+	if _, err := database.AppendLogEvent(ctx, LogEvent{
+		Time: recent, Level: "info", Message: " HTTP REQUEST ",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	logs, err = database.ListLogEvents(ctx, LogFilter{Level: "info", ExcludeMessage: "http request"})
+	if err != nil || len(logs) != 1 || logs[0].Message != "ready" {
+		t.Fatalf("excluded log filter result = %+v, %v", logs, err)
 	}
 	auditDeleted, logDeleted, err := database.PruneEvents(
 		ctx,

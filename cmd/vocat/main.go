@@ -43,7 +43,7 @@ import (
 )
 
 func main() {
-	logs := loghub.New(slog.NewJSONHandler(os.Stdout, nil), 2000)
+	logs := loghub.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}), 2000)
 	logger := slog.New(logs)
 
 	args := os.Args[1:]
@@ -208,7 +208,8 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 	}
 
 	cardReaders := pcsc.New()
-	deviceManager, err := device.NewManager(device.Options{CardReaders: cardReaders, Logger: logger})
+	deviceLogger := logger.With("category", "hardware")
+	deviceManager, err := device.NewManager(device.Options{CardReaders: cardReaders, Logger: deviceLogger})
 	if err != nil {
 		return fmt.Errorf("create device manager: %w", err)
 	}
@@ -229,8 +230,7 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 	}()
 	pollContext, cancelPolling := context.WithCancel(context.Background())
 	defer cancelPolling()
-	go pollDeviceSnapshots(pollContext, logger, database, deviceManager)
-	go restoreConfiguredCellularData(pollContext, logger, database, deviceManager)
+	go pollDeviceSnapshots(pollContext, deviceLogger, database, deviceManager)
 	go collectCellularTraffic(pollContext, logger, database)
 	go persistLogsToStore(pollContext, logger, logs, database)
 	if !developerEnabled {
@@ -312,6 +312,7 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 	go handler.StartLogRetentionLoop(pollContext, time.Minute)
 	go handler.RunCallHistoryWatcher(pollContext)
 	go handler.StartSMSSyncLoop(pollContext, 15*time.Second)
+	handler.StartCellularDataReconciler(pollContext)
 	handler.StartTelegramBot(pollContext)
 	handler.StartSMSNotificationDispatchers(pollContext)
 	go handler.StartCellularCallMonitor(pollContext)
@@ -486,58 +487,38 @@ func restoreDefaultCellularRadios(
 	}
 }
 
-func restoreConfiguredCellularData(
+func configuredCellularNetworkRequest(
 	ctx context.Context,
-	logger *slog.Logger,
 	database *store.Store,
-	manager *device.Manager,
-) {
-	configs, err := database.ListDevices(ctx)
+	config store.Device,
+	snapshot *device.Snapshot,
+) device.NetworkRequest {
+	request := device.NetworkRequest{
+		Enabled: true, APN: config.APN, IPVersion: "IPV4V6", Backend: config.DeviceBackend,
+	}
+	if snapshot == nil {
+		return request
+	}
+	iccid := strings.TrimSpace(snapshot.ICCID)
+	policy, err := database.CardPolicy(ctx, iccid)
 	if err != nil {
-		logger.Warn("startup cellular data recovery: list devices", "error", err)
-		return
+		return request
 	}
-	mapper := integration.ATMapper{Store: database, Devices: manager}
-	for _, config := range configs {
-		if config.DeviceType == store.DeviceTypeUSBSIMReader {
-			continue
-		}
-		if !config.NetworkEnabled || config.VoWiFiEnabled {
-			continue
-		}
-		entry, err := mapper.Get(config.ID)
-		if err != nil {
-			continue
-		}
-		networkRequest := device.NetworkRequest{
-			Enabled: true, APN: config.APN, IPVersion: "IPV4V6", Backend: config.DeviceBackend,
-		}
-		if entry.Snapshot != nil {
-			iccid := strings.TrimSpace(entry.Snapshot.ICCID)
-			if policy, policyErr := database.CardPolicy(ctx, iccid); policyErr == nil {
-				networkRequest.APN = policy.APN
-				if policy.IPVersion != "" {
-					networkRequest.IPVersion = policy.IPVersion
-				}
-				if profile, profileErr := database.CardAPNProfileByAPN(ctx, iccid, policy.APN, policy.IPVersion); profileErr == nil {
-					networkRequest.Username = profile.Username
-					networkRequest.Password = profile.Password
-					networkRequest.Authentication = profile.AuthType
-					if entry.Snapshot.RegistrationStatus == 5 && profile.RoamingIPVersion != "" {
-						networkRequest.IPVersion = profile.RoamingIPVersion
-					}
-				}
-			}
-		}
-		dataContext, cancel := context.WithTimeout(ctx, 60*time.Second)
-		_, err = manager.SetNetwork(dataContext, entry.ID, networkRequest)
-		cancel()
-		if err != nil {
-			logger.Warn("startup cellular data recovery failed", "device_id", config.ID)
-			continue
-		}
-		logger.Info("restored protected cellular data route", "device_id", config.ID, "interface", config.Interface)
+	request.APN = policy.APN
+	if policy.IPVersion != "" {
+		request.IPVersion = policy.IPVersion
 	}
+	profile, err := database.CardAPNProfileByAPN(ctx, iccid, policy.APN, policy.IPVersion)
+	if err != nil {
+		return request
+	}
+	request.Username = profile.Username
+	request.Password = profile.Password
+	request.Authentication = profile.AuthType
+	if snapshot.RegistrationStatus == 5 && profile.RoamingIPVersion != "" {
+		request.IPVersion = profile.RoamingIPVersion
+	}
+	return request
 }
 
 func disableAllDeveloperCellularData(
@@ -655,7 +636,7 @@ func configureVoWiFiRuntime(
 		Devices: mapper,
 	}
 	manager := vowifiruntime.New(vowifiruntime.Options{
-		Logger:  logger,
+		Logger:  logger.With("category", "vowifi"),
 		OnState: projector.Save,
 		Factory: func(factoryContext context.Context, deviceID string) (*vowifi.Orchestrator, error) {
 			deviceConfig, err := database.Device(factoryContext, deviceID)
@@ -698,7 +679,18 @@ func configureVoWiFiRuntime(
 					)
 				}
 			}
-			if _, err := manager.RequestEnabled(deviceConfig.ID, true); err != nil {
+			requestEnable := func() error {
+				_, requestErr := manager.RequestEnabled(deviceConfig.ID, true)
+				return requestErr
+			}
+			if err := requestVoWiFiStartup(
+				ctx,
+				logger,
+				deviceConfig.DeviceType,
+				deviceConfig.ID,
+				wifi410VoWiFiStartupDelay,
+				requestEnable,
+			); err != nil {
 				_ = manager.Close(context.Background())
 				return nil, fmt.Errorf("start device %q VoWiFi policy: %w", deviceConfig.ID, err)
 			}
@@ -710,7 +702,54 @@ func configureVoWiFiRuntime(
 const (
 	vowifiStartupRadioAttempts = 3
 	vowifiStartupRadioDelay    = time.Second
+	wifi410VoWiFiStartupDelay  = 80 * time.Second
 )
+
+// requestVoWiFiStartup delays only the persisted startup policy for OpenStick
+// 410 devices. Their Qualcomm UIM and Vodafone ePDG path need a short quiet
+// period after a cold boot; user-triggered reconnects and every other device
+// type continue to execute immediately.
+func requestVoWiFiStartup(
+	ctx context.Context,
+	logger *slog.Logger,
+	deviceType string,
+	deviceID string,
+	delay time.Duration,
+	request func() error,
+) error {
+	if deviceType != store.DeviceTypeWiFi410 || delay <= 0 {
+		return request()
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.Info(
+		"OpenStick 410 VoWiFi startup delayed",
+		"device_id", deviceID,
+		"delay", delay,
+	)
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		if err := request(); err != nil {
+			logger.Warn(
+				"OpenStick 410 delayed VoWiFi startup failed",
+				"device_id", deviceID,
+				"error", err,
+			)
+		}
+	}()
+	return nil
+}
+
+func shouldDelayWiFi410VoWiFi(deviceType string, now, notBefore time.Time) bool {
+	return deviceType == store.DeviceTypeWiFi410 && now.Before(notBefore)
+}
 
 type flightModeSetter interface {
 	SetFlight(context.Context, string, bool) (device.FlightResult, error)
@@ -732,7 +771,7 @@ func protectVoWiFiStartupRadioWithRetry(
 	physicalID string,
 	attempts int,
 	delay time.Duration,
-	) error {
+) error {
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		flightContext, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -775,14 +814,15 @@ func newVoWiFiOrchestrator(
 	if apn == "" {
 		apn = "ims"
 	}
+	vowifiLogger := logger.With("category", "vowifi", "device_id", deviceConfig.ID)
 	tunnelProvider, err := ike.NewProvider(ike.Config{
-		APN: apn, Logger: logger, AutoProposalFallback: true,
+		APN: apn, Logger: vowifiLogger, AutoProposalFallback: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("device %q IKE provider: %w", deviceConfig.ID, err)
 	}
 	imsProvider, err := ims.NewProvider(adapter, ims.Config{
-		Logger: logger,
+		Logger: vowifiLogger,
 		// Call audio is tee'd into stereo WAV files (channel 0 = remote,
 		// channel 1 = local microphone) under the recordings directory.
 		RecordingsDir: recordingsDir,
@@ -1028,6 +1068,10 @@ func persistLogsToStore(
 			if !ok {
 				return
 			}
+			if loghub.IsHTTPAccessEntry(entry) {
+				continue
+			}
+			entry = loghub.SanitizeEntry(entry)
 			var fields json.RawMessage
 			if len(entry.Fields) > 0 {
 				if raw, err := json.Marshal(entry.Fields); err == nil {
@@ -1175,6 +1219,7 @@ func reconcileCardPolicies(
 	vowifiManager *vowifiruntime.Manager,
 ) {
 	observedCards := make(map[string]string)
+	wifi410StartupNotBefore := time.Now().Add(wifi410VoWiFiStartupDelay)
 	reconcile := func() {
 		policies, policyListErr := database.ListCardPolicies(ctx)
 		if policyListErr == nil {
@@ -1256,6 +1301,9 @@ func reconcileCardPolicies(
 				}
 				switch {
 				case stateErr != nil || !state.Enabled:
+					if shouldDelayWiFi410VoWiFi(config.DeviceType, time.Now(), wifi410StartupNotBefore) {
+						continue
+					}
 					_, _ = vowifiManager.RequestEnabled(config.ID, true)
 				case state.ICCID != "" && !strings.EqualFold(strings.TrimSpace(state.ICCID), iccid):
 					_, _ = vowifiManager.RequestReconnect(config.ID)

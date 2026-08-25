@@ -73,6 +73,127 @@ func TestParseModemAPNProfiles(t *testing.T) {
 	}
 }
 
+type fakeCellularIMSController struct {
+	fakeDeviceController
+	status device.CellularIMSStatus
+	setTo  *device.CellularIMSMode
+	setErr error
+}
+
+type rebootDataController struct{ fakeDeviceController }
+
+func (controller *rebootDataController) SetNetwork(_ context.Context, _ string, request device.NetworkRequest) (device.NetworkResult, error) {
+	return device.NetworkResult{Enabled: request.Enabled}, nil
+}
+
+func (controller *fakeCellularIMSController) CellularIMS(context.Context, string) (device.CellularIMSStatus, error) {
+	return controller.status, controller.setErr
+}
+
+func (controller *fakeCellularIMSController) SetCellularIMS(_ context.Context, _ string, mode device.CellularIMSMode) (device.CellularIMSStatus, error) {
+	controller.setTo = &mode
+	return controller.status, controller.setErr
+}
+
+func TestCellularIMSPatchAppliesModuleModeWithoutPersistingCardPolicy(t *testing.T) {
+	test := newSettingsAPITest(t)
+	controller := &fakeCellularIMSController{
+		fakeDeviceController: fakeDeviceController{entry: device.Device{
+			ID: "physical-1", Discovered: true,
+		}},
+		status: device.CellularIMSStatus{Supported: true, Mode: device.CellularIMSModeForceEnabled, Configured: true, Changed: true, Rebooting: true},
+	}
+	test.server.devices = controller
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/devices/configured-1/cellular-ims", strings.NewReader(`{"mode":"force_enabled"}`))
+	request.Header.Set("Content-Type", "application/json")
+	if !test.server.handleCellularIMS(recorder, request, store.Device{ID: "configured-1"}, "physical-1") {
+		t.Fatal("handleCellularIMS returned false")
+	}
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body)
+	}
+	if controller.setTo == nil || *controller.setTo != device.CellularIMSModeForceEnabled {
+		t.Fatalf("SetCellularIMS captured %v", controller.setTo)
+	}
+	if policies, err := test.database.ListCardPolicies(context.Background()); err != nil || len(policies) != 0 {
+		t.Fatalf("module IMS action unexpectedly persisted a card policy: %v", err)
+	}
+}
+
+func TestCellularIMSPatchKeepsLegacyFalseAsMBNDefault(t *testing.T) {
+	test := newSettingsAPITest(t)
+	controller := &fakeCellularIMSController{
+		fakeDeviceController: fakeDeviceController{entry: device.Device{ID: "physical-1", Discovered: true}},
+		status:               device.CellularIMSStatus{Supported: true, Mode: device.CellularIMSModeMBNDefault},
+	}
+	test.server.devices = controller
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/devices/configured-1/cellular-ims", strings.NewReader(`{"enabled":false}`))
+	request.Header.Set("Content-Type", "application/json")
+	test.server.handleCellularIMS(recorder, request, store.Device{ID: "configured-1"}, "physical-1")
+	if recorder.Code != http.StatusOK || controller.setTo == nil || *controller.setTo != device.CellularIMSModeMBNDefault {
+		t.Fatalf("legacy false status=%d mode=%v body=%s", recorder.Code, controller.setTo, recorder.Body)
+	}
+}
+
+func TestCellularIMSPatchRejectsUnknownMode(t *testing.T) {
+	test := newSettingsAPITest(t)
+	controller := &fakeCellularIMSController{
+		fakeDeviceController: fakeDeviceController{entry: device.Device{ID: "physical-1", Discovered: true}},
+	}
+	test.server.devices = controller
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/devices/configured-1/cellular-ims", strings.NewReader(`{"mode":"disabled"}`))
+	request.Header.Set("Content-Type", "application/json")
+	test.server.handleCellularIMS(recorder, request, store.Device{ID: "configured-1"}, "physical-1")
+	if recorder.Code != http.StatusBadRequest || controller.setTo != nil {
+		t.Fatalf("unknown mode status=%d applied=%v body=%s", recorder.Code, controller.setTo, recorder.Body)
+	}
+}
+
+func TestManualModemRebootInvalidatesConnectedDataRuntime(t *testing.T) {
+	test := newSettingsAPITest(t)
+	const iccid = "8944305293607130156"
+	controller := &rebootDataController{fakeDeviceController: fakeDeviceController{entry: device.Device{
+		ID: "physical-1", Discovered: true,
+		Candidate: modem.Candidate{USBPath: "/sys/bus/usb/devices/1-1"},
+		Snapshot:  &device.Snapshot{DeviceID: "physical-1", SIMReady: true, ICCID: iccid, PSAttached: true},
+	}}}
+	test.server.devices = controller
+	config := store.Device{
+		ID: "configured-1", Name: "modem", DeviceType: store.DeviceTypePCIeEC20EC25,
+		USBPath: "/sys/bus/usb/devices/1-1", NetworkEnabled: true, DeviceBackend: "qmi",
+	}
+	if err := test.database.UpsertDevice(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
+	runtime := test.server.cellularDataRuntime()
+	root, cancelRoot := context.WithCancel(context.Background())
+	defer cancelRoot()
+	runtime.start(root)
+	requested := runtime.request(config.ID, controller.entry.ID, device.NetworkRequest{Enabled: true, Backend: "qmi"})
+	waitContext, cancelWait := context.WithTimeout(context.Background(), time.Second)
+	connected, err := runtime.wait(waitContext, config.ID, requested.Revision)
+	cancelWait()
+	if err != nil || !connected.Connected {
+		t.Fatalf("initial runtime = %+v, err = %v", connected, err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/devices/configured-1/actions/reboot", nil)
+	if !test.server.handleDevicePath(recorder, request, config.ID, []string{"actions", "reboot"}) {
+		t.Fatal("handleDevicePath returned false")
+	}
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body)
+	}
+	status := runtime.status(config.ID, true)
+	if status.Connected || status.Phase != "recovering" || !status.DesiredEnabled {
+		t.Fatalf("runtime after reboot = %+v", status)
+	}
+}
+
 type esimAIDCaptureController struct {
 	fakeDeviceController
 	switchAID  string
@@ -999,7 +1120,7 @@ func TestHandleCellularDataRejectsDisableWhileExportProxyActive(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder = patchOff()
-	if recorder.Code != http.StatusOK {
+	if recorder.Code != http.StatusAccepted {
 		t.Fatalf("disable after proxy off status = %d, body = %s", recorder.Code, recorder.Body)
 	}
 	stored, err = database.Device(ctx, "modem-1")
