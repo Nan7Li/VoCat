@@ -46,6 +46,7 @@ type DeviceController interface {
 	ListSMS(context.Context, string) ([]device.SMSMessage, error)
 	ReadSMS(context.Context, string, int) (device.SMSMessage, error)
 	DeleteSMS(context.Context, string, int) error
+	DeleteSMSFromStorage(context.Context, string, string, int) error
 	ESIMInventory(context.Context, string) ([]device.EsimInventoryEntry, error)
 	ESIMListProfiles(context.Context, string) (device.EsimInfo, error)
 	ESIMSwitchProfile(context.Context, string, string, string) error
@@ -284,13 +285,25 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) bool {
 				return true
 			}
 		}
-		if _, err := s.devices.SetFlight(r.Context(), selected.ID, true); err != nil {
-			s.writeDeviceError(w, err)
-			return true
-		}
 		if err := s.store.UpsertDevice(r.Context(), config); err != nil {
 			s.writeStoreError(w, err)
 			return true
+		}
+		// Persist the physical binding before the first RF command. A newly
+		// enumerated USB modem may still be settling, or ModemManager may not yet
+		// have released its AT port. Rejecting the whole add operation in that
+		// transient window leaves no configured identity for the periodic recovery
+		// loop to retry. The stored desired state remains fail-closed (cellular data
+		// disabled, VoWiFi enabled); report the incomplete hardware transition as a
+		// warning while allowing normal reconciliation to finish it later.
+		flightWarning := ""
+		if _, err := s.devices.SetFlight(r.Context(), selected.ID, true); err != nil {
+			flightWarning = "device configuration was saved, but the modem did not enter airplane mode yet; VoCat will retry during recovery"
+			s.logger.Warn("new device saved before initial airplane-mode transition completed",
+				"device_id", config.ID,
+				"physical_device_id", selected.ID,
+				"error", device.HardwareErrorDetail(err),
+			)
 		}
 		if selected.Snapshot != nil {
 			iccid := strings.TrimSpace(selected.Snapshot.ICCID)
@@ -319,6 +332,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) bool {
 				"id":              config.ID,
 				"discovery_key":   selected.ID,
 				"physical_device": s.configuredDeviceSummary(config, selected),
+				"warning":         flightWarning,
 			},
 		})
 	default:

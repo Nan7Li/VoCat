@@ -103,13 +103,19 @@ func (d *SysFSDiscoverer) Discover(ctx context.Context) ([]Candidate, error) {
 		state := devices[deviceName]
 		if state == nil {
 			serialNumber := readTrimmed(filepath.Join(resolvedDevice, "serial"))
+			manufacturer, product := normalizeUSBIdentity(
+				vendorID,
+				productID,
+				readTrimmed(filepath.Join(resolvedDevice, "manufacturer")),
+				readTrimmed(filepath.Join(resolvedDevice, "product")),
+			)
 			state = &discoveredUSBDevice{
 				candidate: Candidate{
 					ID:           candidateID(vendorID, productID, serialNumber, deviceName),
 					VendorID:     vendorID,
 					ProductID:    productID,
-					Manufacturer: readTrimmed(filepath.Join(resolvedDevice, "manufacturer")),
-					Product:      readTrimmed(filepath.Join(resolvedDevice, "product")),
+					Manufacturer: manufacturer,
+					Product:      product,
 					SerialNumber: serialNumber,
 					USBPath:      devicePath,
 				},
@@ -126,7 +132,7 @@ func (d *SysFSDiscoverer) Discover(ctx context.Context) ([]Candidate, error) {
 			path := filepath.Join(d.DevRoot, name)
 			state.ports[name] = Port{
 				Path:            path,
-				StablePath:      aliases[name],
+				StablePath:      reliableSerialAlias(state.candidate.SerialNumber, aliases[name]),
 				Name:            name,
 				InterfaceNumber: interfaceNumber,
 				Role:            quecPortRole(interfaceNumber, name),
@@ -197,6 +203,36 @@ func IsDJI4GUSB(vendorID, productID string) bool {
 // port, which filters out unrelated Quectel-branded peripherals.
 func isQuectelUSBModem(vendorID string) bool {
 	return strings.EqualFold(strings.TrimSpace(vendorID), quectelVendorID)
+}
+
+// normalizeUSBIdentity replaces the placeholder strings shipped by the
+// classic Quectel EC20/EC25 USB composition. Linux faithfully exposes those
+// modules as "Android / Android", but that text is a firmware placeholder,
+// not the modem model or manufacturer.
+func normalizeUSBIdentity(vendorID, productID, manufacturer, product string) (string, string) {
+	if !isQuectelUSBModem(vendorID) ||
+		!strings.EqualFold(strings.TrimSpace(productID), "0125") {
+		return manufacturer, product
+	}
+	if strings.EqualFold(strings.TrimSpace(manufacturer), "Android") || strings.TrimSpace(manufacturer) == "" {
+		manufacturer = "Quectel"
+	}
+	if strings.EqualFold(strings.TrimSpace(product), "Android") || strings.TrimSpace(product) == "" {
+		product = "Quectel EC20 / EC25"
+	}
+	return manufacturer, product
+}
+
+// reliableSerialAlias rejects the generic serial number used by older
+// EC20/EC25 firmware. A /dev/serial/by-id link derived from "Android" is not a
+// hardware identity: two modules can publish the same link, and udev may point
+// it at a different tty after reboot. The live tty plus USB topology/IMEI is
+// safer and is re-resolved on every discovery pass.
+func reliableSerialAlias(serialNumber, alias string) string {
+	if strings.EqualFold(strings.TrimSpace(serialNumber), "Android") {
+		return ""
+	}
+	return alias
 }
 
 type discoveredWWANDevice struct {

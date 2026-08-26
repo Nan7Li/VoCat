@@ -71,6 +71,21 @@ func TestMergePCSCAndMultipleUSBReadersWithFallbackPath(t *testing.T) {
 	}
 }
 
+func TestFilterVirtualPCDReadersKeepsPhysicalReaders(t *testing.T) {
+	readers := filterVirtualPCDReaders([]Reader{
+		{Name: "Virtual PCD 00 00", USBPath: "pcsc:Virtual PCD 00 00"},
+		{Name: "Virtual PCD 00 01", USBPath: "pcsc:Virtual PCD 00 01"},
+		{Name: "Generic Smart Card Reader 00 00", USBPath: "pcsc:Generic Smart Card Reader 00 00"},
+		{Name: "Virtual PCD 00 02", USBPath: "2-1", VendorID: "1234", ProductID: "5678"},
+	})
+	if len(readers) != 2 {
+		t.Fatalf("readers = %#v, want two real/unresolved non-virtual readers", readers)
+	}
+	if readers[0].Name != "Generic Smart Card Reader 00 00" || readers[1].USBPath != "2-1" {
+		t.Fatalf("retained readers = %#v", readers)
+	}
+}
+
 func writeUSBTestFile(t *testing.T, path, value string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

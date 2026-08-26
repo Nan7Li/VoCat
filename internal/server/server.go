@@ -93,6 +93,7 @@ type Server struct {
 	publicIPs                 map[string]cachedPublicIP
 	lookupPublicIP            func(context.Context, string) (exportproxy.PublicIPInfo, error)
 	automaticTasks            *automaticTaskScheduler
+	smsSyncMu                 sync.Mutex
 	cellularDataOnce          sync.Once
 	cellularDataMonitorOnce   sync.Once
 	cellularDataEventOnce     sync.Once

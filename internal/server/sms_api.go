@@ -135,11 +135,9 @@ func (s *Server) handleSMSThread(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "SMS thread was not found")
 			return
 		}
-		for _, message := range messages {
-			if err := s.store.DeleteSMSMessage(r.Context(), message.ID); err != nil {
-				s.writeStoreError(w, err)
-				return
-			}
+		if err := s.deleteSMSMessages(r.Context(), messages); err != nil {
+			s.writeDeviceError(w, err)
+			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"data": map[string]any{"deleted": len(messages)},
@@ -582,14 +580,21 @@ func (s *Server) handleSMSMessage(w http.ResponseWriter, r *http.Request, idText
 		writeError(w, http.StatusBadRequest, "invalid_sms_id", "SMS message ID must be a positive integer")
 		return
 	}
-	if err := s.store.DeleteSMSMessage(r.Context(), id); err != nil {
+	message, err := s.store.SMSMessage(r.Context(), id)
+	if err != nil {
 		s.writeStoreError(w, err)
+		return
+	}
+	if err := s.deleteSMSMessages(r.Context(), []store.SMSMessage{message}); err != nil {
+		s.writeDeviceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"deleted": true}})
 }
 
 func (s *Server) syncModemSMS(ctx context.Context, onlyDevice string) {
+	s.smsSyncMu.Lock()
+	defer s.smsSyncMu.Unlock()
 	if s.devices == nil {
 		return
 	}
@@ -682,22 +687,7 @@ func (s *Server) syncModemSMS(ctx context.Context, onlyDevice string) {
 			if message.Direction == device.SMSDirectionSubmitted {
 				direction = "outbound"
 			}
-			digest := sha256.Sum256([]byte(message.RawPDU))
-			messageID := fmt.Sprintf(
-				"modem:%s:%d:%s",
-				message.Storage,
-				message.Index,
-				hex.EncodeToString(digest[:8]),
-			)
-			if message.Concat != nil && message.Concat.Total > 1 {
-				// A segment of a carrier-split long SMS. Address the whole message
-				// with a stable id so SaveSMSMessage folds every segment into one
-				// progressively merged row instead of one row per segment.
-				messageID = store.StableConcatMessageID(
-					"cellular_at", modemIMEI, config.ID, peer,
-					message.Concat.Reference, message.Concat.Total,
-				)
-			}
+			messageID := modemSMSMessageID(message, modemIMEI, config.ID, peer)
 			extra, _ := json.Marshal(map[string]any{
 				"modem_index":        message.Index,
 				"storage":            message.Storage,
@@ -713,7 +703,7 @@ func (s *Server) syncModemSMS(ctx context.Context, onlyDevice string) {
 				// id when its modem storage is decoded again on the next poll.
 				"keep_durable_id_on_rescan": store.NormalizeDeviceType(config.DeviceType) == store.DeviceTypeWiFi410,
 			})
-			saved, saveErr := s.store.SaveSMSMessage(ctx, store.SMSMessage{
+			saveResult, saveErr := s.store.SaveSMSMessageWithResult(ctx, store.SMSMessage{
 				MessageID:     messageID,
 				DeviceID:      config.ID,
 				ModemIMEI:     modemIMEI,
@@ -731,7 +721,8 @@ func (s *Server) syncModemSMS(ctx context.Context, onlyDevice string) {
 			})
 			if saveErr != nil {
 				s.logger.Warn("persist modem SMS failed", "category", "sms", "device_id", config.ID, "raw_error", saveErr)
-			} else if saved.Direction == "inbound" && saved.CreatedAt.Unix() == saved.UpdatedAt.Unix() {
+			} else if saved := saveResult.Message; saveResult.Inserted && saved.Direction == "inbound" &&
+				store.ConcatSMSReadyToNotify(saved.MessageID, saved.Extra) {
 				s.logger.Info("cellular SMS received",
 					"category", "sms", "event", "sms.received",
 					"device_id", config.ID, "peer", saved.Peer,
@@ -741,6 +732,102 @@ func (s *Server) syncModemSMS(ctx context.Context, onlyDevice string) {
 			}
 		}
 	}
+}
+
+func modemSMSMessageID(message device.SMSMessage, modemIMEI, deviceID, peer string) string {
+	digest := sha256.Sum256([]byte(message.RawPDU))
+	messageID := fmt.Sprintf(
+		"modem:%s:%d:%s",
+		message.Storage,
+		message.Index,
+		hex.EncodeToString(digest[:8]),
+	)
+	if message.Concat != nil && message.Concat.Total > 1 {
+		// A segment of a carrier-split long SMS. Address the whole message
+		// with a stable id so SaveSMSMessage folds every segment into one
+		// progressively merged row instead of one row per segment.
+		messageID = store.StableConcatMessageID(
+			"cellular_at", modemIMEI, deviceID, peer,
+			message.Concat.Reference, message.Concat.Total,
+		)
+	}
+	return messageID
+}
+
+func (s *Server) deleteSMSMessages(ctx context.Context, messages []store.SMSMessage) error {
+	s.smsSyncMu.Lock()
+	defer s.smsSyncMu.Unlock()
+	for _, message := range messages {
+		if err := s.deleteModemSMS(ctx, message); err != nil {
+			return err
+		}
+	}
+	for _, message := range messages {
+		if err := s.store.DeleteSMSMessage(ctx, message.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) deleteModemSMS(ctx context.Context, stored store.SMSMessage) error {
+	if stored.Source != "cellular_at" ||
+		(!strings.HasPrefix(stored.MessageID, "modem:") && !strings.HasPrefix(stored.MessageID, store.ConcatMessageIDPrefix)) {
+		return nil
+	}
+	if s.devices == nil {
+		return errors.New("device manager is unavailable for modem SMS deletion")
+	}
+	configs, err := s.store.ListDevices(ctx)
+	if err != nil {
+		return fmt.Errorf("list devices for modem SMS deletion: %w", err)
+	}
+	var config store.Device
+	found := false
+	for _, candidate := range configs {
+		if stored.ModemIMEI != "" && candidate.ModemIMEI == stored.ModemIMEI {
+			config, found = candidate, true
+			break
+		}
+	}
+	if !found {
+		for _, candidate := range configs {
+			if candidate.ID == stored.DeviceID {
+				config, found = candidate, true
+				break
+			}
+		}
+	}
+	if !found {
+		return device.ErrNotFound
+	}
+	_, physicalID, present := s.physicalForConfig(config)
+	if !present {
+		return device.ErrNotFound
+	}
+	listContext, cancelList := context.WithTimeout(ctx, 30*time.Second)
+	modemMessages, err := s.devices.ListSMS(listContext, physicalID)
+	cancelList()
+	if err != nil {
+		return fmt.Errorf("list modem SMS before deletion: %w", err)
+	}
+	locations := make(map[string]device.SMSMessage)
+	for _, message := range modemMessages {
+		peer := firstNonEmpty(message.From, message.To)
+		if peer == "" || modemSMSMessageID(message, stored.ModemIMEI, config.ID, peer) != stored.MessageID {
+			continue
+		}
+		locations[message.Storage+":"+strconv.Itoa(message.Index)] = message
+	}
+	for _, message := range locations {
+		deleteContext, cancelDelete := context.WithTimeout(ctx, 10*time.Second)
+		err := s.devices.DeleteSMSFromStorage(deleteContext, physicalID, message.Storage, message.Index)
+		cancelDelete()
+		if err != nil {
+			return fmt.Errorf("delete modem SMS from %s index %d: %w", message.Storage, message.Index, err)
+		}
+	}
+	return nil
 }
 
 func supportsModemSMSStorage(config store.Device) bool {

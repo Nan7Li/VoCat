@@ -184,7 +184,7 @@ func (backend *nativeBackend) Readers(ctx context.Context) ([]Reader, error) {
 		}
 		readers = append(readers, reader)
 	}
-	return mergePCSCAndUSBReaders(readers, physical), nil
+	return filterVirtualPCDReaders(mergePCSCAndUSBReaders(readers, physical)), nil
 }
 
 func (backend *nativeBackend) readerUSBPath(ctx context.Context, client *pcscdClient, name string) (string, bool) {
@@ -277,11 +277,7 @@ func (card *nativeCard) TransmitRaw(ctx context.Context, command []byte) ([]byte
 	if err != nil {
 		return nil, 0, err
 	}
-	if len(response) < 2 {
-		return nil, 0, errors.New("pcsc: APDU response omitted its status word")
-	}
-	last := len(response) - 2
-	return append([]byte(nil), response[:last]...), uint16(response[last])<<8 | uint16(response[last+1]), nil
+	return splitAPDUResponse(response)
 }
 
 func (card *nativeCard) transmit(ctx context.Context, command []byte, depth int) ([]byte, uint16, error) {

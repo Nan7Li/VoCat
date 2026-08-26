@@ -457,6 +457,23 @@ func migrationStatements(version int) []string {
 			`UPDATE card_policies SET cellular_ims_managed = 0
 			WHERE cellular_ims_managed <> 0`,
 		}
+	case 24:
+		return []string{
+			// vsmartcard exposes VMware's software endpoints as four PC/SC
+			// readers named "Virtual PCD 00 00" ... "00 03". Older builds
+			// auto-provisioned them on an empty database, so they remained in
+			// the configured-device quota after discovery was corrected. Match
+			// the exact generated shape and leave physical or manually named
+			// readers untouched.
+			`DELETE FROM devices
+			WHERE id GLOB 'reader-[0-9a-f]*'
+				AND device_type = 'usb_sim_reader'
+				AND LOWER(TRIM(control_device)) GLOB 'virtual pcd [0-9][0-9] [0-9][0-9]'
+				AND LOWER(TRIM(usb_path)) = 'pcsc:' || LOWER(TRIM(control_device))
+				AND TRIM(interface) = ''
+				AND TRIM(at_port) = ''
+				AND TRIM(modem_imei) = ''`,
+		}
 	default:
 		return nil
 	}

@@ -378,6 +378,58 @@ func TestMigration23StopsLegacyPerCardIMSManagement(t *testing.T) {
 	}
 }
 
+func TestMigration24RemovesOnlyAutoProvisionedVirtualPCDReaders(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "virtual-pcd.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for version := 1; version <= 23; version++ {
+		for _, statement := range migrationStatements(version) {
+			if _, err := raw.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("create v%d schema: %v", version, err)
+			}
+		}
+	}
+	if _, err := raw.ExecContext(ctx, `
+		INSERT INTO devices (
+			id, name, device_type, control_device, usb_path, created_at, updated_at
+		) VALUES
+			('reader-c192ba9f35641129', 'Virtual PCD', 'usb_sim_reader',
+			 'Virtual PCD 00 00', 'pcsc:Virtual PCD 00 00', 100, 100),
+			('reader-physical', 'Physical reader', 'usb_sim_reader',
+			 'Virtual PCD 00 02', '2-1', 100, 100),
+			('manual-virtual', 'Intentional test reader', 'usb_sim_reader',
+			 'Virtual PCD 00 03', 'pcsc:Virtual PCD 00 03', 100, 100),
+			('ec20', 'EC20', 'pcie_ec20_ec25', '/dev/cdc-wdm0',
+			 '/sys/bus/usb/devices/2-2', 100, 100);
+		PRAGMA user_version = 23;
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	database := openTestStore(t, path)
+	devices, err := database.ListDevices(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 3 {
+		t.Fatalf("devices after migration = %#v, want three retained devices", devices)
+	}
+	if _, err := database.Device(ctx, "reader-c192ba9f35641129"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("auto-provisioned Virtual PCD still exists: %v", err)
+	}
+	for _, id := range []string{"reader-physical", "manual-virtual", "ec20"} {
+		if _, err := database.Device(ctx, id); err != nil {
+			t.Fatalf("retained device %q missing: %v", id, err)
+		}
+	}
+}
+
 func TestMigration4PreservesIMSRedeliveryAndUsesReceiptTime(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "ims-redelivery.db")

@@ -940,8 +940,9 @@ func validateTelegramViaInterface(name string) error {
 }
 
 type notificationClientOptions struct {
-	Proxy     string
-	Interface string
+	Proxy      string
+	Interface  string
+	KeepAlives bool
 }
 
 func restrictedHTTPClient(
@@ -963,6 +964,18 @@ func telegramHTTPClient(
 	})
 }
 
+func persistentTelegramHTTPClient(
+	ctx context.Context,
+	timeout time.Duration,
+	proxy, viaInterface string,
+) (*http.Client, error) {
+	return restrictedHTTPClientOpts(ctx, timeout, notificationClientOptions{
+		Proxy:      proxy,
+		Interface:  viaInterface,
+		KeepAlives: true,
+	})
+}
+
 func restrictedHTTPClientOpts(
 	ctx context.Context,
 	timeout time.Duration,
@@ -973,14 +986,18 @@ func restrictedHTTPClientOpts(
 		Proxy:                 nil,
 		DialContext:           restrictedDialer(timeout),
 		ForceAttemptHTTP2:     true,
-		DisableKeepAlives:     true,
-		MaxIdleConns:          0,
+		DisableKeepAlives:     !opts.KeepAlives,
+		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   timeout,
 		ResponseHeaderTimeout: timeout,
 		ExpectContinueTimeout: time.Second,
 		TLSClientConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 		},
+	}
+	if opts.KeepAlives {
+		transport.MaxIdleConns = 8
+		transport.MaxIdleConnsPerHost = 4
 	}
 	if iface := strings.TrimSpace(opts.Interface); iface != "" && strings.TrimSpace(opts.Proxy) == "" {
 		if err := validateTelegramViaInterface(iface); err != nil {

@@ -24,7 +24,7 @@
 
 [English](../README.md) | [العربية](README.ar.md) | **简体中文** | [繁體中文](README.zh-TW.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [Español](README.es.md) | [日本語](README.ja.md)
 
-> **Halo 1.1.11** 是基于 [VoCat](https://github.com/MengMengCode/VoCat) v0.2.22 的个人界面与发行版，原作者为 Vocat Project Authors。模组、IMS、WiFi Calling、eSIM 和代理等核心能力都是原项目的工作。本分支只改了界面、Halo 品牌、可自定义主色，以及少量本地修复。仍适用 [Vocat Research & Evaluation License](../LICENSE)。详见 [ATTRIBUTION.md](../ATTRIBUTION.md)。
+> **Halo 1.1.12** 是基于 [VoCat](https://github.com/MengMengCode/VoCat) v0.2.23 的个人界面与发行版，原作者为 Vocat Project Authors。模组、IMS、WiFi Calling、eSIM 和代理等核心能力都是原项目的工作。本分支只改了界面、Halo 品牌、可自定义主色，以及少量本地修复。仍适用 [Vocat Research & Evaluation License](../LICENSE)。详见 [ATTRIBUTION.md](../ATTRIBUTION.md)。
 
 Vocat 是一款面向 Quectel EC20/EC25 系列蜂窝模组的开源 Web 控制面板与工程工具套件。它在一个自包含的服务中整合了模组发现、实时射频状态、AT 与 USSD 终端、短信、WiFi Calling(WiFi 通话)、eSIM 管理、网络选择、代理路由、通知、审计日志以及发布自动化。
 

@@ -19,19 +19,53 @@ type contextQueryExecer interface {
 // SaveSMSMessage inserts a new message or updates an existing record. A
 // non-empty (device_id, message_id) pair is idempotent for modem retries.
 func (s *Store) SaveSMSMessage(ctx context.Context, value SMSMessage) (SMSMessage, error) {
+	result, err := s.saveSMSMessageTransaction(ctx, value, false)
+	return result.Message, err
+}
+
+// SMSMessageSaveResult describes both the durable message and whether this
+// save created its current row. Inserted is false for an idempotent modem
+// rescan that only finds or updates an existing row.
+type SMSMessageSaveResult struct {
+	Message  SMSMessage
+	Inserted bool
+}
+
+// SaveSMSMessageWithResult is SaveSMSMessage with an atomic insertion signal.
+// Callers that emit one-shot events should use Inserted instead of comparing
+// timestamps: timestamps are stored with one-second precision and unchanged
+// concatenated-message rescans can legitimately retain equal timestamps.
+func (s *Store) SaveSMSMessageWithResult(ctx context.Context, value SMSMessage) (SMSMessageSaveResult, error) {
+	return s.saveSMSMessageTransaction(ctx, value, true)
+}
+
+func (s *Store) saveSMSMessageTransaction(
+	ctx context.Context,
+	value SMSMessage,
+	detectInsertion bool,
+) (SMSMessageSaveResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return SMSMessage{}, fmt.Errorf("begin SMS update: %w", err)
+		return SMSMessageSaveResult{}, fmt.Errorf("begin SMS update: %w", err)
 	}
 	defer tx.Rollback()
+	var previousMaxID int64
+	if detectInsertion {
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM sms_messages`).Scan(&previousMaxID); err != nil {
+			return SMSMessageSaveResult{}, fmt.Errorf("read SMS insertion cursor: %w", err)
+		}
+	}
 	saved, err := saveSMSMessage(ctx, tx, value)
 	if err != nil {
-		return SMSMessage{}, err
+		return SMSMessageSaveResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return SMSMessage{}, fmt.Errorf("commit SMS update: %w", err)
+		return SMSMessageSaveResult{}, fmt.Errorf("commit SMS update: %w", err)
 	}
-	return saved, nil
+	return SMSMessageSaveResult{
+		Message:  saved,
+		Inserted: detectInsertion && saved.ID > previousMaxID,
+	}, nil
 }
 
 func saveSMSMessage(

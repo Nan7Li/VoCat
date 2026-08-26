@@ -100,6 +100,25 @@ func mergePCSCAndUSBReaders(readers, physical []Reader) []Reader {
 	return readers
 }
 
+// filterVirtualPCDReaders removes software-emulated vsmartcard endpoints from
+// USB SIM-reader discovery. VMware/Ubuntu commonly installs four readers named
+// "Virtual PCD 00 00" through "00 03" even though no USB reader exists. They
+// have only a pcsc: fallback path and must not become managed hardware or
+// consume the device quota. A real USB CCID reader always has a sysfs USB path
+// after enrichment and is therefore retained even if it has an unusual name.
+func filterVirtualPCDReaders(readers []Reader) []Reader {
+	filtered := readers[:0]
+	for _, reader := range readers {
+		fallbackPath := strings.HasPrefix(strings.ToLower(strings.TrimSpace(reader.USBPath)), "pcsc:")
+		name := strings.ToLower(strings.TrimSpace(reader.Name))
+		if fallbackPath && (name == "virtual pcd" || strings.HasPrefix(name, "virtual pcd ")) {
+			continue
+		}
+		filtered = append(filtered, reader)
+	}
+	return filtered
+}
+
 func enrichPCSCReader(reader, physical Reader) Reader {
 	reader.USBPath = physical.USBPath
 	reader.VendorID = physical.VendorID
