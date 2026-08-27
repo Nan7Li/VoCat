@@ -2009,7 +2009,14 @@ func (s *Server) configuredDeviceSummary(
 	result["vowifi_active"] = config.VoWiFiEnabled && runtimeMatchesCard && runtimeEnabled && runtimeTunnelReady
 	result["radio_mode"] = radioModeForSummary(result)
 	if probe, probeErr := s.store.EPDGProbeStatus(context.Background(), config.ID); probeErr == nil {
-		result["epdg_probe"] = epdgProbePayload(probe)
+		currentICCID := ""
+		if entry != nil && entry.Snapshot != nil {
+			currentICCID = strings.TrimSpace(entry.Snapshot.ICCID)
+		}
+		probeICCID := strings.TrimSpace(probe.ICCID)
+		if currentICCID == "" || (probeICCID != "" && strings.EqualFold(currentICCID, probeICCID)) {
+			result["epdg_probe"] = epdgProbePayload(probe)
+		}
 	}
 	// Numbers are SIM-owned data. Resolve the association by the live ICCID
 	// instead of reusing the last VoWiFi runtime attached to this device ID.

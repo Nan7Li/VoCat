@@ -1,6 +1,7 @@
 try {
   var theme = localStorage.getItem("theme");
-  var dark = theme === "dark";
+  var followsSystem = !theme || theme === "system";
+  var dark = theme === "dark" || (followsSystem && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
   var root = document.documentElement;
   root.classList.toggle("dark", dark);
   root.style.background = dark ? "#1A1610" : "#F7F4EF";

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Wifi1Regular, WarningRegular, CheckmarkCircleRegular, DismissCircleRegular, ArrowSyncRegular } from "@fluentui/react-icons";
 import type { EPDGProbeStatus } from "../../types";
 import type { DeviceDetail } from "./types";
@@ -11,7 +11,13 @@ export function EpdgStatusCard({ device, onRefreshed }: { device: DeviceDetail; 
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [localProbe, setLocalProbe] = useState<EPDGProbeStatus | null>(null);
-  const probe = localProbe ?? device.epdgProbe;
+  const currentICCID = device.modem.iccid?.trim() || "";
+  const savedProbe = localProbe ?? device.epdgProbe;
+  const probe = savedProbe && currentICCID && savedProbe.iccid && savedProbe.iccid !== currentICCID ? undefined : savedProbe;
+
+  useEffect(() => {
+    setLocalProbe(null);
+  }, [device.id, currentICCID]);
 
   const runProbe = async () => {
     if (!device.id || busy) return;

@@ -90,19 +90,11 @@ func (s *Server) handleEPDGProbe(w http.ResponseWriter, r *http.Request, config 
 
 func (s *Server) resolveEPDGProbeTarget(ctx context.Context, config store.Device, entry device.Device) (host, iccid string, upstream *store.UpstreamProxy, err error) {
 	snapshot := entry.Snapshot
+	var deriveErr error
 	if snapshot != nil {
 		iccid = strings.TrimSpace(snapshot.ICCID)
-	}
-	if runtime, runtimeErr := s.store.VoWiFiRuntime(ctx, config.ID); runtimeErr == nil {
-		if tunnel, _ := rawJSONObject(runtime.Tunnel).(map[string]any); tunnel != nil {
-			if epdg, _ := tunnel["epdg"].(string); strings.TrimSpace(epdg) != "" {
-				host = strings.TrimSpace(epdg)
-			}
-		}
-	}
-	if host == "" && snapshot != nil {
 		mcc, mnc := device.CardMCCMNCWithLength(snapshot.IMSI, snapshot.MNCLength)
-		host, err = vowifi.DeriveEPDG(vowifi.SIMIdentity{
+		host, deriveErr = vowifi.DeriveEPDG(vowifi.SIMIdentity{
 			ICCID:   iccid,
 			IMSI:    strings.TrimSpace(snapshot.IMSI),
 			IMEI:    strings.TrimSpace(snapshot.IMEI),
@@ -112,16 +104,33 @@ func (s *Server) resolveEPDGProbeTarget(ctx context.Context, config store.Device
 			GID1:    strings.TrimSpace(snapshot.GID1),
 			GID2:    strings.TrimSpace(snapshot.GID2),
 		})
-		if err != nil {
-			return "", iccid, nil, err
+	}
+	if host == "" {
+		if runtime, runtimeErr := s.store.VoWiFiRuntime(ctx, config.ID); runtimeErr == nil {
+			runtimeICCID := strings.TrimSpace(runtime.ICCID)
+			// A runtime tunnel belongs to the SIM that created it. Never let a
+			// stale tunnel from a previous card override the current snapshot.
+			if iccid == "" || (runtimeICCID != "" && runtimeICCID == iccid) {
+				if tunnel, _ := rawJSONObject(runtime.Tunnel).(map[string]any); tunnel != nil {
+					if epdg, _ := tunnel["epdg"].(string); strings.TrimSpace(epdg) != "" {
+						host = strings.TrimSpace(epdg)
+					}
+				}
+			}
 		}
 	}
 	if host == "" {
 		if previous, prevErr := s.store.EPDGProbeStatus(ctx, config.ID); prevErr == nil {
-			host = strings.TrimSpace(previous.EPDG)
+			previousICCID := strings.TrimSpace(previous.ICCID)
+			if iccid == "" || (previousICCID != "" && previousICCID == iccid) {
+				host = strings.TrimSpace(previous.EPDG)
+			}
 		}
 	}
 	if host == "" {
+		if deriveErr != nil {
+			return "", iccid, nil, deriveErr
+		}
 		return "", iccid, nil, errors.New("无法推导 ePDG 主机：请确认 SIM 已识别或先开启 VoWiFi")
 	}
 	upstream = s.lookupEPDGUpstream(ctx, config.ID, iccid, snapshot)

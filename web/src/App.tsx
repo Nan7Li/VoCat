@@ -9,6 +9,14 @@ import { MessageHost } from "./components/ui/message";
 import { ConfirmHost } from "./components/ui/MessageBox";
 import { LoadingScreen } from "./components/ui/LoadingScreen";
 import { applyAccent, readStoredAccent } from "./lib/accent";
+import {
+  THEME_CHANGE_EVENT,
+  THEME_KEY,
+  readThemePreference,
+  systemPrefersDark,
+  writeThemePreference,
+  type ThemePreference,
+} from "./lib/theme";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import DevicesPage from "./pages/DevicesPage";
@@ -22,28 +30,45 @@ import SettingsPage from "./pages/SettingsPage";
 import WireGuardPage from "./pages/WireGuardPage";
 import ExtensionPage from "./pages/ExtensionPage";
 
-const THEME_KEY = "theme";
 const DISCLAIMER_KEY = "vocat_disclaimer_agreed_at";
 const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
 
 function useTheme() {
-  const [isDark, setIsDark] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(THEME_KEY) === "dark";
-    } catch {
-      return false;
-    }
-  });
+  const [preference, setPreference] = useState<ThemePreference>(readThemePreference);
+  const [systemDark, setSystemDark] = useState(systemPrefersDark);
+  const isDark = preference === "dark" || (preference === "system" && systemDark);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = (event: MediaQueryListEvent) => setSystemDark(event.matches);
+    setSystemDark(query.matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    const onThemeChange = (event: Event) => {
+      const next = (event as CustomEvent<ThemePreference>).detail;
+      setPreference(next === "light" || next === "dark" || next === "system" ? next : readThemePreference());
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === THEME_KEY) setPreference(readThemePreference());
+    };
+    window.addEventListener(THEME_CHANGE_EVENT, onThemeChange);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(THEME_CHANGE_EVENT, onThemeChange);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
   useEffect(() => {
     document.documentElement.classList.toggle("dark", isDark);
+    document.documentElement.style.background = isDark ? "#1A1610" : "#F7F4EF";
     applyAccent(readStoredAccent(), false);
-    try {
-      localStorage.setItem(THEME_KEY, isDark ? "dark" : "light");
-    } catch {
-      /* ignore */
-    }
   }, [isDark]);
-  return { isDark, toggle: () => setIsDark((value) => !value) };
+  return { isDark, toggle: () => writeThemePreference(isDark ? "light" : "dark") };
 }
 
 function RequireAuth({ children }: { children: ReactElement }) {
