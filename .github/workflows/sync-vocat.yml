@@ -1,8 +1,9 @@
 name: sync-vocat
 
-# Poll official VoCat releases. A clean merge bumps Halo, tags it, and calls
-# release-binaries. Merge conflicts open a GitHub issue instead of overwriting
-# Halo UI/phone/WG customizations. Never pushes to MengMengCode/VoCat.
+# Poll official VoCat releases. A clean merge bumps Halo, builds and tests it,
+# then atomically pushes the branch and tag and calls release-binaries.
+# Merge conflicts open a GitHub issue instead of overwriting Halo UI/phone/WG
+# customizations. Never pushes to MengMengCode/VoCat.
 on:
   schedule:
     - cron: "17 */4 * * *"
@@ -22,6 +23,7 @@ jobs:
   sync:
     if: github.repository == 'Nan7Li/VoCat'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       did_sync: ${{ steps.merge.outputs.did_sync }}
       tag: ${{ steps.merge.outputs.tag }}
@@ -64,7 +66,7 @@ jobs:
           fi
 
           git fetch vocat "refs/tags/v${latest}:refs/tags/v${latest}"
-          if ! git merge --no-edit "v${latest}"; then
+          if ! git merge --no-ff --no-commit "v${latest}"; then
             conflicts="$(git diff --name-only --diff-filter=U)"
             git merge --abort || true
             title="Vocat v${latest} 无法自动合进 Halo"
@@ -98,19 +100,6 @@ jobs:
             exit 1
           fi
 
-          mkdir -p .halo
-          printf '%s\n' "$latest" > .halo/upstream-vocat
-          sed -i "s/defaultUpstreamVocatVersion = \"[^\"]*\"/defaultUpstreamVocatVersion = \"${latest}\"/" internal/server/upstream_vocat.go
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          path = Path("ATTRIBUTION.md")
-          text = path.read_text(encoding="utf-8")
-          latest = Path(".halo/upstream-vocat").read_text(encoding="utf-8").strip()
-          text = re.sub(r"Synced through: VoCat v[0-9.]+ \(`[^`]+`\)", f"Synced through: VoCat v{latest}", text, count=1)
-          path.write_text(text, encoding="utf-8")
-          PY
-
           current="$(sed -n 's/^var Version = "\([0-9.]*\)"/\1/p' internal/buildinfo/buildinfo.go | head -n1)"
           if [ -z "$current" ]; then
             echo "could not read Halo version"
@@ -121,6 +110,56 @@ jobs:
           EOF
           patch=$((patch + 1))
           new="${major}.${minor}.${patch}"
+
+          mkdir -p .halo
+          printf '%s\n' "$latest" > .halo/upstream-vocat
+          sed -i "s/defaultUpstreamVocatVersion = \"[^\"]*\"/defaultUpstreamVocatVersion = \"${latest}\"/" internal/server/upstream_vocat.go
+          export HALO_CURRENT="$current"
+          export HALO_NEW="$new"
+          export VOCAT_LATEST="$latest"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          current = os.environ["HALO_CURRENT"]
+          new = os.environ["HALO_NEW"]
+          latest = os.environ["VOCAT_LATEST"]
+
+          def replace_once(path_name, pattern, replacement):
+              path = Path(path_name)
+              text = path.read_text(encoding="utf-8")
+              updated, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
+              if count != 1:
+                  raise SystemExit(f"expected exactly one version marker in {path_name}: {pattern}")
+              path.write_text(updated, encoding="utf-8")
+
+          replace_once(
+              "ATTRIBUTION.md",
+              rf"^Halo {re.escape(current)} is a personal interface and release\. It is \*\*based on VoCat\*\*\.$",
+              f"Halo {new} is a personal interface and release. It is **based on VoCat**.",
+          )
+          replace_once(
+              "ATTRIBUTION.md",
+              r"^- Synced through:.*$",
+              f"- Synced through: VoCat v{latest}",
+          )
+          replace_once(
+              "ATTRIBUTION.md",
+              r"^Everything else —.*$",
+              f"Everything else — modem control, IMS / WiFi Calling, SMS, eSIM, proxy, notifications — comes from VoCat. Halo {new} includes upstream changes through VoCat v{latest}.",
+          )
+          replace_once(
+              "README.md",
+              rf"^> \*\*Halo {re.escape(current)}\*\* is a personal interface and release based on.*$",
+              f"> **Halo {new}** is a personal interface and release based on [VoCat](https://github.com/MengMengCode/VoCat) v{latest} by the Vocat Project Authors. The modem, IMS, WiFi Calling, eSIM, and proxy stack is their work. This branch only adds a different UI, Halo branding, a customizable accent color, and a few local fixes. The [Vocat Research & Evaluation License](LICENSE) still applies. See [ATTRIBUTION.md](ATTRIBUTION.md).",
+          )
+          replace_once(
+              "docs/README.zh-CN.md",
+              rf"^> \*\*Halo {re.escape(current)}\*\* 是基于.*$",
+              f"> **Halo {new}** 是基于 [VoCat](https://github.com/MengMengCode/VoCat) v{latest} 的个人界面与发行版，原作者为 Vocat Project Authors。模组、IMS、WiFi Calling、eSIM 和代理等核心能力都是原项目的工作。本分支只改了界面、Halo 品牌、可自定义主色，以及少量本地修复。仍适用 [Vocat Research & Evaluation License](../LICENSE)。详见 [ATTRIBUTION.md](../ATTRIBUTION.md)。",
+          )
+          PY
           sed -i "s/var Version = \"${current}\"/var Version = \"${new}\"/" internal/buildinfo/buildinfo.go
 
           git add -A
@@ -131,10 +170,48 @@ jobs:
           fi
           git commit -m "chore: sync VoCat v${latest} into Halo ${new}"
           git tag -a "v${new}" -m "Halo ${new}: sync VoCat v${latest}"
-          git push origin halo
-          git push origin "v${new}"
           echo "did_sync=true" >> "$GITHUB_OUTPUT"
           echo "tag=v${new}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js
+        if: steps.merge.outputs.did_sync == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build embedded web UI
+        if: steps.merge.outputs.did_sync == 'true'
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Set up Go
+        if: steps.merge.outputs.did_sync == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test merged Halo
+        if: steps.merge.outputs.did_sync == 'true'
+        run: go test ./...
+
+      - name: Build router smoke artifact
+        if: steps.merge.outputs.did_sync == 'true'
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: arm64
+        run: go build -trimpath -o /tmp/halo-linux-aarch64 ./cmd/vocat
+
+      - name: Publish verified sync
+        if: steps.merge.outputs.did_sync == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.merge.outputs.tag }}
+        run: git push --atomic origin HEAD:halo "refs/tags/${RELEASE_TAG}"
 
   release:
     needs: sync
