@@ -89,7 +89,13 @@ func runDoctor(args []string) error {
 	if discoverErr != nil {
 		add("modem_discovery", "failed", "modem_discovery_failed", discoverErr.Error(), nil)
 	} else if len(candidates) == 0 {
-		add("modem_discovery", "warning", "no_modem", "No USB modem was discovered", nil)
+		if problems, problemErr := modem.WindowsUSBModemProblems(ctx); problemErr != nil {
+			add("modem_discovery", "warning", "no_modem", fmt.Sprintf("No USB modem was discovered; Windows device diagnostics failed: %v", problemErr), nil)
+		} else if len(problems) > 0 {
+			add("modem_discovery", "warning", "modem_driver_problem", "Windows detected modem USB interfaces, but one or more drivers failed to start; install the vendor driver and rescan", problems)
+		} else {
+			add("modem_discovery", "warning", "no_modem", "No USB modem was discovered", nil)
+		}
 	} else {
 		add("modem_discovery", "passed", "modem_discovered", fmt.Sprintf("Discovered %d modem candidate(s)", len(candidates)), candidates)
 	}

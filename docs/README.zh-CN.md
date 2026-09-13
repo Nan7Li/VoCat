@@ -148,6 +148,13 @@ IP 地址配置；AT 串口仍用于 SIM/eSIM、射频、短信、通话和终�
 同时接入多个蜂窝网卡，Windows 串口枚举无法可靠给 COM 口建立父子关系，
 为了避免把流量发错 SIM，自动 MBN 后端会等到绑定关系明确后再连接。
 
+像 `VID_2C7C&PID_0125`（EC20/EC25）的 Quectel/Baiwang USB 复合设备，必须
+先安装厂商 USB 驱动，Windows 才会创建 AT COM 口和 MBN 蜂窝网卡。请从
+[Quectel 官方 EC21/EC25 资源页](https://www.quectel.com/product/lte-ec21-series/)
+下载并安装 **Quectel Windows USB Driver (Q) NDIS V2.8**，重新插拔模组后再执行
+上面的检查。若 USB 接口已经出现但驱动未启动，`vocat doctor --json` 会返回
+`modem_driver_problem` 和 Windows ConfigMgr 问题码，不会把这种状态伪装成可用模组。
+
 Windows 版本同时支持 PC/SC 读卡器、WireGuard 原生 Windows 运行器、按接口
 绑定的代理/通知出站连接以及 Windows IP Helper 流量计数。IMS
 `ipsec-3gpp` 已使用 `Fwpuclnt.dll` 的动态 WFP 会话实现 transport-mode ESP：
@@ -201,6 +208,9 @@ Get-Content "$env:ProgramFiles\Halo\vocat.exe.update.log" -Tail 100 -ErrorAction
 请用当前 artifact 重新执行 `install.ps1`。WFP 返回错误 5 表示权限不足（安装的
 服务以 LocalSystem 运行）。没有 MBN 接口和没有 AT COM 口是两类驱动问题，
 需要分别检查蜂窝网卡和 USB AT 接口。
+更详细的驱动检查可在管理员 PowerShell 执行
+`pnputil /enum-devices /connected /problem`；查找 `VID_2C7C&PID_0125`
+等模组硬件 ID，问题码 28 表示 Windows 没有匹配的驱动包。
 
 ### 手动二进制安装
 

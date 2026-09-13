@@ -181,6 +181,15 @@ Start-Service WwanSvc
 netsh mbn show interfaces
 ```
 
+Quectel/Baiwang USB compositions such as `VID_2C7C&PID_0125` (EC20/EC25)
+need the vendor USB driver before Windows can create the AT COM ports and MBN
+adapter. Install the official [Quectel Windows USB Driver (Q) NDIS
+V2.8](https://www.quectel.com/product/lte-ec21-series/) package, reconnect the
+modem, and then rerun the commands above. `vocat doctor --json` reports
+`modem_driver_problem` with the Windows ConfigMgr problem code when the USB
+interfaces are present but the driver is missing or failed to start; it never
+silently treats that state as a working modem.
+
 Windows owns the cellular packet session and IP assignment; the AT port remains
 available for SIM/eSIM, radio, SMS, calls, and the terminal. Windows QMI packet
 sessions, Linux XFRM/IPsec policy control, and Linux `wg-quick` routing hooks
@@ -251,6 +260,9 @@ dispatcher is installed; rerun `install.ps1` with a current artifact. Error 5
 from WFP means the process is not elevated (the installed service runs as
 LocalSystem). A missing MBN interface is a driver/WWAN issue, while a missing
 COM port is an AT USB interface/driver issue; they are diagnosed separately.
+For a more detailed driver check, run `pnputil /enum-devices /connected
+/problem` as Administrator and look for `VID_2C7C&PID_0125` or another modem
+hardware ID. Problem code 28 means Windows has no matching driver package.
 
 ### Docker
 
