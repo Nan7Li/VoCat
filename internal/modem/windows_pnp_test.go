@@ -24,3 +24,24 @@ func TestIsWindowsModemUSBInstance(t *testing.T) {
 		})
 	}
 }
+
+func TestWindowsUSBPortRole(t *testing.T) {
+	tests := []struct {
+		name    string
+		product string
+		want    PortRole
+	}{
+		{name: "AT", product: "Quectel USB AT Port (COM3)", want: PortRoleAT},
+		{name: "NMEA", product: "Quectel USB NMEA Port (COM4)", want: PortRoleNMEA},
+		{name: "diagnostic", product: "Quectel USB DM Port (COM5)", want: PortRoleDiagnostic},
+		{name: "modem", product: "Quectel USB Modem Port (COM6)", want: PortRoleModem},
+		{name: "unknown", product: "USB Serial Device (COM7)", want: PortRoleUnknown},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := windowsUSBPortRole(test.product); got != test.want {
+				t.Fatalf("windowsUSBPortRole(%q) = %q, want %q", test.product, got, test.want)
+			}
+		})
+	}
+}

@@ -28,6 +28,7 @@ func (windowsSerialDiscoverer) Discover(ctx context.Context) ([]Candidate, error
 	}
 
 	result := make([]Candidate, 0, len(ports))
+	knownModemHasATPort := false
 	for _, detail := range ports {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -44,26 +45,46 @@ func (windowsSerialDiscoverer) Discover(ctx context.Context) ([]Candidate, error
 		vendorID := strings.ToLower(strings.TrimSpace(detail.VID))
 		productID := strings.ToLower(strings.TrimSpace(detail.PID))
 		manufacturer, product := windowsUSBIdentity(vendorID, detail.Product)
+		role := windowsUSBPortRole(detail.Product)
 		port := Port{
 			Path:       name,
 			StablePath: name,
 			Name:       name,
-			Role:       PortRoleUnknown,
+			Role:       role,
 		}
 		serialNumber := strings.TrimSpace(detail.SerialNumber)
 		id := candidateID(vendorID, productID, serialNumber, name)
 		result = append(result, Candidate{
-			HardwareKind:     "windows-com",
-			ID:               id,
-			VendorID:         vendorID,
-			ProductID:        productID,
-			Manufacturer:     manufacturer,
-			Product:          product,
-			SerialNumber:     serialNumber,
-			USBPath:          "COM:" + name,
-			ATPort:           port,
-			Ports:            []Port{port},
+			HardwareKind: "windows-com",
+			ID:           id,
+			VendorID:     vendorID,
+			ProductID:    productID,
+			Manufacturer: manufacturer,
+			Product:      product,
+			SerialNumber: serialNumber,
+			USBPath:      "COM:" + name,
+			ATPort:       port,
+			Ports:        []Port{port},
 		})
+		if isKnownWindowsModemVendor(vendorID) && role == PortRoleAT {
+			knownModemHasATPort = true
+		}
+	}
+
+	// Quectel and DJI composite devices expose several serial functions at
+	// once. Once an explicit AT port is available, do not present diagnostic,
+	// NMEA, or PPP modem ports as separate modem candidates: probing those
+	// functions as AT can block until the serial timeout and may race the real
+	// control channel. Unknown vendors remain visible for compatibility.
+	if knownModemHasATPort {
+		filtered := result[:0]
+		for _, candidate := range result {
+			if isKnownWindowsModemVendor(candidate.VendorID) && candidate.ATPort.Role != PortRoleAT {
+				continue
+			}
+			filtered = append(filtered, candidate)
+		}
+		result = filtered
 	}
 
 	// A Windows COM port is only the modem control plane. When the Mobile
@@ -100,4 +121,29 @@ func windowsUSBIdentity(vendorID, product string) (manufacturer, normalizedProdu
 		}
 	}
 	return manufacturer, normalizedProduct
+}
+
+func isKnownWindowsModemVendor(vendorID string) bool {
+	switch strings.ToLower(strings.TrimSpace(vendorID)) {
+	case "2c7c", "2ca3":
+		return true
+	default:
+		return false
+	}
+}
+
+func windowsUSBPortRole(product string) PortRole {
+	product = strings.ToLower(strings.TrimSpace(product))
+	switch {
+	case strings.Contains(product, "at port"), strings.Contains(product, "at command"):
+		return PortRoleAT
+	case strings.Contains(product, "nmea"), strings.Contains(product, "gps"):
+		return PortRoleNMEA
+	case strings.Contains(product, "dm port"), strings.Contains(product, "diagnostic"):
+		return PortRoleDiagnostic
+	case strings.Contains(product, "modem port"):
+		return PortRoleModem
+	default:
+		return PortRoleUnknown
+	}
 }
