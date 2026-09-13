@@ -51,3 +51,10 @@ jobs:
           mkdir -p dist
           go build -trimpath -ldflags "-s -w" -o dist/halo-windows-amd64.exe ./cmd/vocat
           dist/halo-windows-amd64.exe version
+
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: halo-windows-amd64
+          path: dist/halo-windows-amd64.exe
+          if-no-files-found: error
