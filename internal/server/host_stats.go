@@ -207,7 +207,7 @@ var hostNetIgnoredPrefixes = []string{
 // hostNetInterfaceCounted reports whether an interface's byte counters feed the
 // host-level upload/download rates.
 func hostNetInterfaceCounted(name string) bool {
-	name = strings.TrimSpace(name)
+	name = strings.ToLower(strings.TrimSpace(name))
 	if name == "" {
 		return false
 	}
