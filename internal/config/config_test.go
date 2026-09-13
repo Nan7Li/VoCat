@@ -18,6 +18,7 @@ var configEnvironment = []string{
 	"VOCAT_SECURE_COOKIES",
 	"VOCAT_SHUTDOWN_TIMEOUT",
 	"VOCAT_MAX_REQUEST_BODY_BYTES",
+	"VOCAT_ALLOWED_MCCS",
 }
 
 func clearConfigEnvironment(t *testing.T) {
@@ -60,6 +61,7 @@ func TestLoadFileThenEnvironmentOverride(t *testing.T) {
 	t.Setenv("VOCAT_CONFIG", path)
 	t.Setenv("VOCAT_ADDR", "0.0.0.0:9000")
 	t.Setenv("VOCAT_SECURE_COOKIES", "true")
+	t.Setenv("VOCAT_ALLOWED_MCCS", "460, 461")
 
 	cfg, err := Load()
 	if err != nil {
@@ -70,6 +72,17 @@ func TestLoadFileThenEnvironmentOverride(t *testing.T) {
 	}
 	if cfg.SessionTTL != 2*time.Hour {
 		t.Fatalf("file values not applied: %+v", cfg)
+	}
+	if len(cfg.AllowedCardMCCs) != 2 || cfg.AllowedCardMCCs[0] != "460" || cfg.AllowedCardMCCs[1] != "461" {
+		t.Fatalf("allowed MCC override not applied: %#v", cfg.AllowedCardMCCs)
+	}
+}
+
+func TestLoadRejectsInvalidAllowedMCC(t *testing.T) {
+	clearConfigEnvironment(t)
+	t.Setenv("VOCAT_ALLOWED_MCCS", "46x")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() unexpectedly accepted invalid MCC")
 	}
 }
 

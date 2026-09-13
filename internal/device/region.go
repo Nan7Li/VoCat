@@ -3,6 +3,7 @@ package device
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"unicode"
 
 	"vocat/internal/i18n"
@@ -16,6 +17,45 @@ import (
 var BlockedMCCs = map[string]string{
 	"460": "中国",
 	"461": "中国",
+}
+
+var regionPolicy = struct {
+	sync.RWMutex
+	allowed map[string]struct{}
+}{allowed: make(map[string]struct{})}
+
+// ConfigureAllowedMCCs applies an explicit process-wide allow-list for MCCs
+// that are blocked by the default regional policy. The default remains an
+// empty allow-list. Only currently blocked MCCs may be enabled so a typo cannot
+// silently alter unrelated carrier handling.
+func ConfigureAllowedMCCs(mccs []string) error {
+	allowed := make(map[string]struct{}, len(mccs))
+	for _, raw := range mccs {
+		mcc := strings.TrimSpace(raw)
+		if len(mcc) != 3 {
+			return fmt.Errorf("MCC %q must contain exactly three digits", mcc)
+		}
+		for _, r := range mcc {
+			if r < '0' || r > '9' {
+				return fmt.Errorf("MCC %q must contain exactly three digits", mcc)
+			}
+		}
+		if _, blocked := BlockedMCCs[mcc]; !blocked {
+			return fmt.Errorf("MCC %q is not in the blocked-MCC policy", mcc)
+		}
+		allowed[mcc] = struct{}{}
+	}
+	regionPolicy.Lock()
+	regionPolicy.allowed = allowed
+	regionPolicy.Unlock()
+	return nil
+}
+
+func isMCCExplicitlyAllowed(mcc string) bool {
+	regionPolicy.RLock()
+	_, allowed := regionPolicy.allowed[mcc]
+	regionPolicy.RUnlock()
+	return allowed
 }
 
 // CardMCCMNC splits an IMSI into its mobile country code and mobile network
@@ -68,7 +108,7 @@ func IsPlaceholderIMSI(imsi string) bool {
 func RegionBlockReason(imsi string) string {
 	mcc, _ := CardMCCMNC(imsi)
 	country, blocked := BlockedMCCs[mcc]
-	if !blocked {
+	if !blocked || isMCCExplicitlyAllowed(mcc) {
 		return ""
 	}
 	return i18n.Tf("SIM 卡归属地为%s（MCC %s），本服务不向该地区卡片提供数据/短信/VoWiFi", i18n.T(country), mcc)

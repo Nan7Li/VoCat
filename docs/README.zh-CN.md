@@ -310,6 +310,7 @@ Vocat 先从 `VOCAT_CONFIG` 读取可选的 JSON 配置文件,再应用 `VOCAT_*
 | `VOCAT_SECURE_COOKIES` | `false` | 在使用 HTTPS 时将会话 Cookie 标记为安全。 |
 | `VOCAT_SHUTDOWN_TIMEOUT` | `10s` | 优雅关闭超时时间。 |
 | `VOCAT_MAX_REQUEST_BODY_BYTES` | `1048576` | API 请求体最大字节数。 |
+| `VOCAT_ALLOWED_MCCS` | 空 | 由运维人员显式允许、即使默认区域策略会拦截的 MCC，使用逗号分隔（仅限已授权的测试卡；默认仍拦截 460/461）。 |
 | `VOCAT_REPO` | `Nan7Li/VoCat` | 自更新器使用的受信任 GitHub 仓库，格式为 `owner/name`。 |
 | `GITHUB_TOKEN` | 空 | 可选的 GitHub token,用于私有仓库或更高的 API 限额。 |
 

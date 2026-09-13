@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const maxConfigBytes = 1 << 20
@@ -23,6 +24,11 @@ type Config struct {
 	SecureCookies       bool
 	ShutdownTimeout     time.Duration
 	MaxRequestBodyBytes int64
+	// AllowedCardMCCs is an explicit operator allow-list for MCCs that are
+	// blocked by the product's default card-region policy. It is intentionally
+	// empty by default; entries must be supplied through protected config or
+	// VOCAT_ALLOWED_MCCS.
+	AllowedCardMCCs []string
 }
 
 type fileConfig struct {
@@ -31,12 +37,13 @@ type fileConfig struct {
 	// Retain the legacy keys only so upgrades do not reject an existing config
 	// file. They are deliberately ignored: administrator credentials are read
 	// exclusively from SQLite.
-	LegacyAdminUsername *string `json:"admin_username"`
-	LegacyAdminPassword *string `json:"admin_password"`
-	SessionTTL          *string `json:"session_ttl"`
-	SecureCookies       *bool   `json:"secure_cookies"`
-	ShutdownTimeout     *string `json:"shutdown_timeout"`
-	MaxRequestBodyBytes *int64  `json:"max_request_body_bytes"`
+	LegacyAdminUsername *string   `json:"admin_username"`
+	LegacyAdminPassword *string   `json:"admin_password"`
+	SessionTTL          *string   `json:"session_ttl"`
+	SecureCookies       *bool     `json:"secure_cookies"`
+	ShutdownTimeout     *string   `json:"shutdown_timeout"`
+	MaxRequestBodyBytes *int64    `json:"max_request_body_bytes"`
+	AllowedCardMCCs     *[]string `json:"allowed_mccs"`
 }
 
 // Default returns the non-secret process configuration. Administrator
@@ -49,6 +56,7 @@ func Default() Config {
 		SecureCookies:       false,
 		ShutdownTimeout:     10 * time.Second,
 		MaxRequestBodyBytes: 1 << 20,
+		AllowedCardMCCs:     nil,
 	}
 }
 
@@ -134,6 +142,13 @@ func applyFile(cfg *Config, values fileConfig) error {
 	if values.MaxRequestBodyBytes != nil {
 		cfg.MaxRequestBodyBytes = *values.MaxRequestBodyBytes
 	}
+	if values.AllowedCardMCCs != nil {
+		allowed, err := normalizeMCCList(*values.AllowedCardMCCs)
+		if err != nil {
+			return fmt.Errorf("allowed_mccs: %w", err)
+		}
+		cfg.AllowedCardMCCs = allowed
+	}
 	return nil
 }
 
@@ -175,12 +190,57 @@ func applyEnvironment(cfg *Config) error {
 		}
 		cfg.MaxRequestBodyBytes = size
 	}
+	if value, ok := os.LookupEnv("VOCAT_ALLOWED_MCCS"); ok {
+		allowed, err := parseMCCList(value)
+		if err != nil {
+			return fmt.Errorf("VOCAT_ALLOWED_MCCS: %w", err)
+		}
+		cfg.AllowedCardMCCs = allowed
+	}
 	return nil
+}
+
+func parseMCCList(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	})
+	return normalizeMCCList(parts)
+}
+
+func normalizeMCCList(values []string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		mcc := strings.TrimSpace(raw)
+		if len(mcc) != 3 {
+			return nil, fmt.Errorf("MCC %q must contain exactly three digits", mcc)
+		}
+		for _, r := range mcc {
+			if r < '0' || r > '9' {
+				return nil, fmt.Errorf("MCC %q must contain exactly three digits", mcc)
+			}
+		}
+		if _, exists := seen[mcc]; exists {
+			continue
+		}
+		seen[mcc] = struct{}{}
+		result = append(result, mcc)
+	}
+	return result, nil
 }
 
 // Validate rejects settings that would make the server unusable or weaken its
 // basic request limits.
 func (cfg Config) Validate() error {
+	if _, err := normalizeMCCList(cfg.AllowedCardMCCs); err != nil {
+		return fmt.Errorf("allowed_mccs: %w", err)
+	}
 	host, portText, err := net.SplitHostPort(strings.TrimSpace(cfg.Address))
 	if err != nil {
 		return fmt.Errorf("address: %w", err)

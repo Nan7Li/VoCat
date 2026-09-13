@@ -353,6 +353,7 @@ Vocat reads an optional JSON configuration file from `VOCAT_CONFIG`, then applie
 | `VOCAT_SECURE_COOKIES` | `false` | Marks session cookies as secure when HTTPS is used. |
 | `VOCAT_SHUTDOWN_TIMEOUT` | `10s` | Graceful shutdown timeout. |
 | `VOCAT_MAX_REQUEST_BODY_BYTES` | `1048576` | Maximum API request body size. |
+| `VOCAT_ALLOWED_MCCS` | empty | Comma-separated MCCs explicitly allowed by an operator despite the default 460/461 regional block; use only with authorized test cards. |
 | `VOCAT_REPO` | `Nan7Li/VoCat` | Trusted GitHub repository used by the self-updater, in `owner/name` form. |
 | `GITHUB_TOKEN` | empty | Optional GitHub token for private repositories or higher API limits. |
 

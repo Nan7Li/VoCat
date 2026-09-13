@@ -147,6 +147,12 @@ func runWithContext(parentContext context.Context, logger *slog.Logger, logs *lo
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
+	if err := device.ConfigureAllowedMCCs(cfg.AllowedCardMCCs); err != nil {
+		return fmt.Errorf("configure card region policy: %w", err)
+	}
+	if len(cfg.AllowedCardMCCs) > 0 {
+		logger.Warn("explicit blocked-MCC allow-list enabled", "mcc_count", len(cfg.AllowedCardMCCs))
+	}
 	carrierProfileDir := filepath.Join(filepath.Dir(cfg.DatabasePath), "carrier-profiles.d")
 	if err := vowifi.LoadCarrierProfileDirectory(carrierProfileDir); err != nil {
 		return fmt.Errorf("load installed carrier profiles: %w", err)

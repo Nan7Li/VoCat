@@ -42,8 +42,9 @@ function ZhItems() {
         <strong className="text-indigo-600 dark:text-indigo-400">不得使用属于他人的生产用订户凭证</strong>。
       </Item>
       <Item index={3}>
-        对 MCC 460 / 461（中国大陆）SIM 卡，系统将<strong className="text-red-500 dark:text-red-400">自动强制飞行模式并写入卡策略</strong>
-        ；向 +86 号段发送短信会被服务端拦截。上述为代码层强制控制，严禁移除、绕过、禁用、伪装或破坏。
+        默认情况下，对 MCC 460 / 461（中国大陆）SIM 卡，系统将<strong className="text-red-500 dark:text-red-400">自动强制飞行模式并写入卡策略</strong>
+        ；向 +86 号段发送短信会被服务端拦截。只有在受保护配置中由运维人员显式设置
+        <code>VOCAT_ALLOWED_MCCS</code> 后，才会解除该区域策略；这不改变授权、法律或运营商要求。
       </Item>
       <Item index={4}>
         <strong className="text-red-500 dark:text-red-400">禁止用途：</strong>
@@ -91,12 +92,13 @@ function EnItems() {
         .
       </Item>
       <Item index={3}>
-        For MCC 460 / 461 (Chinese mainland) SIM cards, the system will{" "}
+        By default, for MCC 460 / 461 (Chinese mainland) SIM cards, the system will{" "}
         <strong className="text-red-500 dark:text-red-400">
           automatically force airplane mode and write a card policy
         </strong>
-        ; SMS to +86 numbers is blocked by the server. These are code-enforced controls and must not be removed,
-        bypassed, disabled, disguised, or tampered with.
+        ; SMS to +86 numbers is blocked by the server. An operator may explicitly set{" "}
+        <code>VOCAT_ALLOWED_MCCS</code> in protected configuration for an authorized test card; this does not
+        change applicable authorization, legal, or carrier requirements.
       </Item>
       <Item index={4}>
         <strong className="text-red-500 dark:text-red-400">Prohibited uses:</strong>{" "}

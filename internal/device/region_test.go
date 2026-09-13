@@ -67,6 +67,25 @@ func TestRegionBlockReason(t *testing.T) {
 	}
 }
 
+func TestConfigureAllowedMCCsOverridesOnlySelectedBlockedMCC(t *testing.T) {
+	if err := ConfigureAllowedMCCs([]string{"460"}); err != nil {
+		t.Fatalf("ConfigureAllowedMCCs: %v", err)
+	}
+	defer func() { _ = ConfigureAllowedMCCs(nil) }()
+	if reason := RegionBlockReason("460001234567890"); reason != "" {
+		t.Fatalf("allowed MCC remained blocked: %s", reason)
+	}
+	if reason := RegionBlockReason("461001234567890"); reason == "" {
+		t.Fatal("unlisted blocked MCC was unexpectedly allowed")
+	}
+}
+
+func TestConfigureAllowedMCCsRejectsUnknownMCC(t *testing.T) {
+	if err := ConfigureAllowedMCCs([]string{"310"}); err == nil {
+		t.Fatal("ConfigureAllowedMCCs accepted a non-blocked MCC")
+	}
+}
+
 func TestSetNetworkBlockedForRestrictedRegionSIM(t *testing.T) {
 	client := &transcriptClient{}
 	manager, id := newStartedTestManager(t, client)
