@@ -44,7 +44,7 @@ type fileConfig struct {
 func Default() Config {
 	return Config{
 		Address:             "0.0.0.0:7575",
-		DatabasePath:        "./data/vocat.db",
+		DatabasePath:        defaultDatabasePath(),
 		SessionTTL:          24 * time.Hour,
 		SecureCookies:       false,
 		ShutdownTimeout:     10 * time.Second,

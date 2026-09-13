@@ -12,13 +12,14 @@ import (
 	"time"
 
 	"vocat/internal/auth"
+	"vocat/internal/config"
 	"vocat/internal/store"
 )
 
 func runBootstrapAdmin(args []string) error {
 	flags := flag.NewFlagSet("bootstrap-admin", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	databasePath := flags.String("database", "/opt/vocat/data/vocat.db", "database path")
+	databasePath := flags.String("database", config.Default().DatabasePath, "database path")
 	username := flags.String("username", "admin", "administrator username")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return errors.New("usage: vocat bootstrap-admin [--database path] [--username name]")

@@ -54,7 +54,7 @@ func main() {
 		// (non-TTY) so the unit keeps starting the server unchanged. Non-root
 		// on a TTY also falls through to the server rather than erroring on
 		// runMenu's root requirement.
-		if term.IsTerminal(int(os.Stdin.Fd())) && os.Geteuid() == 0 {
+		if term.IsTerminal(int(os.Stdin.Fd())) && isRootUser() {
 			if err := runMenu(logger); err != nil {
 				logger.Error("menu failed", "error", err)
 				os.Exit(1)

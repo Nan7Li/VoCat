@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -109,7 +110,11 @@ func (m *Manager) Snapshot(ctx context.Context) (Snapshot, error) {
 		Tunnels:   make([]Status, 0, len(tunnels)),
 	}
 	if !available {
-		out.Hint = "Install WireGuard on this Linux host (kmod-wireguard plus wg and ip). wg-quick is optional."
+		if runtime.GOOS == "windows" {
+			out.Hint = "WireGuard tunnel control is not available in the Windows build."
+		} else {
+			out.Hint = "Install WireGuard on this Linux host (kmod-wireguard plus wg and ip). wg-quick is optional."
+		}
 	}
 	known := make(map[string]struct{}, len(tunnels))
 	for _, tunnel := range tunnels {

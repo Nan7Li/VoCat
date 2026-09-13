@@ -155,6 +155,28 @@ process starts the server directly; running `vocat` without arguments as root
 on a TTY opens the interactive management menu instead. Use the one-click
 installer when a managed systemd service and automatic restart are required.
 
+### Windows
+
+Halo also publishes a Windows x86-64 executable: `halo-windows-amd64.exe`.
+It uses Windows COM-port enumeration and the AT-over-serial backend, so it can
+manage modem identity, signal, radio controls, SMS, USSD, operator selection,
+and other AT functions exposed by the modem. Windows does not expose the
+Linux QMI, XFRM/IPsec, `wg-quick`, or Linux PC/SC backends used by the full
+router deployment; those features remain unavailable in the Windows build.
+
+Run it from PowerShell:
+
+```powershell
+Read-Host "Admin password" | .\halo-windows-amd64.exe bootstrap-admin
+.\halo-windows-amd64.exe serve
+```
+
+The default database is stored under `%LOCALAPPDATA%\\Halo\\data\\vocat.db`.
+Open `http://127.0.0.1:7575` after the server starts. The repository also
+contains `scripts/windows/start-halo.ps1` and
+`scripts/windows/install-service.ps1` for repeatable startup and optional
+Windows Service installation.
+
 ### Docker
 
 For a Linux host that must discover every attached supported Quectel modem and

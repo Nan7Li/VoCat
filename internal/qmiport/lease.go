@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package qmiport coordinates access to native Linux WWAN QMI control ports.
 package qmiport
 

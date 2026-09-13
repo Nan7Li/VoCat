@@ -95,7 +95,7 @@ func menuEnvFilePath() string {
 // fully uninstall vocat. It must run as root on the host because it manages the
 // systemd/procd service and the 0600 env file. Docker deployments do not use it.
 func runMenu(logger *slog.Logger) error {
-	if os.Geteuid() != 0 {
+	if !isRootUser() {
 		return errors.New("vocat menu must run as root (needs a service manager and /etc/vocat/env)")
 	}
 	fd := int(os.Stdin.Fd())

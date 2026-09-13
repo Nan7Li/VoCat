@@ -71,25 +71,35 @@ jobs:
       matrix:
         include:
           - target: linux-amd64
+            goos: linux
             goarch: amd64
             goarm: ""
             filename: vocat-linux-amd64
           - target: linux-386
+            goos: linux
             goarch: "386"
             goarm: ""
             filename: vocat-linux-386
           - target: linux-arm64
+            goos: linux
             goarch: arm64
             goarm: ""
             filename: vocat-linux-arm64
           - target: linux-aarch64
+            goos: linux
             goarch: arm64
             goarm: ""
             filename: vocat-linux-aarch64
           - target: linux-armv7
+            goos: linux
             goarch: arm
             goarm: "7"
             filename: vocat-linux-armv7
+          - target: windows-amd64
+            goos: windows
+            goarch: amd64
+            goarm: ""
+            filename: vocat-windows-amd64.exe
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -110,7 +120,7 @@ jobs:
         uses: docker/setup-qemu-action@v3
       - name: Build ${{ matrix.target }}
         env:
-          GOOS: linux
+          GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: "0"
@@ -124,15 +134,17 @@ jobs:
             -ldflags "-s -w -X vocat/internal/buildinfo.Version=${VERSION} -X vocat/internal/buildinfo.BuildTime=${BUILD_TIME}" \
             -o "$OUTPUT" \
             ./cmd/vocat
-          chmod 0755 "$OUTPUT"
-          if readelf -l "$OUTPUT" | grep -q 'Requesting program interpreter'; then
-            echo "ERROR: $OUTPUT unexpectedly requires a dynamic loader" >&2
-            readelf -l "$OUTPUT" >&2
-            exit 1
+          if [[ "${{ matrix.target }}" == linux-* ]]; then
+            chmod 0755 "$OUTPUT"
+            if readelf -l "$OUTPUT" | grep -q 'Requesting program interpreter'; then
+              echo "ERROR: $OUTPUT unexpectedly requires a dynamic loader" >&2
+              readelf -l "$OUTPUT" >&2
+              exit 1
+            fi
+            case "${{ matrix.goarch }}" in
+              amd64|arm64) "$OUTPUT" version ;;
+            esac
           fi
-          case "${{ matrix.goarch }}" in
-            amd64|arm64) "$OUTPUT" version ;;
-          esac
       - name: Upload ${{ matrix.target }}
         uses: actions/upload-artifact@v4
         with:
@@ -161,7 +173,10 @@ jobs:
           for f in vocat-linux-*; do
             cp "$f" "halo-${f#vocat-}"
           done
-          sha256sum vocat-linux-* halo-linux-* | sort > SHA256SUMS
+          for f in vocat-windows-*; do
+            cp "$f" "halo-${f#vocat-}"
+          done
+          sha256sum vocat-linux-* halo-linux-* vocat-windows-* halo-windows-* | sort > SHA256SUMS
       - name: Create or update GitHub Release
         run: |
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

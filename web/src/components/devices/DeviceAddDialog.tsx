@@ -31,7 +31,7 @@ function isQmiMode(d?: DiscoveredDevice | null): boolean {
 }
 function modeLabel(d?: DiscoveredDevice | null): string {
   const m = String(d?.mode || "unknown").toLowerCase();
-  return m === "pcsc" ? "PC/SC" : m === "qmi" ? "QMI" : m === "mbim" ? "MBIM" : m === "ecm" ? "ECM" : m === "rndis" ? "RNDIS" : m === "ncm" ? "NCM" : "UNKNOWN";
+  return m === "pcsc" ? "PC/SC" : m === "qmi" ? "QMI" : m === "at" ? "AT" : m === "mbim" ? "MBIM" : m === "ecm" ? "ECM" : m === "rndis" ? "RNDIS" : m === "ncm" ? "NCM" : "UNKNOWN";
 }
 
 function Field({ label, children }: { label: ReactNode; children: ReactNode }) {

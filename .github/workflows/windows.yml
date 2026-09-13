@@ -1,0 +1,49 @@
+name: Windows build
+
+on:
+  push:
+    branches: [halo, windows-port]
+  pull_request:
+    branches: [halo]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build embedded web UI
+        working-directory: web
+        shell: bash
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run Windows tests
+        shell: bash
+        run: go test ./...
+
+      - name: Build Windows executable
+        shell: bash
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w" -o dist/halo-windows-amd64.exe ./cmd/vocat
+          dist/halo-windows-amd64.exe version
