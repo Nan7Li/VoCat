@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/iniwex5/quectel-qmi-go v0.6.0
+	github.com/telesma-app/pcsc v0.0.0-20260808141231-65252611b2f8
 	github.com/warthog618/sms v0.3.0
 	go.bug.st/serial v1.6.4
 	golang.org/x/crypto v0.52.0

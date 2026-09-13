@@ -20,7 +20,7 @@ import (
 var (
 	ErrNotFound  = errors.New("wireguard: tunnel not found")
 	ErrBusy      = errors.New("wireguard: another operation is already in progress")
-	ErrAvailable = errors.New("wireguard: wg-quick is not available on this host")
+	ErrAvailable = errors.New("wireguard: tunnel control is not available on this host")
 )
 
 // Status is the operator-facing view of one stored tunnel plus live wg state.

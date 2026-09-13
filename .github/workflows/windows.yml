@@ -37,6 +37,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Download Go modules
+        shell: bash
+        run: go mod download
+
       - name: Run Windows tests
         shell: bash
         run: go test ./...

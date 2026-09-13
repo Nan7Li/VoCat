@@ -160,9 +160,20 @@ installer when a managed systemd service and automatic restart are required.
 Halo also publishes a Windows x86-64 executable: `halo-windows-amd64.exe`.
 It uses Windows COM-port enumeration and the AT-over-serial backend, so it can
 manage modem identity, signal, radio controls, SMS, USSD, operator selection,
-and other AT functions exposed by the modem. Windows does not expose the
-Linux QMI, XFRM/IPsec, `wg-quick`, or Linux PC/SC backends used by the full
-router deployment; those features remain unavailable in the Windows build.
+and other AT functions exposed by the modem. Windows uses the native PC/SC
+service for USB SIM/eSIM readers and can control WireGuard for Windows tunnel
+services when the official WireGuard package is installed.
+
+Install the official [WireGuard for Windows](https://www.wireguard.com/install/)
+package before using the WireGuard page. Halo finds `wireguard.exe` and
+`wg.exe` in `PATH` or `%ProgramFiles%\\WireGuard`; set `HALO_WIREGUARD_EXE`
+and `HALO_WG_EXE` when using a custom installation. USB SIM readers must have
+their Windows CCID driver installed and the Windows Smart Card service running.
+
+The Windows build replaces Linux QMI with the modem's AT path for control
+operations. Windows QMI packet sessions, Linux XFRM/IPsec policy control, and
+Linux `wg-quick` routing hooks are not used; the WireGuard tunnel service owns
+the Windows tunnel adapter.
 
 Run it from PowerShell:
 
@@ -229,12 +240,13 @@ The GHCR image is published for `linux/amd64` and `linux/arm64`.
 
 ### USB SIM readers
 
-USB SIM readers use the Linux PC/SC service. The one-click installer installs
-and starts `pcscd` plus the CCID driver automatically on supported package
-managers. On Debian/Ubuntu, the equivalent manual setup is
-`apt install pcscd libccid`. If USB sees a CCID reader but PC/SC is unavailable,
-VoCat keeps the reader visible in the add-device dialog and reports the missing
-service or driver instead of silently hiding it.
+On Linux, USB SIM readers use the `pcscd` service and the one-click installer
+installs the CCID stack automatically on supported package managers. On
+Windows, Halo calls the native `winscard.dll` service through the cgo-free
+[`telesma-app/pcsc`](https://github.com/telesma-app/pcsc) library; install the
+reader's CCID driver and start the Windows Smart Card service. If the service
+is unavailable, VoCat keeps the reader visible in the add-device dialog and
+reports the missing service or driver instead of silently hiding it.
 
 ### QMI command-line utilities
 
