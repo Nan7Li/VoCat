@@ -307,7 +307,7 @@ export interface DeviceConfig {
   dataBits: number;
   stopBits: number;
   parity: string;
-  deviceBackend: "at" | "qmi" | "pcsc";
+  deviceBackend: "at" | "qmi" | "mbn" | "pcsc";
   esimTransport: "at" | "qmi" | "pcsc" | "none";
   qmiUseProxy: boolean;
   qmiProxyPath?: string;

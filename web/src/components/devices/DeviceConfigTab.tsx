@@ -34,6 +34,7 @@ export function DeviceConfigTab({ editConfig, deviceStatus, saving, deleting, on
   const atPort = deviceStatus?.atPort || editConfig?.atPort;
   const usbPath = deviceStatus?.usbPath || editConfig?.usbPath;
   const isQmi = isQmiControl(controlDevice);
+  const isWindowsMBN = String(editConfig?.deviceBackend || "").toLowerCase() === "mbn";
   const isMbim = String(editConfig?.deviceBackend || "").toLowerCase() === "mbim";
 	const isReader = editConfig?.deviceType === "usb_sim_reader";
 	const supportsCellularIMS = !isReader && editConfig?.deviceType !== "wifi_410";
@@ -44,7 +45,12 @@ export function DeviceConfigTab({ editConfig, deviceStatus, saving, deleting, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isQmi]);
 
-  const backendOptions = isReader ? [{ value: "pcsc", label: "PC/SC" }] : [
+  useEffect(() => {
+    if (isWindowsMBN && editConfig && editConfig.deviceBackend !== "mbn") onEditConfig({ ...editConfig, deviceBackend: "mbn" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isWindowsMBN]);
+
+  const backendOptions = isReader ? [{ value: "pcsc", label: "PC/SC" }] : isWindowsMBN ? [{ value: "mbn", label: "Windows WWAN" }] : [
     ...(isMbim
       ? []
       : [
@@ -120,6 +126,8 @@ export function DeviceConfigTab({ editConfig, deviceStatus, saving, deleting, on
                 <div className="text-xs text-gray-500 dark:text-gray-400">
                   {isQmi
                     ? t("QMI 负责驻网状态与数据会话；AT 负责 SIM/eSIM、射频、短信、通话和终端指令")
+                    : isWindowsMBN
+                      ? t("Windows WWAN 负责数据会话；AT 负责 SIM/eSIM、射频、短信、通话和终端指令")
                     : isMbim
                       ? t("MBIM 负责数据会话；AT 负责 SIM/eSIM、射频、短信、通话和终端指令")
                       : t("AT 模式通过串口管理驻网与 PDP 数据会话")}
@@ -130,7 +138,7 @@ export function DeviceConfigTab({ editConfig, deviceStatus, saving, deleting, on
                 onChange={(v) => onEditConfig({ ...editConfig, deviceBackend: v as DeviceConfig["deviceBackend"] })}
                 className="w-[120px]"
                 placeholder="AT"
-				disabled={isQmi || isMbim || isReader}
+				disabled={isQmi || isWindowsMBN || isMbim || isReader}
                 options={backendOptions}
               />
             </div>

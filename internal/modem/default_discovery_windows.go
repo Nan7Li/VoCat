@@ -66,6 +66,21 @@ func (windowsSerialDiscoverer) Discover(ctx context.Context) ([]Candidate, error
 		})
 	}
 
+	// A Windows COM port is only the modem control plane. When the Mobile
+	// Broadband service exposes exactly one cellular interface, attach it to
+	// every serial candidate so the existing AT identity probe and the native
+	// Windows WWAN data backend refer to the same physical modem. With several
+	// interfaces there is no stable parent relation in the serial enumerator;
+	// leaving the field empty is safer than routing traffic through the wrong
+	// SIM when multiple modems are attached.
+	if interfaces, err := discoverWindowsCellularInterfaces(ctx); err != nil {
+		return nil, err
+	} else if len(interfaces) == 1 {
+		for index := range result {
+			result[index].NetworkInterface = interfaces[0]
+		}
+	}
+
 	sort.Slice(result, func(i, j int) bool { return result[i].ATPort.Name < result[j].ATPort.Name })
 	return result, nil
 }

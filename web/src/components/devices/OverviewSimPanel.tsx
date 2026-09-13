@@ -25,7 +25,7 @@ export function OverviewSimPanel({ device, simOperatorDisplay, customPhoneNumber
   const carrierCountryCode = String(modem?.homeCarrierCountryCode ?? "").trim() || carrierIso(modem?.imsi);
   const displayedPhoneNumber = customPhoneNumber?.trim() || device.localPhone || "--";
   const backendLabel =
-    device.backendMode === "qmi" ? "QMI" : device.backendMode === "mbim" ? "MBIM" : device.backendMode === "at" ? "AT" : "Auto";
+    device.backendMode === "qmi" ? "QMI" : device.backendMode === "mbn" ? "Windows WWAN" : device.backendMode === "mbim" ? "MBIM" : device.backendMode === "at" ? "AT" : "Auto";
 
   return (
     <div className="ui-panel-muted relative min-w-0 overflow-hidden p-4">

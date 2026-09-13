@@ -223,14 +223,59 @@ func (manager *Manager) SetNetwork(
 	candidate := manager.candidateFor(state)
 	backend := strings.ToLower(strings.TrimSpace(request.Backend))
 	if backend == "" {
-		if candidate.QMIControl != "" && candidate.NetworkInterface != "" {
+		if isWindowsMBNCandidate(candidate) {
+			backend = "mbn"
+		} else if candidate.QMIControl != "" && candidate.NetworkInterface != "" {
 			backend = "qmi"
 		} else {
 			backend = "at"
 		}
 	}
-	if backend != "at" && backend != "qmi" {
+	if backend != "at" && backend != "qmi" && backend != "mbn" {
 		return NetworkResult{}, fmt.Errorf("unsupported cellular data backend %q", request.Backend)
+	}
+	if backend == "mbn" {
+		state.opMu.Lock()
+		defer state.opMu.Unlock()
+		if err := manager.validateActive(id, state); err != nil {
+			return NetworkResult{}, err
+		}
+		candidate = manager.candidateFor(state)
+		if request.Enabled {
+			if err := manager.regionBlockError(state); err != nil {
+				manager.setResult(id, state, nil, err)
+				return NetworkResult{}, err
+			}
+		}
+		if !isWindowsMBNCandidate(candidate) {
+			return NetworkResult{}, fmt.Errorf("%w: Windows MBN requires a discovered Windows cellular interface", ErrDataBackendUnavailable)
+		}
+		manager.mu.RLock()
+		simICCID := ""
+		if state.snapshot != nil {
+			simICCID = strings.TrimSpace(state.snapshot.ICCID)
+		}
+		if simICCID == "" {
+			simICCID = strings.TrimSpace(state.lastICCID)
+		}
+		manager.mu.RUnlock()
+		result, err := setWindowsCellularNetwork(
+			ctx,
+			candidate,
+			request.Enabled,
+			apn,
+			ipVersion,
+			request.Username,
+			request.Password,
+			authentication,
+			simICCID,
+		)
+		if err != nil {
+			manager.setResult(id, state, nil, err)
+			return NetworkResult{}, err
+		}
+		manager.setResult(id, state, nil, nil)
+		return result, nil
 	}
 	if backend == "qmi" {
 		// QMI WDS owns a different control surface from the serial AT actor. Do

@@ -603,7 +603,7 @@ func (manager *Manager) SetSIMPin(id, pin string) error {
 // AT remains available in either mode for UICC, RF, SMS, voice and diagnostics.
 func (manager *Manager) SetBackend(id, backend string) error {
 	backend = strings.ToLower(strings.TrimSpace(backend))
-	if backend != "at" && backend != "qmi" && backend != "pcsc" {
+	if backend != "at" && backend != "qmi" && backend != "mbn" && backend != "pcsc" {
 		return fmt.Errorf("unsupported device backend %q", backend)
 	}
 	manager.mu.Lock()

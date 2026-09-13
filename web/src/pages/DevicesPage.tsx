@@ -483,7 +483,7 @@ export default function DevicesPage() {
     setAddConfig((prev) => {
       const mode = String(d.mode || "").toLowerCase();
       const isReader = d.hardwareKind === "pcsc" || mode === "pcsc";
-      const backend = isReader ? "pcsc" : mode === "mbim" ? "mbim" : isQmiControl(d.controlPath) || (mode === "qmi" && d.controlPath) ? "qmi" : "at";
+	  const backend = isReader ? "pcsc" : mode === "mbn" ? "mbn" : mode === "mbim" ? "mbim" : isQmiControl(d.controlPath) || (mode === "qmi" && d.controlPath) ? "qmi" : "at";
       return {
         ...prev,
         interface: d.netInterface || "",
@@ -493,7 +493,7 @@ export default function DevicesPage() {
         usbPath: d.usbPath || "",
         deviceBackend: backend,
 		deviceType: d.deviceType || (isReader ? "usb_sim_reader" : prev.deviceType),
-		esimTransport: isReader ? "pcsc" : backend,
+		 esimTransport: isReader ? "pcsc" : backend === "mbn" ? "at" : backend,
       };
     });
   }, []);

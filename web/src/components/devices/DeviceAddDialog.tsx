@@ -31,7 +31,7 @@ function isQmiMode(d?: DiscoveredDevice | null): boolean {
 }
 function modeLabel(d?: DiscoveredDevice | null): string {
   const m = String(d?.mode || "unknown").toLowerCase();
-  return m === "pcsc" ? "PC/SC" : m === "qmi" ? "QMI" : m === "at" ? "AT" : m === "mbim" ? "MBIM" : m === "ecm" ? "ECM" : m === "rndis" ? "RNDIS" : m === "ncm" ? "NCM" : "UNKNOWN";
+  return m === "pcsc" ? "PC/SC" : m === "qmi" ? "QMI" : m === "mbn" ? "Windows WWAN" : m === "at" ? "AT" : m === "mbim" ? "MBIM" : m === "ecm" ? "ECM" : m === "rndis" ? "RNDIS" : m === "ncm" ? "NCM" : "UNKNOWN";
 }
 
 function Field({ label, children }: { label: ReactNode; children: ReactNode }) {
@@ -47,6 +47,7 @@ export function DeviceAddDialog(props: DeviceAddDialogProps) {
   const { t } = useI18n();
   const { addSelected, addConfig } = props;
   const fixedQmi = isQmiControl(addSelected?.controlPath || addConfig?.controlDevice);
+  const isWindowsMBN = String(addSelected?.mode || "").toLowerCase() === "mbn";
   const isMbim = String(addSelected?.mode || "").toLowerCase() === "mbim";
 	const isReader = addSelected?.hardwareKind === "pcsc" || String(addSelected?.mode || "").toLowerCase() === "pcsc";
 
@@ -55,11 +56,15 @@ export function DeviceAddDialog(props: DeviceAddDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fixedQmi]);
   useEffect(() => {
+    if (isWindowsMBN && addConfig.deviceBackend !== "mbn") props.onConfigChange({ ...addConfig, deviceBackend: "mbn" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isWindowsMBN]);
+  useEffect(() => {
     if (isMbim && addConfig.deviceBackend !== "mbim") props.onConfigChange({ ...addConfig, deviceBackend: "mbim" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMbim]);
 
-  const backendOptions = isReader ? [{ value: "pcsc", label: "PC/SC" }] : [
+  const backendOptions = isReader ? [{ value: "pcsc", label: "PC/SC" }] : isWindowsMBN ? [{ value: "mbn", label: "Windows WWAN" }] : [
     ...(isMbim
       ? []
       : [
@@ -124,7 +129,7 @@ export function DeviceAddDialog(props: DeviceAddDialogProps) {
               <span className="text-gray-600">{t("模式:")}</span>
               <Tag type={isQmiMode(addSelected) ? "success" : "warning"}>{modeLabel(addSelected)}</Tag>
               {fixedQmi ? <Tag type="success">{t("仅 QMI 后端")}</Tag> : null}
-              {isMbim ? <Tag type="success">{t("仅 MBIM 后端")}</Tag> : null}
+              {isWindowsMBN ? <Tag type="success">{t("仅 Windows WWAN 后端")}</Tag> : isMbim ? <Tag type="success">{t("仅 MBIM 后端")}</Tag> : null}
             </div>
           </div>
           {fixedQmi ? <div className="text-xs text-emerald-700">{t("此类 WWAN QMI 设备运行后端固定为 QMI；AT 口仍会保留给 AT 终端。")}</div> : null}
@@ -175,7 +180,7 @@ export function DeviceAddDialog(props: DeviceAddDialogProps) {
           <div>
             <div className="text-sm font-bold text-gray-800">{t("设备后端模式")}</div>
             <div className="text-xs text-gray-500">
-              {fixedQmi ? t("固定 QMI，AT 口仅用于终端") : isMbim ? t("固定 MBIM，AT 口仅用于终端") : t("AT=串口 / QMI=纯 QMI")}
+                  {fixedQmi ? t("固定 QMI，AT 口仅用于终端") : isWindowsMBN ? t("固定 Windows WWAN，AT 口仅用于终端") : isMbim ? t("固定 MBIM，AT 口仅用于终端") : t("AT=串口 / QMI=纯 QMI")}
             </div>
           </div>
           <Select
@@ -183,7 +188,7 @@ export function DeviceAddDialog(props: DeviceAddDialogProps) {
             onChange={(v) => set({ deviceBackend: v })}
             className="w-[110px]"
             placeholder="AT"
-			disabled={fixedQmi || isMbim || isReader}
+				disabled={fixedQmi || isWindowsMBN || isMbim || isReader}
             options={backendOptions}
           />
         </div>

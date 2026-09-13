@@ -2403,7 +2403,13 @@ func fillConfigFromPhysical(config *store.Device, entry device.Device) {
 		config.DeviceBackend = backendMode(candidate)
 	}
 	if config.ESIMTransport == "" {
-		config.ESIMTransport = config.DeviceBackend
+		// Windows MBN is only the packet-data control plane. SIM/eSIM
+		// operations continue to use the modem's AT port.
+		if config.DeviceBackend == "mbn" {
+			config.ESIMTransport = "at"
+		} else {
+			config.ESIMTransport = config.DeviceBackend
+		}
 	}
 }
 
@@ -2560,6 +2566,9 @@ func deviceName(entry device.Device) string {
 func backendMode(candidate modem.Candidate) string {
 	if candidate.HardwareKind == "pcsc" {
 		return "pcsc"
+	}
+	if candidate.HardwareKind == "windows-com" && candidate.NetworkInterface != "" {
+		return "mbn"
 	}
 	if candidate.QMIControl != "" {
 		return "qmi"

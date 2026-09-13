@@ -135,7 +135,7 @@ func upsertDevice(ctx context.Context, executor contextExecer, value Device) err
 		value.DeviceBackend = "at"
 	}
 	value.DeviceBackend = strings.ToLower(strings.TrimSpace(value.DeviceBackend))
-	if value.DeviceBackend != "at" && value.DeviceBackend != "qmi" && value.DeviceBackend != "pcsc" {
+	if value.DeviceBackend != "at" && value.DeviceBackend != "qmi" && value.DeviceBackend != "mbn" && value.DeviceBackend != "pcsc" {
 		return fmt.Errorf("unsupported device backend %q", value.DeviceBackend)
 	}
 	if value.ESIMTransport == "" {
