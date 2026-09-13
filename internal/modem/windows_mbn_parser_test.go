@@ -27,3 +27,16 @@ func TestParseWindowsMBNInterfaceNamesIgnoresUnrelatedFields(t *testing.T) {
 		t.Fatalf("interface names = %#v", got)
 	}
 }
+
+func TestParseWindowsMBNInterfaceNamesSupportsLocalizedDisconnectedOutput(t *testing.T) {
+	output := `There is 1 interface on the system:
+
+    Name                   : 手机网络
+    Description            : Quectel Wireless Ethernet Adapter
+    State                  : Not connected`
+
+	got := parseWindowsMBNInterfaceNames(output)
+	if len(got) != 1 || got[0] != "手机网络" {
+		t.Fatalf("interface names = %#v", got)
+	}
+}

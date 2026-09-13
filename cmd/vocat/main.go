@@ -437,6 +437,11 @@ func configureDeviceBackends(
 		if mapErr != nil {
 			continue
 		}
+		if reconcileWindowsDeviceConfig(&config, entry) {
+			if err := database.UpsertDevice(ctx, config); err != nil {
+				logger.Warn("migrate Windows cellular binding", "device_id", config.ID, "error", err)
+			}
+		}
 		if config.DeviceType == store.DeviceTypeUSBSIMReader {
 			if err := manager.SetSIMPin(entry.ID, config.SIMPIN); err != nil {
 				logger.Warn("configure USB SIM reader", "device_id", config.ID, "error", err)
@@ -447,6 +452,29 @@ func configureDeviceBackends(
 			logger.Warn("configure device backend", "device_id", config.ID, "backend", config.DeviceBackend, "error", err)
 		}
 	}
+}
+
+// reconcileWindowsDeviceConfig fills bindings that were saved before Windows
+// Cellular discovery exposed its localized interface name. An empty binding
+// is the migration signal; an explicit interface or non-AT backend is left
+// untouched so a user's manual choice is never overwritten.
+func reconcileWindowsDeviceConfig(config *store.Device, physical device.Device) bool {
+	if config == nil || physical.Candidate.HardwareKind != "windows-com" {
+		return false
+	}
+	networkInterface := strings.TrimSpace(physical.Candidate.NetworkInterface)
+	if networkInterface == "" || strings.TrimSpace(config.Interface) != "" {
+		return false
+	}
+	config.Interface = networkInterface
+	backend := strings.ToLower(strings.TrimSpace(config.DeviceBackend))
+	if backend == "" || backend == "at" {
+		config.DeviceBackend = "mbn"
+		if strings.TrimSpace(config.ESIMTransport) == "" {
+			config.ESIMTransport = "at"
+		}
+	}
+	return true
 }
 
 // restoreDefaultCellularRadios applies an explicitly saved cellular policy

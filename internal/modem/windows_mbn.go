@@ -20,14 +20,20 @@ func discoverWindowsCellularInterfaces(ctx context.Context) ([]string, error) {
 	}
 	command := exec.CommandContext(ctx, "netsh.exe", "mbn", "show", "interfaces")
 	output, commandErr := command.Output()
-	if commandErr == nil {
-		if names := parseWindowsMBNInterfaceNames(string(output)); len(names) > 0 {
-			return names, nil
-		}
+	// `netsh mbn show interfaces` returns exit code 1 when a cellular
+	// interface is present but currently disconnected. The command still
+	// writes the authoritative interface list to stdout, so parse stdout
+	// before treating the exit status as a reason to fall back. This is
+	// especially important for localized interface names such as 手机网络,
+	// which cannot be recovered reliably from the generic net.Interfaces()
+	// name heuristic.
+	if names := parseWindowsMBNInterfaceNames(string(output)); len(names) > 0 {
+		return names, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	_ = commandErr
 
 	interfaces, err := net.Interfaces()
 	if err != nil {

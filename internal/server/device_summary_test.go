@@ -157,6 +157,30 @@ func TestConfiguredDeviceOverviewAlwaysUsesLiveDiscoveredATPort(t *testing.T) {
 	}
 }
 
+func TestConfiguredDeviceViewsFallbackToLiveNetworkInterface(t *testing.T) {
+	database, err := store.Open(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	s := &Server{store: database}
+	config := store.Device{ID: "ec20_1", Interface: ""}
+	entry := device.Device{Candidate: modem.Candidate{NetworkInterface: "手机网络"}}
+
+	summary := s.configuredDeviceSummary(config, &entry)
+	if got := summary["interface"]; got != "手机网络" {
+		t.Fatalf("summary interface = %#v, want live Windows interface", got)
+	}
+	overview := s.configuredDeviceOverview(config, entry, true)
+	if got := overview["interface"]; got != "手机网络" {
+		t.Fatalf("overview interface = %#v, want live Windows interface", got)
+	}
+	status := s.configuredDeviceStatus(config, entry, true)
+	if got := status["interface"]; got != "手机网络" {
+		t.Fatalf("status interface = %#v, want live Windows interface", got)
+	}
+}
+
 func TestSnapshotHasSIMDoesNotTreatUnknownStatusAsInserted(t *testing.T) {
 	for _, snapshot := range []*device.Snapshot{
 		{IMEI: "867123456789012"},

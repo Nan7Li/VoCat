@@ -127,7 +127,7 @@ func (s *Server) handleEsimNotificationRetry(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if !physicalPresent {
-		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this Linux host")
+		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this host")
 		return
 	}
 	sequenceNumber, err := strconv.ParseUint(strings.TrimSpace(rawSequenceNumber), 10, 64)
@@ -346,7 +346,7 @@ func (s *Server) handleEsimRename(w http.ResponseWriter, r *http.Request, physic
 		return
 	}
 	if !physicalPresent {
-		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this Linux host")
+		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this host")
 		return
 	}
 	iccid = strings.TrimSpace(iccid)
@@ -384,7 +384,7 @@ func (s *Server) handleEsimSwitch(w http.ResponseWriter, r *http.Request, config
 		return
 	}
 	if !physicalPresent {
-		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this Linux host")
+		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this host")
 		return
 	}
 	var request struct {
@@ -561,7 +561,7 @@ func (s *Server) handleEsimDisable(w http.ResponseWriter, r *http.Request, physi
 		return
 	}
 	if !physicalPresent {
-		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this Linux host")
+		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this host")
 		return
 	}
 	var request struct {
@@ -592,7 +592,7 @@ func (s *Server) handleEsimDelete(w http.ResponseWriter, r *http.Request, physic
 		return
 	}
 	if !physicalPresent {
-		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this Linux host")
+		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this host")
 		return
 	}
 	iccid = strings.TrimSpace(iccid)
@@ -627,7 +627,7 @@ func (s *Server) handleEsimDownload(w http.ResponseWriter, r *http.Request, phys
 		return
 	}
 	if !physicalPresent {
-		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this Linux host")
+		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this host")
 		return
 	}
 	query := r.URL.Query()

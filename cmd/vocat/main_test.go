@@ -101,6 +101,28 @@ func regionTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func TestReconcileWindowsDeviceConfigMigratesStaleNativeWWANBinding(t *testing.T) {
+	config := store.Device{ID: "modem", DeviceBackend: "at"}
+	physical := device.Device{Candidate: modem.Candidate{
+		HardwareKind:     "windows-com",
+		NetworkInterface: "手机网络",
+	}}
+	if !reconcileWindowsDeviceConfig(&config, physical) {
+		t.Fatal("expected stale Windows binding to be migrated")
+	}
+	if config.Interface != "手机网络" || config.DeviceBackend != "mbn" || config.ESIMTransport != "at" {
+		t.Fatalf("migrated config = %+v", config)
+	}
+
+	explicit := store.Device{ID: "modem", Interface: "Cellular", DeviceBackend: "at"}
+	if reconcileWindowsDeviceConfig(&explicit, physical) {
+		t.Fatal("explicit interface was unexpectedly overwritten")
+	}
+	if explicit.Interface != "Cellular" || explicit.DeviceBackend != "at" {
+		t.Fatalf("explicit config changed = %+v", explicit)
+	}
+}
+
 func TestEnforceCardRegionForcesAirplaneAndPersistsPolicy(t *testing.T) {
 	client := &fakeModemClient{steps: []fakeStep{
 		{command: "AT+CFUN?", lines: []string{"+CFUN: 1"}},

@@ -257,7 +257,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) bool {
 		}
 		selected := findDiscoveredDevice(devices, payload)
 		if selected == nil {
-			writeError(w, http.StatusNotFound, "device_not_found", "the selected Linux modem was not discovered")
+			writeError(w, http.StatusNotFound, "device_not_found", "the selected modem was not discovered")
 			return true
 		}
 		config := payload.toStoreDevice()
@@ -901,7 +901,7 @@ func (s *Server) handleVoWiFiEnabled(
 		return true
 	}
 	if request.Enabled && !physicalPresent {
-		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this Linux host")
+		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this host")
 		return true
 	}
 	if request.Enabled {
@@ -1036,7 +1036,7 @@ func (s *Server) handleVoWiFiReconnect(
 		return true
 	}
 	if !physicalPresent {
-		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this Linux host")
+		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this host")
 		return true
 	}
 	state, err := s.vowifi.RequestReconnect(config.ID)
@@ -1655,6 +1655,12 @@ func (s *Server) handleCellularData(
 		writeError(w, http.StatusForbidden, "developer_mode_required", "roaming data is available only in developer mode")
 		return true
 	}
+	networkInterface := strings.TrimSpace(config.Interface)
+	if networkInterface == "" && s.devices != nil && strings.TrimSpace(physicalID) != "" {
+		if entry, err := s.devices.Get(physicalID); err == nil {
+			networkInterface = strings.TrimSpace(entry.Candidate.NetworkInterface)
+		}
+	}
 	switch r.Method {
 	case http.MethodGet:
 		runtime := s.cellularDataRuntime().status(config.ID, config.NetworkEnabled)
@@ -1675,7 +1681,7 @@ func (s *Server) handleCellularData(
 			"modem_phase":       runtime.ModemPhase,
 			"maintenance_phase": runtime.MaintenancePhase,
 			"last_error":        runtime.LastError,
-			"interface":         config.Interface,
+			"interface":         networkInterface,
 			"apn":               config.APN,
 			"export_proxy_only": true,
 		}})
@@ -1775,7 +1781,7 @@ func (s *Server) handleCellularData(
 			"connected": runtime.Connected, "phase": runtime.Phase,
 			"modem_phase":       runtime.ModemPhase,
 			"maintenance_phase": runtime.MaintenancePhase,
-			"revision":          runtime.Revision, "interface": config.Interface,
+			"revision":          runtime.Revision, "interface": networkInterface,
 			"backend": config.DeviceBackend, "export_proxy_only": true,
 		}})
 	default:
@@ -1791,7 +1797,7 @@ func (s *Server) requirePhysicalDevice(w http.ResponseWriter, present bool) bool
 		return false
 	}
 	if !present {
-		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this Linux host")
+		writeError(w, http.StatusServiceUnavailable, "physical_device_missing", "the configured modem is not present on this host")
 		return false
 	}
 	return true
@@ -1940,6 +1946,21 @@ func physicalMatchesConfig(entry device.Device, config store.Device) bool {
 	return false
 }
 
+// configuredNetworkInterface preserves an explicitly configured interface but
+// falls back to the live physical candidate when an older database has no
+// interface binding yet. Windows Cellular names can be localized and may not
+// be known when a device was first saved, so this keeps upgraded native WWAN
+// devices usable without rewriting user configuration.
+func configuredNetworkInterface(config store.Device, physical *device.Device) string {
+	if networkInterface := strings.TrimSpace(config.Interface); networkInterface != "" {
+		return networkInterface
+	}
+	if physical != nil {
+		return strings.TrimSpace(physical.Candidate.NetworkInterface)
+	}
+	return ""
+}
+
 func (s *Server) configuredDeviceSummary(
 	config store.Device,
 	entry *device.Device,
@@ -1953,7 +1974,7 @@ func (s *Server) configuredDeviceSummary(
 	result["id"] = config.ID
 	result["name"] = config.Name
 	result["device_type"] = store.NormalizeDeviceType(config.DeviceType)
-	result["interface"] = config.Interface
+	result["interface"] = configuredNetworkInterface(config, entry)
 	result["proxy_port"] = config.ProxyPort
 	result["esim_transport"] = config.ESIMTransport
 	result["sms_enabled"] = config.SMSEnabled
@@ -2049,7 +2070,8 @@ func (s *Server) configuredDeviceOverview(
 	result := s.configuredDeviceSummary(config, physical)
 	result["id"] = config.ID
 	result["name"] = config.Name
-	result["interface"] = config.Interface
+	networkInterface := configuredNetworkInterface(config, physical)
+	result["interface"] = networkInterface
 	// ttyUSB allocation changes across USB reconnects and boot cycles. The AT
 	// terminal must use only the currently discovered physical port; a stored
 	// path may point at another modem after enumeration order changes.
@@ -2072,8 +2094,8 @@ func (s *Server) configuredDeviceOverview(
 	// Live network state: on-demand sample of the cellular interface counters,
 	// kept warm by the 2s overview SSE cadence. Only meaningful when the modem
 	// data path is enabled and an interface is configured.
-	if connected, _ := result["network_connected"].(bool); developerActive && connected && strings.TrimSpace(config.Interface) != "" {
-		live := s.netTraffic.sample(config.ID, config.Interface, time.Now())
+	if connected, _ := result["network_connected"].(bool); developerActive && connected && networkInterface != "" {
+		live := s.netTraffic.sample(config.ID, networkInterface, time.Now())
 		result["private_ip"] = live.ipv4
 		result["traffic"] = map[string]string{
 			"rx":      formatLiveBytes(float64(live.minuteRx)),
@@ -2144,7 +2166,7 @@ func (s *Server) configuredDeviceStatus(
 	}
 	result["id"] = config.ID
 	result["name"] = config.Name
-	result["interface"] = config.Interface
+	result["interface"] = configuredNetworkInterface(config, physical)
 	result["proxy_port"] = config.ProxyPort
 	return result
 }
