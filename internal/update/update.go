@@ -1,8 +1,8 @@
 // Package update implements the `vocat update` self-updater. It queries the
-// GitHub Releases API for a newer build, downloads the matching Linux binary
-// for the current architecture, verifies it against a published SHA256SUMS,
-// atomically replaces the running binary on disk, and restarts the vocat
-// systemd unit.
+// GitHub Releases API for a newer build, downloads the matching binary for the
+// current OS and architecture, verifies it against a published SHA256SUMS,
+// replaces the running binary using the platform-safe installer, and restarts
+// the configured service when supported.
 //
 // Trust model: GitHub TLS guarantees the channel; the repository owner controls
 // which assets are published; SHA256SUMS guards integrity. There is no GPG

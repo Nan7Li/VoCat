@@ -17,7 +17,8 @@ func printUsage(w io.Writer) {
 Usage:
   vocat              No arguments: interactive management menu when run as
                      root on a TTY, otherwise the server. A managed service
-                     (systemd or OpenWrt procd) starts the server unchanged.
+                     (systemd, OpenWrt procd, or the Windows Service dispatcher)
+                     starts the server unchanged.
   vocat serve        Run the server in the foreground (use from a TTY when
                      vocat without arguments would enter the menu).
   vocat version      Print the build version and exit.
@@ -46,8 +47,8 @@ Usage:
                        restart, update, uninstall.
   vocat help         Show this help message.
 
-When run without a subcommand on a non-TTY (e.g. systemd), vocat starts the
-HTTP server using VOCAT_* environment variables or $VOCAT_CONFIG for
-configuration.
+When run without a subcommand on a non-TTY (e.g. systemd or a Windows
+Service), vocat starts the HTTP server using VOCAT_* environment variables or
+$VOCAT_CONFIG for configuration.
 `, buildinfo.Version)
 }
