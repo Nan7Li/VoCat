@@ -49,3 +49,17 @@ func TestWindowsMBNArgumentDoesNotAddShellQuotes(t *testing.T) {
 	}
 }
 
+func TestWindowsMBNDisconnectAlreadyInactive(t *testing.T) {
+	for _, output := range []string{
+		"Disconnect Failure: Context Not Activated.",
+		"Disconnect failure: no active connection.",
+		"断开连接失败：上下文未激活。",
+	} {
+		if !windowsMBNDisconnectAlreadyInactive([]byte(output)) {
+			t.Fatalf("inactive disconnect output was not accepted: %q", output)
+		}
+	}
+	if windowsMBNDisconnectAlreadyInactive([]byte("The Mobile Broadband service is unavailable.")) {
+		t.Fatal("unrelated netsh failure was accepted as an inactive context")
+	}
+}

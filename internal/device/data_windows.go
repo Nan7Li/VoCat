@@ -19,7 +19,7 @@ import (
 
 const (
 	windowsMBNProfileNamespace = "https://www.microsoft.com/networking/WWAN/profile/v4"
-	windowsMBNConnectTimeout  = 45 * time.Second
+	windowsMBNConnectTimeout   = 45 * time.Second
 )
 
 func isWindowsMBNCandidate(candidate modem.Candidate) bool {
@@ -49,26 +49,26 @@ func (manager *Manager) readWindowsMBNICCID(ctx context.Context, state *managedD
 }
 
 type windowsMBNProfile struct {
-	XMLName              xml.Name          `xml:"MBNProfileExt"`
-	XMLNS                string            `xml:"xmlns,attr"`
-	Name                 string            `xml:"Name"`
-	Description          string            `xml:"Description,omitempty"`
-	IsDefault            bool              `xml:"IsDefault"`
-	ProfileCreationType  string            `xml:"ProfileCreationType,omitempty"`
-	SubscriberID         string            `xml:"SubscriberID,omitempty"`
-	SimIccID             string            `xml:"SimIccID,omitempty"`
-	HomeProviderName     string            `xml:"HomeProviderName,omitempty"`
-	AutoConnectOnInternet bool             `xml:"AutoConnectOnInternet,omitempty"`
-	ConnectionMode       string            `xml:"ConnectionMode"`
-	Context              windowsMBNContext `xml:"Context"`
+	XMLName               xml.Name          `xml:"MBNProfileExt"`
+	XMLNS                 string            `xml:"xmlns,attr"`
+	Name                  string            `xml:"Name"`
+	Description           string            `xml:"Description,omitempty"`
+	IsDefault             bool              `xml:"IsDefault"`
+	ProfileCreationType   string            `xml:"ProfileCreationType,omitempty"`
+	SubscriberID          string            `xml:"SubscriberID,omitempty"`
+	SimIccID              string            `xml:"SimIccID,omitempty"`
+	HomeProviderName      string            `xml:"HomeProviderName,omitempty"`
+	AutoConnectOnInternet bool              `xml:"AutoConnectOnInternet,omitempty"`
+	ConnectionMode        string            `xml:"ConnectionMode"`
+	Context               windowsMBNContext `xml:"Context"`
 }
 
 type windowsMBNContext struct {
-	AccessString string                    `xml:"AccessString,omitempty"`
+	AccessString  string                   `xml:"AccessString,omitempty"`
 	UserLogonCred *windowsMBNUserLogonCred `xml:"UserLogonCred,omitempty"`
-	Compression  string                    `xml:"Compression,omitempty"`
-	AuthProtocol string                    `xml:"AuthProtocol,omitempty"`
-	IPType       string                    `xml:"IPType,omitempty"`
+	Compression   string                   `xml:"Compression,omitempty"`
+	AuthProtocol  string                   `xml:"AuthProtocol,omitempty"`
+	IPType        string                   `xml:"IPType,omitempty"`
 }
 
 type windowsMBNUserLogonCred struct {
@@ -102,7 +102,8 @@ func setWindowsCellularNetwork(
 		ctx = context.Background()
 	}
 	if !enabled {
-		if _, err := runWindowsMBN(ctx, "disconnect", "interface="+windowsMBNArgument(interfaceName)); err != nil {
+		output, err := runWindowsMBN(ctx, "disconnect", "interface="+windowsMBNArgument(interfaceName))
+		if err != nil && !windowsMBNDisconnectAlreadyInactive(output) {
 			return NetworkResult{}, err
 		}
 		result.Detail = "Windows Mobile Broadband connection disconnected"
@@ -227,6 +228,26 @@ func runWindowsMBN(ctx context.Context, args ...string) ([]byte, error) {
 		return output, fmt.Errorf("netsh mbn %s: %w (%s)", strings.Join(args, " "), err, detail)
 	}
 	return output, fmt.Errorf("netsh mbn %s: %w", strings.Join(args, " "), err)
+}
+
+// netsh reports a non-zero exit status when disconnect is requested without an
+// active packet context. That is already the desired fail-closed state, so the
+// disable operation treats only these explicit inactive-context messages as an
+// idempotent success and continues surfacing all other failures.
+func windowsMBNDisconnectAlreadyInactive(output []byte) bool {
+	text := strings.ToLower(strings.TrimSpace(string(output)))
+	if text == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"context not activated", "no active connection", "not connected",
+		"上下文未激活", "未连接",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func windowsMBNArgument(value string) string {
