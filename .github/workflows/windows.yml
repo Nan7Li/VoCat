@@ -39,7 +39,9 @@ jobs:
 
       - name: Download Go modules
         shell: bash
-        run: go mod download
+        run: |
+          go mod download github.com/telesma-app/pcsc
+          git diff -- go.sum
 
       - name: Run Windows tests
         shell: bash
