@@ -50,7 +50,7 @@ Vocat 是一款面向 Quectel EC20/EC25 系列蜂窝模组的开源 Web 控制�
 | 通知 | 通过 Telegram、Bark、邮件、Pushplus、签名 Webhook、企业微信以及飞书 / Lark 群机器人转发新入站短信,每条短信单独推送。 |
 | Telegram 机器人 | 设备状态、已安装配置文件列表与切换、WiFi Calling 控制以及短信发送。敏感操作需要管理员确认。 |
 | 运维 | 鉴权、CSRF 防护、访问策略、审计事件、实时日志、日志留存、健康检查、响应式布局、深色模式以及中英文应用界面。 |
-| 分发 | 静态 Linux 二进制、systemd 安装脚本、带 SHA-256 校验的自更新、Docker 镜像、GHCR 发布以及 GitHub Actions 发布构建。 |
+| 分发 | 静态 Linux 二进制、原生 Windows/amd64 构建、systemd 安装脚本、带 SHA-256 校验的自更新、Docker 镜像、GHCR 发布以及 GitHub Actions 发布构建。 |
 
 ## 支持的硬件
 
@@ -118,6 +118,40 @@ sudo bash install.sh --skip-vowifi-check
 ```text
 http://<服务器地址>:7575
 ```
+
+### Windows 原生构建
+
+Windows 版本使用系统自带的 Mobile Broadband（MBN/WWAN）服务承载蜂窝
+数据。模组需要同时暴露可用的 AT 串口和 Windows 蜂窝网卡。先启动 WWAN
+AutoConfig 服务，并确认系统能看到蜂窝接口:
+
+```powershell
+Start-Service WwanSvc
+netsh mbn show interfaces
+```
+
+在 PowerShell 中构建并启动原生程序:
+
+```powershell
+cd web
+npm ci --no-audit --no-fund
+npm run build
+cd ..
+go build -trimpath -o halo-windows-amd64.exe ./cmd/vocat
+.\halo-windows-amd64.exe bootstrap-admin
+.\halo-windows-amd64.exe
+```
+
+添加发现的 COM 模组时选择 **Windows WWAN**。Windows 负责蜂窝数据会话和
+IP 地址配置；AT 串口仍用于 SIM/eSIM、射频、短信、通话和终端。执行
+`netsh mbn show interfaces` 应能看到 `Cellular` 或其他 MBN 接口名。如果
+同时接入多个蜂窝网卡，Windows 串口枚举无法可靠给 COM 口建立父子关系，
+为了避免把流量发错 SIM，自动 MBN 后端会等到绑定关系明确后再连接。
+
+Windows 版本同时支持 PC/SC 读卡器、WireGuard 原生 Windows 运行器、按接口
+绑定的代理/通知出站连接以及 Windows IP Helper 流量计数。Linux 内核
+XFRM/3GPP IPsec 的 VoWiFi 数据面不会在 Windows 上伪装开启；VoWiFi 仍需
+单独实现 Windows IPsec 数据面。
 
 ### 手动二进制安装
 
@@ -193,7 +227,7 @@ VoCat 会继续在添加设备窗口显示该硬件，并明确提示缺少服�
 
 ### QMI 命令行工具
 
-VoCat 使用 `qmicli` 验证 QMI 控制通道是否就绪，并通过 `qmi-proxy` 复用控制
+在 Linux 上，VoCat 使用 `qmicli` 验证 QMI 控制通道是否就绪，并通过 `qmi-proxy` 复用控制
 通道；分组数据会话由内置的 QMI WDS 客户端管理，不再依赖 `qmi-network` 的
 临时 CID/PDH 状态文件。一键安装脚本会自动安装并验证对应工具。手动部署时，
 Debian/Ubuntu 使用 `apt install libqmi-utils`；Arch Linux 使用
@@ -201,6 +235,8 @@ Debian/Ubuntu 使用 `apt install libqmi-utils`；Arch Linux 使用
 
 `vocat doctor --repair-dji-qmi` 会在修改 USB 驱动绑定或触发 DTR 之前检查
 `qmicli`。如果工具不可用，命令会给出安装提示并停止，保持设备当前状态不变。
+
+Windows 蜂窝数据不需要 `qmicli`，由上面的原生 MBN 后端负责。
 
 ## 配置
 

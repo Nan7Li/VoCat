@@ -27,6 +27,27 @@ func isWindowsMBNCandidate(candidate modem.Candidate) bool {
 		strings.TrimSpace(candidate.NetworkInterface) != ""
 }
 
+// readWindowsMBNICCID performs the small amount of AT work still needed by
+// the Windows WWAN path. MBN owns packet data, while the modem's AT channel
+// remains the authoritative SIM/eSIM identity source used by the rest of the
+// device manager.
+func (manager *Manager) readWindowsMBNICCID(ctx context.Context, state *managedDevice, candidate modem.Candidate) string {
+	client, err := manager.clientLocked(ctx, state, candidate)
+	if err != nil {
+		return ""
+	}
+	for _, command := range []string{"AT+CCID", "AT+QCCID"} {
+		response, commandErr := manager.command(ctx, client, command)
+		if commandErr != nil {
+			continue
+		}
+		if iccid := parseICCIDIdentifier(response, []string{"+CCID:", "+QCCID:"}, 18, 22); iccid != "" {
+			return iccid
+		}
+	}
+	return ""
+}
+
 type windowsMBNProfile struct {
 	XMLName              xml.Name          `xml:"MBNProfileExt"`
 	XMLNS                string            `xml:"xmlns,attr"`
@@ -209,11 +230,11 @@ func runWindowsMBN(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func windowsMBNArgument(value string) string {
-	value = strings.TrimSpace(value)
-	if strings.ContainsAny(value, " \t") {
-		return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
-	}
-	return value
+	// exec.Command passes each string as one argv element and performs the
+	// Windows command-line quoting itself. Adding shell quotes here would make
+	// the quote characters part of the value received by netsh, which breaks
+	// interface names and temporary profile paths containing spaces.
+	return strings.TrimSpace(value)
 }
 
 func waitForWindowsMBNAddress(ctx context.Context, interfaceName string) error {

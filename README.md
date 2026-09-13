@@ -50,7 +50,7 @@ The backend is written in Go, the interface is built with React and TypeScript, 
 | Notifications | New inbound SMS forwarding through Telegram, Bark, email, Pushplus, signed webhooks, WeCom, and Feishu / Lark group bots. Each SMS is delivered as an individual notification. |
 | Telegram bot | Device status, installed-profile listing and switching, WiFi Calling controls, and SMS sending. Sensitive actions require administrator confirmation. |
 | Operations | Authentication, CSRF protection, access policies, audit events, live logs, log retention, health checks, responsive layout, dark mode, and English/Chinese application UI. |
-| Distribution | Static Linux binaries, systemd installation script, self-update with SHA-256 verification, Docker image, GHCR publishing, and GitHub Actions release builds. |
+| Distribution | Static Linux binaries, a native Windows/amd64 build, systemd installation script, self-update with SHA-256 verification, Docker image, GHCR publishing, and GitHub Actions release builds. |
 
 ## Supported hardware
 
@@ -135,6 +135,7 @@ Download the matching binary and `SHA256SUMS` from GitHub Releases:
 | Linux ARM64 | `halo-linux-arm64` (fallback `vocat-linux-arm64`) |
 | Linux AArch64 | `halo-linux-aarch64` (fallback `vocat-linux-aarch64`) |
 | Linux ARMv7 | `halo-linux-armv7` (fallback `vocat-linux-armv7`) |
+| Windows x86-64 | `halo-windows-amd64.exe` (fallback `vocat-windows-amd64.exe`) |
 
 Verify and install it:
 
@@ -170,10 +171,22 @@ package before using the WireGuard page. Halo finds `wireguard.exe` and
 and `HALO_WG_EXE` when using a custom installation. USB SIM readers must have
 their Windows CCID driver installed and the Windows Smart Card service running.
 
-The Windows build replaces Linux QMI with the modem's AT path for control
-operations. Windows QMI packet sessions, Linux XFRM/IPsec policy control, and
-Linux `wg-quick` routing hooks are not used; the WireGuard tunnel service owns
-the Windows tunnel adapter.
+The Windows build uses the native Windows Mobile Broadband (MBN/WWAN) service
+for packet data. The modem must expose both an AT-capable COM port and a
+Windows cellular network adapter. Start the WWAN AutoConfig service and verify
+the adapter before adding the modem:
+
+```powershell
+Start-Service WwanSvc
+netsh mbn show interfaces
+```
+
+Windows owns the cellular packet session and IP assignment; the AT port remains
+available for SIM/eSIM, radio, SMS, calls, and the terminal. Windows QMI packet
+sessions, Linux XFRM/IPsec policy control, and Linux `wg-quick` routing hooks
+are not used. When multiple cellular adapters are attached, automatic MBN
+binding waits until the relationship between the COM port and adapter is
+unambiguous.
 
 Run it from PowerShell:
 
@@ -250,7 +263,7 @@ reports the missing service or driver instead of silently hiding it.
 
 ### QMI command-line utilities
 
-VoCat uses `qmicli` to verify that a QMI control channel is ready and
+On Linux, VoCat uses `qmicli` to verify that a QMI control channel is ready and
 `qmi-proxy` to multiplex access to it. Packet-data sessions are managed by the
 built-in QMI WDS client instead of `qmi-network` CID/PDH state files. The
 one-click installer installs and verifies the corresponding utilities. For manual deployment,
@@ -261,6 +274,9 @@ Debian/Ubuntu uses `apt install libqmi-utils`; Arch Linux uses
 `vocat doctor --repair-dji-qmi` checks for `qmicli` before changing any USB
 driver binding or asserting DTR. If the utility is unavailable, the command
 stops with an installation hint and leaves the current device state untouched.
+
+Windows cellular data does not require `qmicli`; it is handled by the native
+MBN backend described in the Windows section.
 
 ## Configuration
 

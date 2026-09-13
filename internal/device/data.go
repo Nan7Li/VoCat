@@ -259,6 +259,18 @@ func (manager *Manager) SetNetwork(
 			simICCID = strings.TrimSpace(state.lastICCID)
 		}
 		manager.mu.RUnlock()
+		if request.Enabled && simICCID == "" {
+			// MBNProfileExt v4 identifies the SIM explicitly. A device can be
+			// discovered before its first dashboard refresh, so do one read-only
+			// AT probe instead of emitting a profile that Windows cannot associate
+			// with a subscription.
+			simICCID = manager.readWindowsMBNICCID(ctx, state, candidate)
+		}
+		if request.Enabled && simICCID == "" {
+			err := fmt.Errorf("%w: Windows WWAN could not read the SIM ICCID; refresh the device and try again", ErrDataBackendUnavailable)
+			manager.setResult(id, state, nil, err)
+			return NetworkResult{}, err
+		}
 		result, err := setWindowsCellularNetwork(
 			ctx,
 			candidate,

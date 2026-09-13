@@ -868,6 +868,7 @@ export const EN_DICT: Record<string, string> = {
   "固件版本": "Firmware",
   "固定 MBIM，AT 口仅用于终端": "Fixed MBIM; the AT port is for the terminal only",
   "固定 QMI，AT 口仅用于终端": "Fixed QMI; the AT port is for the terminal only",
+  "固定 Windows WWAN，AT 口仅用于终端": "Fixed Windows WWAN; the AT port is for the terminal only",
   "地址": "Address",
   "安装": "Install",
   "实时上传速率": "Live Upload Rate",
@@ -965,6 +966,9 @@ export const EN_DICT: Record<string, string> = {
   "此类 WWAN QMI 设备运行后端固定为 QMI；AT 口仍会保留给 AT 终端。": "This WWAN QMI device is fixed to the QMI backend; the AT port remains available for the AT terminal.",
   "此类设备固定 MBIM，AT 口仅用于终端": "This device is fixed to MBIM; the AT port is for the terminal only",
   "此类设备固定 QMI，AT 口仅用于终端": "This device is fixed to QMI; the AT port is for the terminal only",
+  "仅 Windows WWAN 后端": "Windows WWAN backend only",
+  "Windows WWAN 负责数据会话；AT 负责 SIM/eSIM、射频、短信、通话和终端指令":
+    "Windows WWAN handles packet data; AT handles SIM/eSIM, RF, SMS, calls, and terminal commands.",
   "QMI 负责驻网状态与数据会话；AT 负责 SIM/eSIM、射频、短信、通话和终端指令":
     "QMI handles registration status and packet-data sessions; AT handles SIM/eSIM, RF, SMS, calls, and terminal commands.",
   "MBIM 负责数据会话；AT 负责 SIM/eSIM、射频、短信、通话和终端指令":

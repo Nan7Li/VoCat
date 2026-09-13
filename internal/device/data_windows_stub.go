@@ -11,6 +11,10 @@ import (
 
 func isWindowsMBNCandidate(modem.Candidate) bool { return false }
 
+func (*Manager) readWindowsMBNICCID(context.Context, *managedDevice, modem.Candidate) string {
+	return ""
+}
+
 func setWindowsCellularNetwork(
 	context.Context,
 	modem.Candidate,
