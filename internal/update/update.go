@@ -140,7 +140,11 @@ func applyUpdate(ctx context.Context, logger *slog.Logger, opts Options, release
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return fmt.Errorf("update: ensure target dir %s: %w", targetDir, err)
 	}
-	tmp, err := os.CreateTemp(targetDir, ".vocat-update-*")
+	tempPattern := ".vocat-update-*"
+	if runtime.GOOS == "windows" {
+		tempPattern += ".exe"
+	}
+	tmp, err := os.CreateTemp(targetDir, tempPattern)
 	if err != nil {
 		return fmt.Errorf("update: create temp file: %w", err)
 	}
@@ -192,20 +196,9 @@ func applyUpdate(ctx context.Context, logger *slog.Logger, opts Options, release
 		cleanup()
 		return err
 	}
-	if err := backupAndReplace(opts.Target, tmpPath); err != nil {
+	if err := installVerifiedBinary(ctx, logger, opts.Target, tmpPath, latest, restart); err != nil {
 		cleanup()
 		return err
-	}
-	logger.Info("installed new binary", "target", opts.Target, "version", latest)
-	fmt.Printf("vocat updated to %s.\n", latest)
-
-	if restart {
-		if err := RestartService(logger); err != nil {
-			// The file replacement already succeeded; a restart failure is not
-			// fatal — the operator can restart the service manually.
-			fmt.Printf("Binary replaced, but automatic restart failed: %v\n", err)
-			fmt.Println("Restart the vocat service manually to apply the new build.")
-		}
 	}
 	return nil
 }
@@ -312,6 +305,9 @@ func backupAndReplace(target, tmp string) error {
 
 // RestartService supports both systemd hosts and OpenWrt/procd routers.
 func RestartService(logger *slog.Logger) error {
+	if runtime.GOOS == "windows" {
+		return restartWindowsService(logger)
+	}
 	if _, err := os.Stat("/etc/init.d/vocat"); err == nil {
 		cmd := exec.Command("/etc/init.d/vocat", "restart")
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -385,8 +381,10 @@ func systemdUnitFromCgroup(data string) string {
 // on the standard systemd host without flags.
 func resolveDefaultTarget() string {
 	const defaultPath = "/opt/vocat/bin/vocat"
-	if _, err := os.Stat(defaultPath); err == nil {
-		return defaultPath
+	if runtime.GOOS != "windows" {
+		if _, err := os.Stat(defaultPath); err == nil {
+			return defaultPath
+		}
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -426,7 +424,11 @@ func assetNamesFor(goos, goarch string) []string {
 }
 
 func printUpdateUsage() {
-	fmt.Println(`Usage: vocat update [flags]
+	targetDescription := "running executable"
+	if runtime.GOOS != "windows" {
+		targetDescription = "/opt/vocat/bin/vocat if present, otherwise the running executable"
+	}
+	fmt.Printf(`Usage: vocat update [flags]
 
 Fetch the latest release from GitHub and replace this binary in place.
 
@@ -434,15 +436,15 @@ Flags:
   --check            Report whether an update is available, then exit.
   --force            Reinstall even when already at the latest version.
   --repo owner/name  GitHub repository (default: $VOCAT_REPO or Nan7Li/VoCat).
-  --target path      Binary to replace (default: /opt/vocat/bin/vocat if
-                     present, otherwise the running executable).
+  --target path      Binary to replace (default: %s).
   --token token      GitHub bearer token (default: $GITHUB_TOKEN).
   -h, --help         Show this help.
 
 Environment:
   VOCAT_REPO         Fallback for --repo.
   GITHUB_TOKEN       Fallback for --token. Required for private repos and
-                     recommended to avoid unauthenticated rate limits.`)
+                     recommended to avoid unauthenticated rate limits.
+`, targetDescription)
 }
 
 func parseFlags(args []string) (Options, error) {

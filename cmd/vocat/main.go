@@ -45,6 +45,9 @@ import (
 func main() {
 	logs := loghub.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}), 2000)
 	logger := slog.New(logs)
+	if runWindowsServiceIfNeeded(logger, logs) {
+		return
+	}
 
 	args := os.Args[1:]
 	switch subcommand, rest := splitSubcommand(args); subcommand {
@@ -77,6 +80,14 @@ func main() {
 	case "update":
 		if err := update.Run(logger, rest); err != nil {
 			logger.Error("update failed", "error", err)
+			os.Exit(1)
+		}
+	case "update-helper":
+		// Internal Windows handoff. The verified replacement runs this helper
+		// from a temporary path so the installed executable can be replaced
+		// after the service process releases it.
+		if err := update.RunHelper(rest); err != nil {
+			logger.Error("update helper failed", "error", err)
 			os.Exit(1)
 		}
 	case "doctor":
@@ -128,6 +139,10 @@ func splitSubcommand(args []string) (string, []string) {
 }
 
 func run(logger *slog.Logger, logs *loghub.Hub) error {
+	return runWithContext(context.Background(), logger, logs)
+}
+
+func runWithContext(parentContext context.Context, logger *slog.Logger, logs *loghub.Hub) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
@@ -141,7 +156,7 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 		return err
 	}
 	defer instanceLock.Close()
-	startupContext, cancelStartup := context.WithTimeout(context.Background(), 15*time.Second)
+	startupContext, cancelStartup := context.WithTimeout(parentContext, 15*time.Second)
 	defer cancelStartup()
 
 	database, err := store.Open(startupContext, cfg.DatabasePath)
@@ -228,7 +243,7 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 			logger.Warn("stop device manager", "error", err)
 		}
 	}()
-	pollContext, cancelPolling := context.WithCancel(context.Background())
+	pollContext, cancelPolling := context.WithCancel(parentContext)
 	defer cancelPolling()
 	go pollDeviceSnapshots(pollContext, deviceLogger, database, deviceManager)
 	go collectCellularTraffic(pollContext, logger, database)
@@ -350,7 +365,7 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 	protocolMux := httpsmode.NewMultiplexer(baseListener, httpsManager)
 
 	signalContext, stopSignals := signal.NotifyContext(
-		context.Background(),
+		parentContext,
 		os.Interrupt,
 		syscall.SIGTERM,
 	)

@@ -195,11 +195,62 @@ Read-Host "Admin password" | .\halo-windows-amd64.exe bootstrap-admin
 .\halo-windows-amd64.exe serve
 ```
 
-The default database is stored under `%LOCALAPPDATA%\\Halo\\data\\vocat.db`.
-Open `http://127.0.0.1:7575` after the server starts. The repository also
-contains `scripts/windows/start-halo.ps1` and
-`scripts/windows/install-service.ps1` for repeatable startup and optional
-Windows Service installation.
+For a managed installation, open PowerShell as Administrator. The installer
+copies the executable to `%ProgramFiles%\Halo\vocat.exe`, creates
+`%ProgramData%\Halo\data`, registers a real Windows Service with automatic
+restart, and opens the configured TCP port only when the listener is not
+loopback-only:
+
+```powershell
+.\scripts\windows\install.ps1 -Executable .\dist\halo-windows-amd64.exe
+$env:VOCAT_DATABASE_PATH = "$env:ProgramData\Halo\data\vocat.db"
+& "$env:ProgramFiles\Halo\vocat.exe" bootstrap-admin
+Start-Service Halo
+```
+
+The service command line contains only `vocat.exe serve`. The installer
+snapshots the current process's `VOCAT_*` values into the service-specific
+environment block, so the normal `VOCAT_CONFIG` then environment override
+order remains unchanged. It does not print those values. To bind externally,
+set `VOCAT_ADDR` before installation or pass `-OpenFirewall`; the default
+`127.0.0.1:7575` does not require an inbound firewall rule.
+
+Uninstall the service and program files while preserving data:
+
+```powershell
+.\scripts\windows\uninstall.ps1
+```
+
+Pass `-RemoveData` only when the database and all locally stored settings
+should also be deleted. `scripts/windows/install-service.ps1` remains as a
+compatibility wrapper around the new installer.
+
+Windows IMS `ipsec-3gpp` uses a dynamic `Fwpuclnt.dll` WFP session, two
+transport-mode ESP SA pairs, and IP/protocol/port-scoped inbound and outbound
+filters. AES-CBC, 3DES-CBC, NULL encryption, HMAC-SHA1-96, and HMAC-MD5-96
+are mapped to native WFP transforms; key copies are zeroed as soon as WFP has
+accepted them. This path is compile- and unit-tested but still requires a real
+carrier IMS test. ePDG CHILD_SA is different: until the Windows tunnel path has
+a real inner interface and selector routing (native WFP virtual interface or
+Wintun user-space ESP/NAT-T), enablement fails explicitly and never reports a
+working tunnel.
+
+Windows troubleshooting:
+
+```powershell
+Get-Service Halo,WwanSvc,SCardSvr
+netsh mbn show interfaces
+[System.IO.Ports.SerialPort]::GetPortNames()
+& "$env:ProgramFiles\Halo\vocat.exe" version
+Get-Content "$env:ProgramFiles\Halo\vocat.exe.update-result.json" -ErrorAction SilentlyContinue
+Get-Content "$env:ProgramFiles\Halo\vocat.exe.update.log" -Tail 100 -ErrorAction SilentlyContinue
+```
+
+Service error 1053 means an older executable without the Windows Service
+dispatcher is installed; rerun `install.ps1` with a current artifact. Error 5
+from WFP means the process is not elevated (the installed service runs as
+LocalSystem). A missing MBN interface is a driver/WWAN issue, while a missing
+COM port is an AT USB interface/driver issue; they are diagnosed separately.
 
 ### Docker
 
@@ -330,14 +381,22 @@ Profile switching and SMS submission use one-time confirmation buttons. The bot 
 
 ## Updating
 
-Halo checks `Nan7Li/VoCat` by default and prefers `halo-linux-*` release assets, falling back to `vocat-linux-*`. In **Settings**, enable automatic checks (on by default) and optionally automatic install-and-restart. Manual CLI:
+Halo checks `Nan7Li/VoCat` by default and prefers `halo-*` release assets, falling back to `vocat-*`. In **Settings**, enable automatic checks (on by default) and optionally automatic install-and-restart. Manual CLI:
 
 ```bash
 vocat update --check
 sudo vocat update
 ```
 
-The updater downloads the binary matching the current Linux architecture, verifies it with the published `SHA256SUMS`, replaces the executable atomically, and restarts the `vocat` systemd service when available.
+The updater downloads the binary matching the current OS and architecture and
+verifies it with the published `SHA256SUMS`. Linux/OpenWrt keep their existing
+atomic replacement and service restart path. On Windows, the verified new
+binary starts as a detached helper, stops the `Halo` service, waits for the
+running executable to close, retains `.previous`, copies the new executable,
+and restarts the service. A replacement or startup failure restores the old
+executable and restarts it. The sanitized result and diagnostic log are stored
+beside the executable as `.update-result.json` and `.update.log`; credentials
+are neither passed to the helper command line nor written to these files.
 
 For Docker installations:
 

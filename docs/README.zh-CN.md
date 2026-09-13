@@ -149,9 +149,58 @@ IP 地址配置；AT 串口仍用于 SIM/eSIM、射频、短信、通话和终�
 为了避免把流量发错 SIM，自动 MBN 后端会等到绑定关系明确后再连接。
 
 Windows 版本同时支持 PC/SC 读卡器、WireGuard 原生 Windows 运行器、按接口
-绑定的代理/通知出站连接以及 Windows IP Helper 流量计数。Linux 内核
-XFRM/3GPP IPsec 的 VoWiFi 数据面不会在 Windows 上伪装开启；VoWiFi 仍需
-单独实现 Windows IPsec 数据面。
+绑定的代理/通知出站连接以及 Windows IP Helper 流量计数。IMS
+`ipsec-3gpp` 已使用 `Fwpuclnt.dll` 的动态 WFP 会话实现 transport-mode ESP：
+按本地/远端 IP、协议和端口安装双向 SA 与过滤器，支持 AES-CBC、3DES-CBC、
+NULL、HMAC-SHA1-96 和 HMAC-MD5-96，并在 WFP 接收密钥后立即清零密钥副本。
+该路径已通过编译和单元测试，但仍需要真实运营商 IMS 环境验证。
+
+ePDG CHILD_SA 不能只创建 SA 就宣称成功。当前 Windows 版本在还没有可用的
+内层虚拟接口、选择器路由以及完整 ESP/NAT-T 数据面时会明确失败；后续需要
+完成 WFP tunnel 与虚拟接口的组合，或使用 Wintun 加用户态 ESP/NAT-T。
+
+### Windows 服务安装
+
+以管理员身份打开 PowerShell。安装器会复制程序到
+`%ProgramFiles%\Halo\vocat.exe`，创建 `%ProgramData%\Halo\data`，注册
+自动启动和失败重启的 `Halo` 服务，并只在监听非回环地址时开放防火墙端口：
+
+```powershell
+.\scripts\windows\install.ps1 -Executable .\dist\halo-windows-amd64.exe
+$env:VOCAT_DATABASE_PATH = "$env:ProgramData\Halo\data\vocat.db"
+& "$env:ProgramFiles\Halo\vocat.exe" bootstrap-admin
+Start-Service Halo
+```
+
+服务命令行只有 `vocat.exe serve`。安装器会把当前进程中的 `VOCAT_*` 变量写入
+该服务专用的环境块，不会输出变量值，因此现有 `VOCAT_CONFIG` 和环境变量覆盖
+顺序保持不变。默认监听 `127.0.0.1:7575`，无需入站规则；若设置外部监听地址，
+可在安装前设置 `VOCAT_ADDR`，或显式传入 `-OpenFirewall`。
+
+卸载服务和程序文件但保留数据：
+
+```powershell
+.\scripts\windows\uninstall.ps1
+```
+
+只有确认要删除数据库和本地配置时才使用 `-RemoveData`。
+`scripts/windows/install-service.ps1` 保留为新安装器的兼容入口。
+
+故障排查：
+
+```powershell
+Get-Service Halo,WwanSvc,SCardSvr
+netsh mbn show interfaces
+[System.IO.Ports.SerialPort]::GetPortNames()
+& "$env:ProgramFiles\Halo\vocat.exe" version
+Get-Content "$env:ProgramFiles\Halo\vocat.exe.update-result.json" -ErrorAction SilentlyContinue
+Get-Content "$env:ProgramFiles\Halo\vocat.exe.update.log" -Tail 100 -ErrorAction SilentlyContinue
+```
+
+服务错误 1053 通常表示仍在使用没有 Windows Service dispatcher 的旧程序；
+请用当前 artifact 重新执行 `install.ps1`。WFP 返回错误 5 表示权限不足（安装的
+服务以 LocalSystem 运行）。没有 MBN 接口和没有 AT COM 口是两类驱动问题，
+需要分别检查蜂窝网卡和 USB AT 接口。
 
 ### 手动二进制安装
 
@@ -163,6 +212,7 @@ XFRM/3GPP IPsec 的 VoWiFi 数据面不会在 Windows 上伪装开启；VoWiFi �
 | Linux x86 32 位 | `vocat-linux-386` |
 | Linux ARM64 | `vocat-linux-arm64` |
 | Linux ARMv7 | `vocat-linux-armv7` |
+| Windows x86-64 | `halo-windows-amd64.exe`（回退 `vocat-windows-amd64.exe`） |
 
 校验并安装:
 
@@ -292,14 +342,19 @@ vocat carrier import-ipcc --install Carrier_iPhone.ipcc
 
 ## 更新
 
-Halo 默认检查 `Nan7Li/VoCat`，优先下载 `halo-linux-*`，没有时再回退到 `vocat-linux-*`。设置页可以打开自动检查（默认开启），也可以打开“发现新版本后自动安装并重启”。命令行：
+Halo 默认检查 `Nan7Li/VoCat`，优先下载 `halo-*`，没有时再回退到 `vocat-*`。设置页可以打开自动检查（默认开启），也可以打开“发现新版本后自动安装并重启”。命令行：
 
 ```bash
 vocat update --check
 sudo vocat update
 ```
 
-更新器会下载与当前 Linux 架构匹配的二进制,使用已发布的 `SHA256SUMS` 进行校验,原子性地替换可执行文件,并在可用时重启 `vocat` systemd 服务。
+更新器会下载与当前系统和架构匹配的二进制，并使用已发布的 `SHA256SUMS`
+校验。Linux/OpenWrt 保持原有原子替换和服务重启流程。Windows 会从已校验的
+新程序启动独立 helper：停止 `Halo` 服务、等待正在运行的程序退出、把旧程序
+保存为 `.previous`、复制新程序并重启服务。替换或启动失败时会恢复旧程序并
+重新启动。脱敏结果和诊断日志位于程序旁的 `.update-result.json` 与
+`.update.log`；token、密码和 APN 密码不会放入 helper 命令行或这些日志。
 
 Docker 安装的更新方式:
 

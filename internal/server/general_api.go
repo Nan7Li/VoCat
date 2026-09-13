@@ -497,7 +497,9 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
-	if s.updateRestart != nil {
+	// On Windows the verified temporary executable is the updater. It must own
+	// stop/replace/rollback/start because a running .exe cannot be renamed.
+	if s.updateRestart != nil && runtime.GOOS != "windows" {
 		restart := s.updateRestart
 		logger := s.logger
 		go func() {

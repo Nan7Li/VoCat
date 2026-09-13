@@ -41,6 +41,18 @@ jobs:
         shell: bash
         run: go mod download
 
+      - name: Validate Windows installer scripts
+        shell: pwsh
+        run: |
+          $errors = @()
+          Get-ChildItem scripts/windows/*.ps1 | ForEach-Object {
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors)
+          }
+          if ($errors.Count -gt 0) {
+            $errors | Format-List
+            exit 1
+          }
+
       - name: Run Windows tests
         shell: bash
         run: go test ./...
@@ -56,5 +68,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: halo-windows-amd64
-          path: dist/halo-windows-amd64.exe
+          path: |
+            dist/halo-windows-amd64.exe
+            scripts/windows/install.ps1
+            scripts/windows/uninstall.ps1
           if-no-files-found: error
