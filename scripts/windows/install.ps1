@@ -1,11 +1,14 @@
 [CmdletBinding()]
 param(
     [string]$Executable = "",
+    [string]$DesktopExecutable = "",
+    [string]$WintunDll = "",
     [string]$ServiceName = "Halo",
     [string]$InstallDirectory = "",
     [string]$DataDirectory = "",
     [int]$FirewallPort = 0,
     [switch]$OpenFirewall,
+    [switch]$NoDesktopShortcut,
     [switch]$NoStart
 )
 
@@ -59,6 +62,37 @@ if ([string]::IsNullOrWhiteSpace($Executable) -or -not (Test-Path -LiteralPath $
 }
 $sourceExecutable = (Resolve-Path -LiteralPath $Executable).Path
 
+if ([string]::IsNullOrWhiteSpace($DesktopExecutable)) {
+    $desktopCandidates = @(
+        (Join-Path (Split-Path -Parent $sourceExecutable) "vocat-desktop-windows-amd64.exe"),
+        (Join-Path (Split-Path -Parent $sourceExecutable) "vocat-desktop.exe"),
+        (Join-Path $repositoryRoot "dist\vocat-desktop-windows-amd64.exe"),
+        (Join-Path $repositoryRoot "vocat-desktop-windows-amd64.exe")
+    )
+    $DesktopExecutable = $desktopCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+} elseif (-not (Test-Path -LiteralPath $DesktopExecutable -PathType Leaf)) {
+    throw "Native desktop executable not found. Pass -DesktopExecutable with the built vocat-desktop .exe path."
+}
+$desktopSourceExecutable = ""
+if (-not [string]::IsNullOrWhiteSpace($DesktopExecutable)) {
+    $desktopSourceExecutable = (Resolve-Path -LiteralPath $DesktopExecutable).Path
+}
+
+if ([string]::IsNullOrWhiteSpace($WintunDll)) {
+    $wintunCandidates = @(
+        (Join-Path (Split-Path -Parent $sourceExecutable) "wintun.dll"),
+        (Join-Path $repositoryRoot "dist\wintun.dll"),
+        (Join-Path $repositoryRoot "wintun.dll")
+    )
+    $WintunDll = $wintunCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+} elseif (-not (Test-Path -LiteralPath $WintunDll -PathType Leaf)) {
+    throw "Wintun runtime not found. Pass -WintunDll with the architecture-matched wintun.dll path."
+}
+$wintunSource = ""
+if (-not [string]::IsNullOrWhiteSpace($WintunDll)) {
+    $wintunSource = (Resolve-Path -LiteralPath $WintunDll).Path
+}
+
 if ([string]::IsNullOrWhiteSpace($InstallDirectory)) {
     $InstallDirectory = Join-Path $env:ProgramFiles "Halo"
 }
@@ -68,6 +102,8 @@ if ([string]::IsNullOrWhiteSpace($DataDirectory)) {
 $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory)
 $DataDirectory = [IO.Path]::GetFullPath($DataDirectory)
 $installedExecutable = Join-Path $InstallDirectory "vocat.exe"
+$installedDesktopExecutable = Join-Path $InstallDirectory "vocat-desktop.exe"
+$installedWintun = Join-Path $InstallDirectory "wintun.dll"
 
 New-Item -ItemType Directory -Force -Path $InstallDirectory | Out-Null
 New-Item -ItemType Directory -Force -Path $DataDirectory | Out-Null
@@ -90,6 +126,14 @@ if ($null -ne $existing) {
 
 if (-not [string]::Equals($sourceExecutable, $installedExecutable, [StringComparison]::OrdinalIgnoreCase)) {
     Copy-Item -LiteralPath $sourceExecutable -Destination $installedExecutable -Force
+}
+if (-not [string]::IsNullOrWhiteSpace($desktopSourceExecutable) -and
+    -not [string]::Equals($desktopSourceExecutable, $installedDesktopExecutable, [StringComparison]::OrdinalIgnoreCase)) {
+    Copy-Item -LiteralPath $desktopSourceExecutable -Destination $installedDesktopExecutable -Force
+}
+if (-not [string]::IsNullOrWhiteSpace($wintunSource) -and
+    -not [string]::Equals($wintunSource, $installedWintun, [StringComparison]::OrdinalIgnoreCase)) {
+    Copy-Item -LiteralPath $wintunSource -Destination $installedWintun -Force
 }
 
 $serviceEnvironment = [ordered]@{}
@@ -128,6 +172,30 @@ if ($OpenFirewall -or -not $isLoopback) {
     Write-Host "Firewall rule opened TCP $FirewallPort for $installedExecutable."
 } else {
     Write-Host "VOCAT_ADDR is loopback-only; no inbound firewall rule is required."
+}
+
+if (-not $NoDesktopShortcut -and (Test-Path -LiteralPath $installedDesktopExecutable -PathType Leaf)) {
+    $startMenuDirectory = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\Halo"
+    $shortcutPath = Join-Path $startMenuDirectory "VoCat Windows.lnk"
+    New-Item -ItemType Directory -Force -Path $startMenuDirectory | Out-Null
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = $installedDesktopExecutable
+        $shortcut.WorkingDirectory = $InstallDirectory
+        $shortcut.Description = "VoCat Windows native desktop control center"
+        $shortcut.IconLocation = "$installedDesktopExecutable,0"
+        $shortcut.Save()
+    } catch {
+        throw "Failed to create the VoCat Windows desktop shortcut: $($_.Exception.Message)"
+    }
+    Write-Host "Native desktop app installed: $installedDesktopExecutable"
+    Write-Host "Start Menu shortcut: $shortcutPath"
+} elseif ([string]::IsNullOrWhiteSpace($desktopSourceExecutable)) {
+    Write-Host "Native desktop executable was not supplied; install the vocat-desktop artifact to enable the Windows 11 UI."
+}
+if ([string]::IsNullOrWhiteSpace($wintunSource)) {
+    Write-Host "wintun.dll was not supplied; ePDG VoWiFi will fail explicitly until the architecture-matched runtime is placed beside vocat.exe."
 }
 
 $databasePath = $serviceEnvironment["VOCAT_DATABASE_PATH"]

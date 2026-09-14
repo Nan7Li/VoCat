@@ -26,6 +26,18 @@ if ([string]::IsNullOrWhiteSpace($DataDirectory)) {
 $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory)
 $DataDirectory = [IO.Path]::GetFullPath($DataDirectory)
 
+$startMenuDirectory = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\Halo"
+$shortcutPath = Join-Path $startMenuDirectory "VoCat Windows.lnk"
+if (Test-Path -LiteralPath $shortcutPath -PathType Leaf) {
+    Remove-Item -LiteralPath $shortcutPath -Force
+}
+if (Test-Path -LiteralPath $startMenuDirectory -PathType Container) {
+    $remaining = Get-ChildItem -LiteralPath $startMenuDirectory -Force
+    if ($null -eq $remaining) {
+        Remove-Item -LiteralPath $startMenuDirectory -Force
+    }
+}
+
 $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($null -ne $service -and $PSCmdlet.ShouldProcess($ServiceName, "Stop and delete Windows service")) {
     if ($service.Status -ne [ServiceProcess.ServiceControllerStatus]::Stopped) {

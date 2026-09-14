@@ -21,6 +21,8 @@ Usage:
                      starts the server unchanged.
   vocat serve        Run the server in the foreground (use from a TTY when
                      vocat without arguments would enter the menu).
+  vocat desktop      Open the native Windows 11 control center. The same mode
+                     is available from vocat-desktop-windows-amd64.exe.
   vocat version      Print the build version and exit.
   vocat doctor       Diagnose USB modem, AT, QMI, PC/SC and proxy UDP paths.
                      Use --repair-dji-qmi on Linux to restore the factory-ID

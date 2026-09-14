@@ -50,7 +50,7 @@ Vocat 是一款面向 Quectel EC20/EC25 系列蜂窝模组的开源 Web 控制�
 | 通知 | 通过 Telegram、Bark、邮件、Pushplus、签名 Webhook、企业微信以及飞书 / Lark 群机器人转发新入站短信,每条短信单独推送。 |
 | Telegram 机器人 | 设备状态、已安装配置文件列表与切换、WiFi Calling 控制以及短信发送。敏感操作需要管理员确认。 |
 | 运维 | 鉴权、CSRF 防护、访问策略、审计事件、实时日志、日志留存、健康检查、响应式布局、深色模式以及中英文应用界面。 |
-| 分发 | 静态 Linux 二进制、原生 Windows/amd64 构建、systemd 安装脚本、带 SHA-256 校验的自更新、Docker 镜像、GHCR 发布以及 GitHub Actions 发布构建。 |
+| 分发 | 静态 Linux 二进制、Windows 服务程序与可双击的 Win32 原生桌面程序、systemd/Windows 安装脚本、带 SHA-256 校验的自更新、Docker 镜像、GHCR 发布以及 GitHub Actions 发布构建。 |
 
 ## 支持的硬件
 
@@ -138,9 +138,21 @@ npm ci --no-audit --no-fund
 npm run build
 cd ..
 go build -trimpath -o halo-windows-amd64.exe ./cmd/vocat
+go build -trimpath -ldflags "-H=windowsgui" -o vocat-desktop-windows-amd64.exe ./cmd/vocat-desktop
 .\halo-windows-amd64.exe bootstrap-admin
 .\halo-windows-amd64.exe
 ```
+
+Windows 发布包另外包含 `vocat-desktop-windows-amd64.exe`。这是可双击运行的
+真正 Win32 原生桌面程序，不是浏览器套壳或 WebView。双击该文件，或执行
+`vocat.exe desktop`，会打开 Windows 11 风格的控制中心：直接连接已运行的
+Halo 服务，使用同一套登录鉴权 API 展示服务状态、主机资源、已配置模组，
+并在当前账户有 SCM 权限时启动服务。完整 Web 控制台只作为“打开高级 Web
+控制台”按钮提供给需要全部配置页面的场景。服务不在本机默认地址时，可设置
+`VOCAT_DESKTOP_URL`。
+
+首次启动、HTTPS 证书、服务状态、Wintun 和快捷方式故障排查请参阅
+[Windows 原生桌面使用说明](windows-desktop.md)。
 
 添加发现的 COM 模组时选择 **Windows WWAN**。Windows 负责蜂窝数据会话和
 IP 地址配置；AT 串口仍用于 SIM/eSIM、射频、短信、通话和终端。执行
@@ -183,7 +195,9 @@ Windows ePDG CHILD_SA 使用签名的 Wintun 三层适配器、现有用户态 E
 ### Windows 服务安装
 
 以管理员身份打开 PowerShell。安装器会复制程序到
-`%ProgramFiles%\Halo\vocat.exe`，创建 `%ProgramData%\Halo\data`，注册
+`%ProgramFiles%\Halo\vocat.exe` 和
+`%ProgramFiles%\Halo\vocat-desktop.exe`，并在发布包中存在时复制签名的
+`wintun.dll` 运行时；随后创建 `%ProgramData%\Halo\data`，注册
 自动启动和失败重启的 `Halo` 服务，并只在监听非回环地址时开放防火墙端口：
 
 ```powershell
@@ -197,6 +211,10 @@ Start-Service Halo
 该服务专用的环境块，不会输出变量值，因此现有 `VOCAT_CONFIG` 和环境变量覆盖
 顺序保持不变。默认监听 `127.0.0.1:7575`，无需入站规则；若设置外部监听地址，
 可在安装前设置 `VOCAT_ADDR`，或显式传入 `-OpenFirewall`。
+
+如果发布包中包含桌面程序，安装器还会创建开始菜单 **VoCat Windows**
+快捷方式。无人值守安装可传入 `-NoDesktopShortcut`；卸载脚本会删除快捷方式
+和程序文件，默认保留数据目录。
 
 卸载服务和程序文件但保留数据：
 

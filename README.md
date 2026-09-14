@@ -50,7 +50,7 @@ The backend is written in Go, the interface is built with React and TypeScript, 
 | Notifications | New inbound SMS forwarding through Telegram, Bark, email, Pushplus, signed webhooks, WeCom, and Feishu / Lark group bots. Each SMS is delivered as an individual notification. |
 | Telegram bot | Device status, installed-profile listing and switching, WiFi Calling controls, and SMS sending. Sensitive actions require administrator confirmation. |
 | Operations | Authentication, CSRF protection, access policies, audit events, live logs, log retention, health checks, responsive layout, dark mode, and English/Chinese application UI. |
-| Distribution | Static Linux binaries, a native Windows/amd64 build, systemd installation script, self-update with SHA-256 verification, Docker image, GHCR publishing, and GitHub Actions release builds. |
+| Distribution | Static Linux binaries, a native Windows service build plus a double-clickable Win32 desktop build, systemd/Windows installation scripts, self-update with SHA-256 verification, Docker image, GHCR publishing, and GitHub Actions release builds. |
 
 ## Supported hardware
 
@@ -204,8 +204,22 @@ Read-Host "Admin password" | .\halo-windows-amd64.exe bootstrap-admin
 .\halo-windows-amd64.exe serve
 ```
 
+The Windows release also contains `vocat-desktop-windows-amd64.exe`, a real
+native Win32 desktop application (not a browser wrapper or WebView). Double-
+click it, or run `vocat.exe desktop`, to open the Windows 11-style control
+center. It connects to the already running Halo service through the same
+authenticated API, shows service state, host utilization, and configured
+modems, and can start the service when the current account has SCM permission.
+The embedded Web UI remains available from the **Open advanced Web console**
+button for pages that need the complete configuration surface. Set
+`VOCAT_DESKTOP_URL` when the service is not at the local `VOCAT_ADDR` default.
+See [the native desktop usage and troubleshooting guide](docs/windows-desktop.md)
+for first-run and HTTPS notes.
+
 For a managed installation, open PowerShell as Administrator. The installer
-copies the executable to `%ProgramFiles%\Halo\vocat.exe`, creates
+copies the executables to `%ProgramFiles%\Halo\vocat.exe` and
+`%ProgramFiles%\Halo\vocat-desktop.exe` and, when present, the signed
+`wintun.dll` runtime, creates
 `%ProgramData%\Halo\data`, registers a real Windows Service with automatic
 restart, and opens the configured TCP port only when the listener is not
 loopback-only:
@@ -223,6 +237,11 @@ environment block, so the normal `VOCAT_CONFIG` then environment override
 order remains unchanged. It does not print those values. To bind externally,
 set `VOCAT_ADDR` before installation or pass `-OpenFirewall`; the default
 `127.0.0.1:7575` does not require an inbound firewall rule.
+
+When the desktop artifact is present, the installer also creates a Start Menu
+shortcut named **VoCat Windows**. Use `-NoDesktopShortcut` for unattended
+installations that should not create a shortcut. `uninstall.ps1` removes the
+shortcut and program files while preserving the data directory by default.
 
 Uninstall the service and program files while preserving data:
 

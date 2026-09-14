@@ -83,6 +83,7 @@ jobs:
         run: |
           mkdir -p dist
           go build -trimpath -ldflags "-s -w" -o dist/halo-windows-amd64.exe ./cmd/vocat
+          go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist/vocat-desktop-windows-amd64.exe ./cmd/vocat-desktop
           dist/halo-windows-amd64.exe version
 
       - name: Upload Windows executable
@@ -91,6 +92,7 @@ jobs:
           name: halo-windows-amd64
           path: |
             dist/halo-windows-amd64.exe
+            dist/vocat-desktop-windows-amd64.exe
             dist/wintun.dll
             scripts/windows/install.ps1
             scripts/windows/uninstall.ps1

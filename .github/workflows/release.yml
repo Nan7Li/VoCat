@@ -135,6 +135,10 @@ jobs:
             -o "$OUTPUT" \
             ./cmd/vocat
           if [[ "${{ matrix.target }}" == "windows-amd64" ]]; then
+            go build -trimpath \
+              -ldflags "-s -w -H=windowsgui -X vocat/internal/buildinfo.Version=${VERSION} -X vocat/internal/buildinfo.BuildTime=${BUILD_TIME}" \
+              -o dist/vocat-desktop-windows-amd64.exe \
+              ./cmd/vocat-desktop
             WINTUN_VERSION="0.14.1"
             WINTUN_URL="https://www.wintun.net/builds/wintun-${WINTUN_VERSION}.zip"
             curl --fail --location --silent --show-error "$WINTUN_URL" -o /tmp/wintun.zip
@@ -158,6 +162,14 @@ jobs:
         with:
           name: binary-${{ matrix.target }}
           path: dist/${{ matrix.filename }}
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload native Windows desktop executable
+        if: matrix.target == 'windows-amd64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-windows-desktop
+          path: dist/vocat-desktop-windows-amd64.exe
           if-no-files-found: error
           retention-days: 1
       - name: Upload signed Wintun runtime
@@ -192,7 +204,7 @@ jobs:
           for f in vocat-windows-*; do
             cp "$f" "halo-${f#vocat-}"
           done
-          sha256sum vocat-linux-* halo-linux-* vocat-windows-* halo-windows-* wintun.dll | sort > SHA256SUMS
+          sha256sum vocat-linux-* halo-linux-* vocat-windows-* halo-windows-* vocat-desktop-windows-*.exe wintun.dll | sort > SHA256SUMS
       - name: Create or update GitHub Release
         run: |
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

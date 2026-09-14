@@ -21,6 +21,7 @@ import (
 
 	"vocat/internal/auth"
 	"vocat/internal/config"
+	"vocat/internal/desktop"
 	"vocat/internal/developer"
 	"vocat/internal/device"
 	"vocat/internal/exportproxy"
@@ -73,6 +74,14 @@ func main() {
 		// would otherwise enter the menu (root on a TTY) but a server is wanted.
 		if err := run(logger, logs); err != nil {
 			logger.Error("server stopped", "error", err)
+			os.Exit(1)
+		}
+	case "desktop", "windows-ui":
+		// The Windows desktop entry point is a real native Win32 window.  It
+		// talks to the already installed Halo service through its authenticated
+		// API; server and Linux/OpenWrt startup paths remain unchanged.
+		if err := desktop.Run(); err != nil {
+			logger.Error("desktop UI stopped", "error", err)
 			os.Exit(1)
 		}
 	case "version", "-v", "--version":
