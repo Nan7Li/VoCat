@@ -234,15 +234,32 @@ Pass `-RemoveData` only when the database and all locally stored settings
 should also be deleted. `scripts/windows/install-service.ps1` remains as a
 compatibility wrapper around the new installer.
 
-Windows IMS `ipsec-3gpp` uses a dynamic `Fwpuclnt.dll` WFP session, two
-transport-mode ESP SA pairs, and IP/protocol/port-scoped inbound and outbound
-filters. AES-CBC, 3DES-CBC, NULL encryption, HMAC-SHA1-96, and HMAC-MD5-96
-are mapped to native WFP transforms; key copies are zeroed as soon as WFP has
-accepted them. This path is compile- and unit-tested but still requires a real
-carrier IMS test. ePDG CHILD_SA is different: until the Windows tunnel path has
-a real inner interface and selector routing (native WFP virtual interface or
-Wintun user-space ESP/NAT-T), enablement fails explicitly and never reports a
-working tunnel.
+Windows IMS `ipsec-3gpp` uses a dynamic `Fwpuclnt.dll` filter session plus
+a separate ordinary WFP session for manual SA contexts (Windows rejects
+`IPsecSaContextCreate1` from a dynamic session). It installs two
+transport-mode ESP SA pairs and IP/protocol/port-scoped inbound and outbound
+filters. Because one Windows transport SA context can bind only one filter per
+direction, the common TCP+UDP IMS selector is represented by one exact
+IP+port filter (single-protocol selectors retain the protocol condition); any
+other multi-protocol selector fails explicitly. AES-CBC, 3DES-CBC, NULL
+encryption, HMAC-SHA1-96, and HMAC-MD5-96 are mapped to native WFP transforms;
+key copies are zeroed as soon as WFP has accepted them. This path is compile-
+and unit-tested, with an elevated
+integration test available through `VOCAT_WFP_INTEGRATION=1`, but still
+requires a real carrier IMS test.
+
+Windows ePDG CHILD_SA uses the signed Wintun layer-3 adapter plus the existing
+user-space ESP implementation and the UDP/4500 relay. The installer assigns
+the negotiated inner addresses, preserves the outer ePDG route before adding
+selector CIDRs, and removes every route, address, adapter, and ESP key on
+close. The Windows artifact includes `wintun.dll`; keep it beside
+`vocat.exe` (or install the same signed DLL from [Wintun](https://www.wintun.net/)).
+Only negotiated NAT-T is enabled on this path. A non-NAT-T CHILD_SA, missing
+Wintun DLL/driver, unavailable route, or any setup error fails explicitly and
+never reports a working tunnel.
+
+See [the detailed Windows VoWiFi validation checklist](docs/windows-vowifi.md)
+for the opt-in WFP test, carrier acceptance steps, and packet diagnostics.
 
 Windows troubleshooting:
 
@@ -260,6 +277,13 @@ dispatcher is installed; rerun `install.ps1` with a current artifact. Error 5
 from WFP means the process is not elevated (the installed service runs as
 LocalSystem). A missing MBN interface is a driver/WWAN issue, while a missing
 COM port is an AT USB interface/driver issue; they are diagnosed separately.
+If ePDG reports that Wintun is unavailable, verify that the architecture-matched
+`wintun.dll` is in the same directory as `vocat.exe`, the service account can
+read it, and the process is elevated enough for Windows to create a virtual
+adapter. `VOCAT_WFP_INTEGRATION=1` must only be used on an isolated test host;
+set `VOCAT_WFP_LOCAL_IP` and `VOCAT_WFP_REMOTE_IP` to the two real carrier
+endpoints before running that test. The integration test changes host WFP
+state briefly and always calls `Close` to remove the dynamic objects.
 For a more detailed driver check, run `pnputil /enum-devices /connected
 /problem` as Administrator and look for `VID_2C7C&PID_0125` or another modem
 hardware ID. Problem code 28 means Windows has no matching driver package.

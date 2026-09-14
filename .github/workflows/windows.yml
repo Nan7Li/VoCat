@@ -41,6 +41,27 @@ jobs:
         shell: bash
         run: go mod download
 
+      - name: Download signed Wintun runtime
+        shell: pwsh
+        run: |
+          $version = "0.14.1"
+          $url = "https://www.wintun.net/builds/wintun-$version.zip"
+          $archive = Join-Path $env:RUNNER_TEMP "wintun-$version.zip"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $expected = "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "Wintun archive SHA256 mismatch: got $actual"
+          }
+          $extract = Join-Path $env:RUNNER_TEMP "wintun-$version"
+          Expand-Archive -LiteralPath $archive -DestinationPath $extract -Force
+          $dll = Join-Path $extract "wintun\bin\amd64\wintun.dll"
+          if (-not (Test-Path -LiteralPath $dll)) {
+            throw "Signed Wintun amd64 DLL was not found in the archive"
+          }
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item -LiteralPath $dll -Destination dist\wintun.dll -Force
+
       - name: Validate Windows installer scripts
         shell: pwsh
         run: |
@@ -70,6 +91,7 @@ jobs:
           name: halo-windows-amd64
           path: |
             dist/halo-windows-amd64.exe
+            dist/wintun.dll
             scripts/windows/install.ps1
             scripts/windows/uninstall.ps1
           if-no-files-found: error

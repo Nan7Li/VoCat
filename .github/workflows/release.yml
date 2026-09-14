@@ -134,6 +134,14 @@ jobs:
             -ldflags "-s -w -X vocat/internal/buildinfo.Version=${VERSION} -X vocat/internal/buildinfo.BuildTime=${BUILD_TIME}" \
             -o "$OUTPUT" \
             ./cmd/vocat
+          if [[ "${{ matrix.target }}" == "windows-amd64" ]]; then
+            WINTUN_VERSION="0.14.1"
+            WINTUN_URL="https://www.wintun.net/builds/wintun-${WINTUN_VERSION}.zip"
+            curl --fail --location --silent --show-error "$WINTUN_URL" -o /tmp/wintun.zip
+            echo "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51  /tmp/wintun.zip" | sha256sum --check --status
+            unzip -p /tmp/wintun.zip wintun/bin/amd64/wintun.dll > dist/wintun.dll
+            test -s dist/wintun.dll
+          fi
           if [[ "${{ matrix.target }}" == linux-* ]]; then
             chmod 0755 "$OUTPUT"
             if readelf -l "$OUTPUT" | grep -q 'Requesting program interpreter'; then
@@ -150,6 +158,14 @@ jobs:
         with:
           name: binary-${{ matrix.target }}
           path: dist/${{ matrix.filename }}
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload signed Wintun runtime
+        if: matrix.target == 'windows-amd64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-windows-wintun
+          path: dist/wintun.dll
           if-no-files-found: error
           retention-days: 1
 
@@ -176,7 +192,7 @@ jobs:
           for f in vocat-windows-*; do
             cp "$f" "halo-${f#vocat-}"
           done
-          sha256sum vocat-linux-* halo-linux-* vocat-windows-* halo-windows-* | sort > SHA256SUMS
+          sha256sum vocat-linux-* halo-linux-* vocat-windows-* halo-windows-* wintun.dll | sort > SHA256SUMS
       - name: Create or update GitHub Release
         run: |
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

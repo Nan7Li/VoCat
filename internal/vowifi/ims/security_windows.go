@@ -16,8 +16,9 @@ import (
 )
 
 // This file maps the documented WFP user-mode ABI directly instead of
-// shelling out to netsh or importing Linux XFRM semantics. All objects live in
-// one dynamic engine session and are also explicitly deleted during Close.
+// shelling out to netsh or importing Linux XFRM semantics. Filters live in a
+// dynamic engine session, while manual SA contexts use a separate ordinary
+// engine session because IPsecSaContextCreate1 rejects dynamic sessions.
 
 const (
 	wfpEmpty           uint32 = 0
@@ -28,7 +29,7 @@ const (
 	wfpMatchEqual      uint32 = 0
 
 	fwpmSessionFlagDynamic      uint32 = 0x1
-	fwpActionCalloutTerminating uint32 = 0x00005003
+	fwpActionCalloutTerminating uint32 = 3
 	rpcCAuthnWinNT              uint32 = 10
 
 	fwpIPVersionV4 uint32 = 0
@@ -237,11 +238,12 @@ type ipsecSABundle0 struct {
 type windowsIPSecInstaller struct{}
 
 type windowsIPSecHandle struct {
-	mu         sync.Mutex
-	engine     uintptr
-	contextIDs []uint64
-	filterIDs  []uint64
-	closed     bool
+	mu           sync.Mutex
+	filterEngine uintptr
+	saEngine     uintptr
+	contextIDs   []uint64
+	filterIDs    []uint64
+	closed       bool
 }
 
 type windowsIPSecPair struct {
@@ -257,6 +259,9 @@ type windowsIPSecPair struct {
 func defaultIPSecInstaller() IPSecSAInstaller { return windowsIPSecInstaller{} }
 
 func (windowsIPSecInstaller) Install(ctx context.Context, config IPSecSAConfig) (IPSecSAHandle, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := validateIPSecSAConfig(config); err != nil {
 		return nil, err
 	}
@@ -267,11 +272,16 @@ func (windowsIPSecInstaller) Install(ctx context.Context, config IPSecSAConfig) 
 	defer zeroBytes(keyConfig.EncryptionKey)
 	defer zeroBytes(keyConfig.IntegrityKey)
 
-	engine, err := openWFPDynamicSession()
+	filterEngine, err := openWFPEngine(true)
 	if err != nil {
-		return nil, fmt.Errorf("ims: open Windows WFP dynamic session: %w", err)
+		return nil, fmt.Errorf("ims: open Windows WFP dynamic filter session: %w", err)
 	}
-	handle := &windowsIPSecHandle{engine: engine}
+	saEngine, err := openWFPEngine(false)
+	if err != nil {
+		_ = closeWFPEngine(filterEngine)
+		return nil, fmt.Errorf("ims: open Windows WFP SA session: %w", err)
+	}
+	handle := &windowsIPSecHandle{filterEngine: filterEngine, saEngine: saEngine}
 	pairs := []windowsIPSecPair{
 		{
 			name: "UE client and P-CSCF server", localPort: config.UEClientPort, remotePort: config.PCSCFServerPort,
@@ -296,7 +306,7 @@ func (windowsIPSecInstaller) Install(ctx context.Context, config IPSecSAConfig) 
 	return handle, nil
 }
 
-func openWFPDynamicSession() (uintptr, error) {
+func openWFPEngine(dynamic bool) (uintptr, error) {
 	for _, procedure := range []*windows.LazyProc{
 		procFwpmEngineOpen0, procFwpmEngineClose0, procFwpmFilterAdd0, procFwpmFilterDeleteByID0,
 		procIPSecSaContextCreate1, procIPSecSaContextSetSPI0, procIPSecSaContextAddInbound0,
@@ -306,7 +316,10 @@ func openWFPDynamicSession() (uintptr, error) {
 			return 0, fmt.Errorf("required Fwpuclnt.dll procedure %s is unavailable: %w", procedure.Name, err)
 		}
 	}
-	session := wfpSession0{flags: fwpmSessionFlagDynamic}
+	var session wfpSession0
+	if dynamic {
+		session.flags = fwpmSessionFlagDynamic
+	}
 	var engine uintptr
 	result, _, _ := procFwpmEngineOpen0.Call(
 		0,
@@ -321,39 +334,52 @@ func openWFPDynamicSession() (uintptr, error) {
 	return engine, nil
 }
 
+func closeWFPEngine(engine uintptr) error {
+	if engine == 0 {
+		return nil
+	}
+	result, _, _ := procFwpmEngineClose0.Call(engine)
+	if result != 0 {
+		return wfpError("FwpmEngineClose0", result)
+	}
+	return nil
+}
+
 func (handle *windowsIPSecHandle) installPair(ctx context.Context, config IPSecSAConfig, pair windowsIPSecPair) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	var firstInboundFilter, firstOutboundFilter uint64
-	for _, protocol := range pair.inProtocols {
-		filterID, err := addWFPIPSecFilter(handle.engine, config.LocalIP, config.RemoteIP, pair.localPort, pair.remotePort, protocol, true)
-		if err != nil {
-			return fmt.Errorf("ims: add %s inbound protocol %d WFP filter: %w", pair.name, protocol, err)
-		}
-		handle.filterIDs = append(handle.filterIDs, filterID)
-		if firstInboundFilter == 0 {
-			firstInboundFilter = filterID
-		}
+	inProtocol, err := wfpFilterProtocol(pair.inProtocols)
+	if err != nil {
+		return fmt.Errorf("ims: %s inbound transport selector: %w", pair.name, err)
 	}
-	for _, protocol := range pair.outProtocols {
-		filterID, err := addWFPIPSecFilter(handle.engine, config.LocalIP, config.RemoteIP, pair.localPort, pair.remotePort, protocol, false)
-		if err != nil {
-			return fmt.Errorf("ims: add %s outbound protocol %d WFP filter: %w", pair.name, protocol, err)
-		}
-		handle.filterIDs = append(handle.filterIDs, filterID)
-		if firstOutboundFilter == 0 {
-			firstOutboundFilter = filterID
-		}
+	outProtocol, err := wfpFilterProtocol(pair.outProtocols)
+	if err != nil {
+		return fmt.Errorf("ims: %s outbound transport selector: %w", pair.name, err)
 	}
+	// A Windows transport SA context accepts exactly one inbound and one
+	// outbound filter. A zero protocol is intentional for the common TCP+UDP
+	// IMS selector: exact local/remote ports still constrain the filter to
+	// transports that expose those ports, while one filter remains attachable
+	// to the SA context.
+	inboundFilter, err := addWFPIPSecFilter(handle.filterEngine, config.LocalIP, config.RemoteIP, pair.localPort, pair.remotePort, inProtocol, true)
+	if err != nil {
+		return fmt.Errorf("ims: add %s inbound WFP filter: %w", pair.name, err)
+	}
+	handle.filterIDs = append(handle.filterIDs, inboundFilter)
+	outboundFilter, err := addWFPIPSecFilter(handle.filterEngine, config.LocalIP, config.RemoteIP, pair.localPort, pair.remotePort, outProtocol, false)
+	if err != nil {
+		return fmt.Errorf("ims: add %s outbound WFP filter: %w", pair.name, err)
+	}
+	handle.filterIDs = append(handle.filterIDs, outboundFilter)
 
-	traffic, version, err := makeIPSecTraffic(config.LocalIP, config.RemoteIP, firstOutboundFilter)
+	traffic, version, err := makeIPSecTraffic(config.LocalIP, config.RemoteIP, outboundFilter)
 	if err != nil {
 		return err
 	}
 	var contextID uint64
 	result, _, _ := procIPSecSaContextCreate1.Call(
-		handle.engine,
+		handle.saEngine,
 		uintptr(unsafe.Pointer(&traffic)),
 		0,
 		0,
@@ -365,10 +391,10 @@ func (handle *windowsIPSecHandle) installPair(ctx context.Context, config IPSecS
 	handle.contextIDs = append(handle.contextIDs, contextID)
 
 	inboundTraffic := traffic
-	inboundTraffic.filterOrPolicy = firstInboundFilter
+	inboundTraffic.filterOrPolicy = inboundFilter
 	getSPI := ipsecGetSPI1{inboundTraffic: inboundTraffic, ipVersion: version}
 	result, _, _ = procIPSecSaContextSetSPI0.Call(
-		handle.engine,
+		handle.saEngine,
 		uintptr(contextID),
 		uintptr(unsafe.Pointer(&getSPI)),
 		uintptr(pair.inboundSPI),
@@ -376,10 +402,10 @@ func (handle *windowsIPSecHandle) installPair(ctx context.Context, config IPSecS
 	if result != 0 {
 		return wfpError("IPsecSaContextSetSpi0", result)
 	}
-	if err := addWFPESPAssociation(handle.engine, contextID, pair.inboundSPI, version, config, true); err != nil {
+	if err := addWFPESPAssociation(handle.saEngine, contextID, pair.inboundSPI, version, config, true); err != nil {
 		return fmt.Errorf("ims: add %s inbound ESP SA: %w", pair.name, err)
 	}
-	if err := addWFPESPAssociation(handle.engine, contextID, pair.outboundSPI, version, config, false); err != nil {
+	if err := addWFPESPAssociation(handle.saEngine, contextID, pair.outboundSPI, version, config, false); err != nil {
 		return fmt.Errorf("ims: add %s outbound ESP SA: %w", pair.name, err)
 	}
 	return nil
@@ -405,13 +431,21 @@ func addWFPIPSecFilter(
 	if version != remoteVersion {
 		return 0, errors.New("WFP filter endpoints use different IP families")
 	}
-	conditions := [5]wfpFilterCondition0{
-		{fieldKey: fwpmConditionIPLocalAddress, matchType: wfpMatchEqual, conditionValue: localValue},
-		{fieldKey: fwpmConditionIPRemoteAddress, matchType: wfpMatchEqual, conditionValue: remoteValue},
-		{fieldKey: fwpmConditionIPProtocol, matchType: wfpMatchEqual, conditionValue: wfpValue0{type_: wfpUint8, value: uintptr(protocol)}},
-		{fieldKey: fwpmConditionIPLocalPort, matchType: wfpMatchEqual, conditionValue: wfpValue0{type_: wfpUint16, value: uintptr(uint16(localPort))}},
-		{fieldKey: fwpmConditionIPRemotePort, matchType: wfpMatchEqual, conditionValue: wfpValue0{type_: wfpUint16, value: uintptr(uint16(remotePort))}},
+	conditions := make([]wfpFilterCondition0, 0, 5)
+	conditions = append(conditions,
+		wfpFilterCondition0{fieldKey: fwpmConditionIPLocalAddress, matchType: wfpMatchEqual, conditionValue: localValue},
+		wfpFilterCondition0{fieldKey: fwpmConditionIPRemoteAddress, matchType: wfpMatchEqual, conditionValue: remoteValue},
+	)
+	if protocol != 0 {
+		conditions = append(conditions, wfpFilterCondition0{
+			fieldKey: fwpmConditionIPProtocol, matchType: wfpMatchEqual,
+			conditionValue: wfpValue0{type_: wfpUint8, value: uintptr(protocol)},
+		})
 	}
+	conditions = append(conditions,
+		wfpFilterCondition0{fieldKey: fwpmConditionIPLocalPort, matchType: wfpMatchEqual, conditionValue: wfpValue0{type_: wfpUint16, value: uintptr(uint16(localPort))}},
+		wfpFilterCondition0{fieldKey: fwpmConditionIPRemotePort, matchType: wfpMatchEqual, conditionValue: wfpValue0{type_: wfpUint16, value: uintptr(uint16(remotePort))}},
+	)
 	name, _ := windows.UTF16PtrFromString("Halo IMS ipsec-3gpp transport policy")
 	description, _ := windows.UTF16PtrFromString("Dynamic IP/transport/port scoped ESP policy")
 	filter := wfpFilter0{
@@ -450,6 +484,33 @@ func addWFPIPSecFilter(
 		return 0, wfpError("FwpmFilterAdd0", result)
 	}
 	return filterID, nil
+}
+
+func wfpFilterProtocol(protocols []uint8) (uint8, error) {
+	seen := make(map[uint8]struct{}, len(protocols))
+	for _, protocol := range protocols {
+		if protocol == 0 {
+			return 0, errors.New("protocol selector contains wildcard zero")
+		}
+		seen[protocol] = struct{}{}
+	}
+	switch len(seen) {
+	case 0:
+		return 0, errors.New("protocol selector is empty")
+	case 1:
+		for protocol := range seen {
+			return protocol, nil
+		}
+	case 2:
+		if _, tcp := seen[6]; tcp {
+			if _, udp := seen[17]; udp {
+				// One filter with exact ports safely covers the TCP+UDP IMS
+				// selector while respecting the one-filter SA-context limit.
+				return 0, nil
+			}
+		}
+	}
+	return 0, errors.New("Windows transport-mode SA supports one protocol or the TCP+UDP combination only")
 }
 
 func wfpAddressValue(ip net.IP) (uint32, wfpValue0, *[16]byte, error) {
@@ -572,6 +633,9 @@ func byteBlob(value []byte) wfpByteBlob {
 }
 
 func (handle *windowsIPSecHandle) Close(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	handle.mu.Lock()
 	defer handle.mu.Unlock()
 	if handle.closed {
@@ -579,25 +643,30 @@ func (handle *windowsIPSecHandle) Close(ctx context.Context) error {
 	}
 	handle.closed = true
 	var cleanupErrors []error
-	for index := len(handle.contextIDs) - 1; index >= 0; index-- {
-		result, _, _ := procIPSecSaContextDeleteByID0.Call(handle.engine, uintptr(handle.contextIDs[index]))
-		if result != 0 {
-			cleanupErrors = append(cleanupErrors, wfpError("IPsecSaContextDeleteById0", result))
+	if handle.saEngine != 0 {
+		for index := len(handle.contextIDs) - 1; index >= 0; index-- {
+			result, _, _ := procIPSecSaContextDeleteByID0.Call(handle.saEngine, uintptr(handle.contextIDs[index]))
+			if result != 0 {
+				cleanupErrors = append(cleanupErrors, wfpError("IPsecSaContextDeleteById0", result))
+			}
 		}
 	}
-	for index := len(handle.filterIDs) - 1; index >= 0; index-- {
-		result, _, _ := procFwpmFilterDeleteByID0.Call(handle.engine, uintptr(handle.filterIDs[index]))
-		if result != 0 {
-			cleanupErrors = append(cleanupErrors, wfpError("FwpmFilterDeleteById0", result))
+	if handle.filterEngine != 0 {
+		for index := len(handle.filterIDs) - 1; index >= 0; index-- {
+			result, _, _ := procFwpmFilterDeleteByID0.Call(handle.filterEngine, uintptr(handle.filterIDs[index]))
+			if result != 0 {
+				cleanupErrors = append(cleanupErrors, wfpError("FwpmFilterDeleteById0", result))
+			}
 		}
 	}
-	if handle.engine != 0 {
-		result, _, _ := procFwpmEngineClose0.Call(handle.engine)
-		if result != 0 {
-			cleanupErrors = append(cleanupErrors, wfpError("FwpmEngineClose0", result))
-		}
-		handle.engine = 0
+	if err := closeWFPEngine(handle.saEngine); err != nil {
+		cleanupErrors = append(cleanupErrors, err)
 	}
+	if err := closeWFPEngine(handle.filterEngine); err != nil {
+		cleanupErrors = append(cleanupErrors, err)
+	}
+	handle.saEngine = 0
+	handle.filterEngine = 0
 	if err := ctx.Err(); err != nil {
 		cleanupErrors = append(cleanupErrors, err)
 	}

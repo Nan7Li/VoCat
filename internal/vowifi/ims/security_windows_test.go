@@ -83,3 +83,47 @@ func TestWindowsWFPManualSAProceduresAreAvailable(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowsWFPManualSAConstants(t *testing.T) {
+	if fwpActionCalloutTerminating != 3 {
+		t.Fatalf("FWP_ACTION_CALLOUT_TERMINATING = %#x, want %#x", fwpActionCalloutTerminating, uint32(3))
+	}
+	if ipsecTransformESPAuth != 2 || ipsecTransformESPAuthAndCipher != 4 {
+		t.Fatalf("unexpected IPsec transform constants: auth=%d auth+cipher=%d", ipsecTransformESPAuth, ipsecTransformESPAuthAndCipher)
+	}
+	if ipsecCipherType3DES != 2 || ipsecCipherTypeAES128 != 3 {
+		t.Fatalf("unexpected IPsec cipher constants: 3DES=%d AES=%d", ipsecCipherType3DES, ipsecCipherTypeAES128)
+	}
+}
+
+func TestWindowsWFPFilterProtocol(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		protocols []uint8
+		want      uint8
+		wantErr   bool
+	}{
+		{name: "tcp", protocols: []uint8{6}, want: 6},
+		{name: "duplicate tcp", protocols: []uint8{6, 6}, want: 6},
+		{name: "tcp and udp", protocols: []uint8{6, 17}},
+		{name: "udp and tcp", protocols: []uint8{17, 6}},
+		{name: "empty", wantErr: true},
+		{name: "unsupported combination", protocols: []uint8{6, 132}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := wfpFilterProtocol(test.protocols)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("wfpFilterProtocol() error = nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("wfpFilterProtocol() error = %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("wfpFilterProtocol() = %d, want %d", got, test.want)
+			}
+		})
+	}
+}

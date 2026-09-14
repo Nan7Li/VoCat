@@ -157,14 +157,28 @@ IP 地址配置；AT 串口仍用于 SIM/eSIM、射频、短信、通话和终�
 
 Windows 版本同时支持 PC/SC 读卡器、WireGuard 原生 Windows 运行器、按接口
 绑定的代理/通知出站连接以及 Windows IP Helper 流量计数。IMS
-`ipsec-3gpp` 已使用 `Fwpuclnt.dll` 的动态 WFP 会话实现 transport-mode ESP：
-按本地/远端 IP、协议和端口安装双向 SA 与过滤器，支持 AES-CBC、3DES-CBC、
-NULL、HMAC-SHA1-96 和 HMAC-MD5-96，并在 WFP 接收密钥后立即清零密钥副本。
-该路径已通过编译和单元测试，但仍需要真实运营商 IMS 环境验证。
+`ipsec-3gpp` 已使用 `Fwpuclnt.dll` 的动态过滤器会话和独立的普通
+WFP SA 会话实现 transport-mode ESP（Windows 禁止在 dynamic session 中调用
+`IPsecSaContextCreate1`）：按本地/远端 IP、协议和端口安装双向 SA 与过滤器，
+支持 AES-CBC、3DES-CBC、NULL、HMAC-SHA1-96 和 HMAC-MD5-96，并在 WFP
+接收密钥后立即清零密钥副本。
+由于 Windows transport-mode 的一个 SA context 每个方向只能绑定一个
+filter，常见的 TCP+UDP IMS 选择器会合并为一个精确的 IP+端口 filter（单协议
+选择器保留协议条件）；其他多协议组合会明确失败，不会只安装部分数据面。
+该路径已通过编译和单元测试；在隔离且具备管理员权限的 Windows 主机上设置
+`VOCAT_WFP_INTEGRATION=1`、`VOCAT_WFP_LOCAL_IP` 和 `VOCAT_WFP_REMOTE_IP`
+可运行真实 WFP 安装/清理集成测试，但仍必须用运营商 IMS 完成端到端验证。
 
-ePDG CHILD_SA 不能只创建 SA 就宣称成功。当前 Windows 版本在还没有可用的
-内层虚拟接口、选择器路由以及完整 ESP/NAT-T 数据面时会明确失败；后续需要
-完成 WFP tunnel 与虚拟接口的组合，或使用 Wintun 加用户态 ESP/NAT-T。
+Windows ePDG CHILD_SA 使用签名的 Wintun 三层适配器、现有用户态 ESP
+实现以及 UDP/4500 relay。安装时会配置协商得到的内层地址，把 ePDG 外层
+地址的现有路由固定在原网卡上，再安装选择器 CIDR 路由；关闭时删除所有路由、
+地址、适配器和 ESP 密钥。Windows artifact 已包含 `wintun.dll`，必须把它与
+`vocat.exe` 放在同一目录（也可从 [Wintun](https://www.wintun.net/) 获取相同的
+签名 DLL）。当前仅启用协商出的 NAT-T；非 NAT-T CHILD_SA、缺少 DLL/驱动、
+没有外层路由或任一步骤失败都会明确报错，绝不会伪装成已建立隧道。
+
+详见 [Windows VoWiFi 实机验证清单](windows-vowifi.md)，其中包含 WFP
+集成测试、运营商验收步骤和抓包诊断命令。
 
 ### Windows 服务安装
 
@@ -207,7 +221,10 @@ Get-Content "$env:ProgramFiles\Halo\vocat.exe.update.log" -Tail 100 -ErrorAction
 服务错误 1053 通常表示仍在使用没有 Windows Service dispatcher 的旧程序；
 请用当前 artifact 重新执行 `install.ps1`。WFP 返回错误 5 表示权限不足（安装的
 服务以 LocalSystem 运行）。没有 MBN 接口和没有 AT COM 口是两类驱动问题，
-需要分别检查蜂窝网卡和 USB AT 接口。
+需要分别检查蜂窝网卡和 USB AT 接口。如果 ePDG 报告 Wintun 不可用，请确认
+架构匹配的 `wintun.dll` 位于 `vocat.exe` 同目录、服务账户可读取该文件，且进程
+具备创建虚拟适配器的权限。WFP 集成测试会短暂修改主机动态 WFP 对象，只能在
+隔离测试机执行，并会在结束时调用 `Close` 清理。
 更详细的驱动检查可在管理员 PowerShell 执行
 `pnputil /enum-devices /connected /problem`；查找 `VID_2C7C&PID_0125`
 等模组硬件 ID，问题码 28 表示 Windows 没有匹配的驱动包。
