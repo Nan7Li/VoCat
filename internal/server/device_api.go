@@ -2069,6 +2069,10 @@ func (s *Server) configuredDeviceSummary(
 			}
 		}
 	}
+	audioReady, audioReason, audioTransport := s.callAudioCapability(config)
+	result["call_audio_ready"] = audioReady
+	result["call_audio_reason"] = audioReason
+	result["call_audio_transport"] = audioTransport
 	return result
 }
 

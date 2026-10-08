@@ -42,11 +42,12 @@ type Executor interface {
 
 // Authorization is the device and SIM decision captured for one call.
 type Authorization struct {
-	Kind       string
-	DeviceID   string
-	PhysicalID string
-	ICCID      string
-	Reason     string
+	Kind          string
+	DeviceID      string
+	PhysicalID    string
+	ICCID         string
+	USBGeneration string
+	Reason        string
 }
 
 // Gate decides whether this line may use cellular AT right now.
@@ -99,25 +100,27 @@ type Controller struct {
 }
 
 type session struct {
-	call       vowifi.Call
-	physicalID string
-	iccid      string
-	kind       string
-	epoch      uint64
+	call          vowifi.Call
+	physicalID    string
+	iccid         string
+	usbGeneration string
+	kind          string
+	epoch         uint64
 	// onModem is set after ATD is accepted or an incoming CLCC call is adopted.
 	// Hangup sends ATH only then, and only to this original identity.
 	onModem bool
 	// holdCLCC ignores CLCC while dial preparation has not submitted ATD, and
 	// while an incoming answer is between Prepare and ATA. An empty list in
 	// that window is not the end of the call.
-	holdCLCC   bool
-	prepared   bool
-	started    bool
-	starting   bool
-	cancelled  bool
-	index      int
-	indexBound bool
-	recorder   *audiowav.Recorder
+	holdCLCC      bool
+	prepared      bool
+	started       bool
+	starting      bool
+	audioStopping bool
+	cancelled     bool
+	index         int
+	indexBound    bool
+	recorder      *audiowav.Recorder
 }
 
 type subscriber struct {
@@ -133,14 +136,20 @@ type uplinkLease struct {
 	open     bool
 	audio    Audio
 	recorder *audiowav.Recorder
+	onError  func(error)
 }
 
-func (lease *uplinkLease) write(samples []int16) error {
+func (lease *uplinkLease) write(samples []int16) (err error) {
 	if lease == nil {
 		return errUplinkClosed
 	}
 	lease.mu.Lock()
-	defer lease.mu.Unlock()
+	defer func() {
+		lease.mu.Unlock()
+		if err != nil && !errors.Is(err, errUplinkClosed) && lease.onError != nil {
+			lease.onError(err)
+		}
+	}()
 	if !lease.open {
 		return errUplinkClosed
 	}
@@ -194,11 +203,12 @@ func (controller *Controller) Dial(ctx context.Context, number string, requireMe
 		call: vowifi.Call{
 			ID: callID, Number: number, Direction: "outgoing", State: "dialing", StartedAt: time.Now().UTC(),
 		},
-		physicalID: auth.PhysicalID,
-		iccid:      auth.ICCID,
-		kind:       auth.Kind,
-		epoch:      controller.bumpEpochLocked(),
-		holdCLCC:   true,
+		physicalID:    auth.PhysicalID,
+		iccid:         auth.ICCID,
+		usbGeneration: auth.USBGeneration,
+		kind:          auth.Kind,
+		epoch:         controller.bumpEpochLocked(),
+		holdCLCC:      true,
 	}
 	controller.live = sess
 	controller.mu.Unlock()
@@ -435,11 +445,12 @@ func (controller *Controller) Hangup(ctx context.Context, callID string) error {
 func (controller *Controller) Poll(ctx context.Context) error {
 	controller.mu.Lock()
 	sess := controller.live
-	var physicalID, iccid, kind, id string
+	var physicalID, iccid, kind, id, generation string
 	hold := false
 	if sess != nil && sess.call.EndedAt == nil {
 		physicalID = sess.physicalID
 		iccid = sess.iccid
+		generation = sess.usbGeneration
 		kind = sess.kind
 		id = sess.call.ID
 		hold = sess.holdCLCC
@@ -460,6 +471,7 @@ func (controller *Controller) Poll(ctx context.Context) error {
 		}
 		physicalID = auth.PhysicalID
 		iccid = auth.ICCID
+		generation = auth.USBGeneration
 		kind = auth.Kind
 	}
 	if hold && controller.liveIs(sess) {
@@ -477,23 +489,37 @@ func (controller *Controller) Poll(ctx context.Context) error {
 	if !response.OK() {
 		return errors.New("modem did not accept AT+CLCC")
 	}
-	controller.Observe(response, physicalID, iccid, kind)
+	controller.observe(response, physicalID, iccid, kind, generation, sess, true)
 	return nil
 }
 
 // Observe applies one CLCC response to the pinned call. Voice-mode entries are
 // matched by the index already bound to the session. A call-waiting line cannot
 // replace the original call's number or state.
-func (controller *Controller) Observe(response modem.Response, physicalID, iccid, kind string) {
+func (controller *Controller) Observe(response modem.Response, physicalID, iccid, kind string, generation ...string) {
+	usbGeneration := ""
+	if len(generation) > 0 {
+		usbGeneration = generation[0]
+	}
+	controller.observe(response, physicalID, iccid, kind, usbGeneration, nil, false)
+}
+
+func (controller *Controller) observe(response modem.Response, physicalID, iccid, kind, generation string, expected *session, checkSession bool) {
 	found := parseCLCC(response)
 	controller.mu.Lock()
+	// A delayed poll belongs to the session present when CLCC was sent.
+	// Do not apply an old empty response to a call created after it.
+	if checkSession && controller.live != expected {
+		controller.mu.Unlock()
+		return
+	}
 	if controller.live != nil && controller.live.call.EndedAt == nil && controller.live.holdCLCC {
 		controller.mu.Unlock()
 		return
 	}
 	if controller.live != nil && controller.live.call.EndedAt == nil {
 		sess := controller.live
-		if !sessionIdentityMatches(sess, physicalID, iccid, kind) {
+		if !sessionIdentityMatches(sess, physicalID, iccid, kind) || (sess.usbGeneration != "" && generation != sess.usbGeneration) {
 			id := sess.call.ID
 			controller.mu.Unlock()
 			controller.stopAudioFor(sess)
@@ -569,13 +595,14 @@ func (controller *Controller) Observe(response modem.Response, physicalID, iccid
 			State:     state,
 			StartedAt: now,
 		},
-		physicalID: physicalID,
-		iccid:      iccid,
-		kind:       kind,
-		epoch:      controller.bumpEpochLocked(),
-		onModem:    true,
-		index:      item.index,
-		indexBound: true,
+		physicalID:    physicalID,
+		iccid:         iccid,
+		usbGeneration: generation,
+		kind:          kind,
+		epoch:         controller.bumpEpochLocked(),
+		onModem:       true,
+		index:         item.index,
+		indexBound:    true,
 	}
 	if state == "active" {
 		answered := now
@@ -629,6 +656,7 @@ func (controller *Controller) OpenMedia(callID, owner string) (vowifi.CallMedia,
 	sub := &subscriber{owner: owner, ch: make(chan []int16, 8), epoch: current.epoch}
 	controller.mediaSub = sub
 	lease := &uplinkLease{open: true, audio: controller.Audio, recorder: current.recorder}
+	lease.onError = func(err error) { controller.failAudio(current, err) }
 	controller.lease = lease
 	port := &mediaPort{
 		codec: "PCMU",
@@ -826,6 +854,7 @@ func (controller *Controller) stopAudioFor(sess *session) {
 	if controller.audioOwner == sess {
 		controller.audioOwner = nil
 	}
+	sess.audioStopping = true
 	audio := controller.Audio
 	controller.mu.Unlock()
 	if audio != nil {
@@ -940,9 +969,26 @@ func (controller *Controller) pump(done <-chan struct{}, sess *session, epoch ui
 			}
 		}
 		if err != nil {
+			controller.failAudio(sess, err)
 			return
 		}
 	}
+}
+
+// failAudio stops a call whose capture or playback pipe failed. An expected
+// Stop and a released media port cannot turn another call into a failure.
+func (controller *Controller) failAudio(sess *session, err error) {
+	controller.mu.Lock()
+	if !controller.ownsLocked(sess) || sess.audioStopping {
+		controller.mu.Unlock()
+		return
+	}
+	sess.audioStopping = true
+	sess.cancelled = true
+	controller.mu.Unlock()
+	controller.safeHangup(sess)
+	controller.stopAudioFor(sess)
+	controller.finishCall(sess.call.ID, false, "cellular audio stream failed: "+err.Error(), true)
 }
 
 func (controller *Controller) ownsLocked(sess *session) bool {
@@ -988,6 +1034,9 @@ func matchAuth(auth Authorization, sess *session) bool {
 	// A known SIM must still be the one we captured. Empty or different means
 	// the module was swapped; do not signal the new card.
 	if sess.iccid != "" && auth.ICCID != sess.iccid {
+		return false
+	}
+	if sess.usbGeneration != "" && auth.USBGeneration != sess.usbGeneration {
 		return false
 	}
 	return true

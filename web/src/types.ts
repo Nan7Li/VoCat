@@ -209,6 +209,9 @@ export interface DeviceListItem {
   smsStorage?: SMSStorageUsage;
 	  networkEnabled: boolean;
   vowifiEnabled: boolean;
+  callAudioReady?: boolean;
+  callAudioReason?: string;
+  callAudioTransport?: "" | "cellular" | "vowifi";
   vowifiActive?: boolean;
   radioMode?: "cellular" | "airplane" | "vowifi" | "transition" | "offline";
   vowifiRuntime: VoWiFiRuntime;

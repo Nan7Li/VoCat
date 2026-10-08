@@ -71,18 +71,25 @@ func (s *Server) syncCallRecords(ctx context.Context, controller VoWiFiCallContr
 // call that ends without an answer is missed; an outgoing call that ends
 // without an answer is failed; anything answered is answered.
 func (s *Server) upsertCallRecord(ctx context.Context, deviceID string, call vowifi.Call) {
+	s.saveCallSnapshot(ctx, deviceID, call, "vowifi")
+}
+
+func (s *Server) saveCallSnapshot(ctx context.Context, deviceID string, call vowifi.Call, transport string) {
 	state := "active"
 	if call.EndedAt != nil {
 		switch {
 		case call.AnsweredAt != nil:
 			state = "answered"
-		case call.Direction == "incoming":
+		case call.Direction == "incoming" && call.State != "failed":
 			state = "missed"
 		default:
 			state = "failed"
 		}
 	} else if call.State == "failed" {
 		state = "failed"
+	}
+	if transport == "" {
+		transport = "vowifi"
 	}
 	record := store.CallRecord{
 		DeviceID:   deviceID,
@@ -93,7 +100,7 @@ func (s *Server) upsertCallRecord(ctx context.Context, deviceID string, call vow
 		StartedAt:  call.StartedAt,
 		AnsweredAt: call.AnsweredAt,
 		EndedAt:    call.EndedAt,
-		Transport:  "vowifi",
+		Transport:  transport,
 		Recording:  call.Recording,
 	}
 	if _, err := s.store.SaveCallRecord(ctx, record); err != nil {
@@ -103,7 +110,7 @@ func (s *Server) upsertCallRecord(ctx context.Context, deviceID string, call vow
 
 // upsertCellularCallRecord tracks circuit-switched calls by a synthetic id
 // so the dial/answer/hangup actions update one history row.
-func (s *Server) upsertCellularCallRecord(ctx context.Context, deviceID, number, action string) {
+func (s *Server) upsertCellularCallRecord(ctx context.Context, deviceID, number, action string) string {
 	var callID any
 	if action == "dial" {
 		callID = fmt.Sprintf("cellular-%s-%d", deviceID, time.Now().UnixNano())
@@ -111,13 +118,16 @@ func (s *Server) upsertCellularCallRecord(ctx context.Context, deviceID, number,
 	} else {
 		callID, _ = cellularCallIDs.Load(deviceID)
 		if callID == nil {
-			return
+			return ""
 		}
 		if action == "hangup" {
 			cellularCallIDs.Delete(deviceID)
 		}
 	}
 	id, _ := callID.(string)
+	if id == "" {
+		return ""
+	}
 	now := time.Now().UTC()
 	record := store.CallRecord{
 		DeviceID:  deviceID,
@@ -140,6 +150,7 @@ func (s *Server) upsertCellularCallRecord(ctx context.Context, deviceID, number,
 	if _, err := s.store.SaveCallRecord(ctx, record); err != nil {
 		s.logger.Warn("persist cellular call record failed", "device_id", deviceID, "error", err)
 	}
+	return id
 }
 
 // routeCallRecordsAPI serves the phone page's call history and recordings.

@@ -310,6 +310,11 @@ func (s *Server) pollCellularCalls(ctx context.Context) {
 		return
 	}
 	for _, config := range devices {
+		// Readers and VoWiFi lines never fall through to modem CLCC. A module
+		// owned by the cellbridge controller is polled there instead.
+		if isReaderDevice(config) || config.VoWiFiEnabled || s.cellularControllerFor(config.ID) != nil {
+			continue
+		}
 		if !config.NetworkEnabled {
 			continue
 		}

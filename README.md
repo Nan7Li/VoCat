@@ -24,7 +24,7 @@
 
 **English** | [العربية](docs/README.ar.md) | [简体中文](docs/README.zh-CN.md) | [繁體中文](docs/README.zh-TW.md) | [Français](docs/README.fr.md) | [Русский](docs/README.ru.md) | [Español](docs/README.es.md) | [日本語](docs/README.ja.md)
 
-> **Halo 1.1.14** is a personal interface and release based on [VoCat](https://github.com/MengMengCode/VoCat) v0.3.15 (`41b6ac6`), by the Vocat Project Authors. The modem, IMS, WiFi Calling, eSIM, and proxy stack is their work. This branch keeps Halo's UI, branding, accent color, phone page, call history, recordings, and WireGuard tunnels, and includes the upstream fixes through that commit. The [Vocat Research & Evaluation License](LICENSE) still applies. See [ATTRIBUTION.md](ATTRIBUTION.md).
+> **Halo 1.1.14** is a personal interface and release based on [VoCat](https://github.com/MengMengCode/VoCat) v0.3.15 (`41b6ac6`), by the Vocat Project Authors. The modem, IMS, WiFi Calling, eSIM, and proxy stack is their work. This branch keeps Halo's UI, branding, accent color, phone page, call history, recordings, and WireGuard tunnels, and includes the upstream fixes through that commit. The [Vocat Research & Evaluation License](LICENSE) still applies. See [ATTRIBUTION.md](ATTRIBUTION.md). CellBridge call audio is optional and documented in [docs/CellBridge.zh-CN.md](docs/CellBridge.zh-CN.md).
 
 Vocat is an open-source web control panel and engineering toolkit for Quectel EC20/EC25-class and China Mobile ML307 series cellular modems. It combines modem discovery, live radio status, AT and USSD terminals, SMS, WiFi Calling, eSIM management, network selection, proxy routing, notifications, audit logs, and release automation in one self-contained service.
 

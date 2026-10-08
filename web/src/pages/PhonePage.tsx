@@ -10,6 +10,7 @@ import {
 import { api, apiMessage } from "../api";
 import { useI18n } from "../lib/i18n";
 import { BrowserSoftphone } from "../components/devices/BrowserSoftphone";
+import { CellBridgeSettings } from "../components/devices/CellBridgeSettings";
 import { softphoneReadyReason } from "../components/devices/shared";
 import type { CallRecord, CallRecordsResponse, DeviceListItem, DevicesResponse } from "../types";
 import { Button, Select, Tag, message } from "../components/ui";
@@ -67,7 +68,7 @@ export default function PhonePage() {
       setDevices(list);
       setDeviceId((current) => {
         if (current && list.some((device) => device.id === current)) return current;
-        const preferred = list.find((device) => device.vowifiEnabled && device.running) || list[0];
+        const preferred = list.find((device) => device.callAudioReady) || list.find((device) => device.vowifiEnabled && device.running) || list[0];
         return preferred?.id || "";
       });
     } catch (error) {
@@ -88,6 +89,8 @@ export default function PhonePage() {
 
   useEffect(() => {
     void loadDevices();
+    const timer = window.setInterval(() => void loadDevices(), 5000);
+    return () => window.clearInterval(timer);
   }, [loadDevices]);
 
   useEffect(() => {
@@ -99,7 +102,12 @@ export default function PhonePage() {
   }, [deviceId, loadRecords]);
 
   const selectedDevice = useMemo(() => devices.find((device) => device.id === deviceId), [devices, deviceId]);
-  const ready = !!selectedDevice && !!selectedDevice.vowifiEnabled && !!selectedDevice.vowifiRuntime?.imsReady;
+  const audioTransport = selectedDevice?.callAudioTransport;
+  const ready = !!selectedDevice && (
+    audioTransport === "cellular" || audioTransport === "vowifi"
+      ? !!selectedDevice.callAudioReady
+      : !!selectedDevice.vowifiEnabled && !!selectedDevice.vowifiRuntime?.imsReady
+  );
   const reason = selectedDevice ? softphoneReadyReason(selectedDevice) : "";
 
   const fillNumber = (value?: string | null) => {
@@ -115,13 +123,17 @@ export default function PhonePage() {
       label: (
         <span className="flex min-w-0 items-center gap-2">
           <span className="min-w-0 flex-1 truncate">{device.name || device.id}</span>
-          {device.vowifiEnabled && device.vowifiRuntime?.imsReady ? (
+          {device.callAudioTransport === "cellular" && device.callAudioReady ? (
+            <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-600">{t("蜂窝音频")}</span>
+          ) : device.callAudioReady ? (
+            <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-600">IMS</span>
+          ) : device.vowifiEnabled && device.vowifiRuntime?.imsReady ? (
             <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-600">IMS</span>
           ) : null}
         </span>
       ),
     })),
-    [devices],
+    [devices, t],
   );
 
   return (
@@ -134,6 +146,8 @@ export default function PhonePage() {
           </Button>
         }
       />
+
+      <CellBridgeSettings devices={devices} />
 
       {devices.length === 0 ? (
         <div className="ui-card p-10 text-center text-sm text-gray-400">
@@ -167,6 +181,7 @@ export default function PhonePage() {
                 layout="pad"
                 seedNumber={seedNumber}
                 seedToken={seedToken}
+                audioKind={selectedDevice.callAudioTransport === "cellular" ? "cellular" : "ims"}
               />
             ) : null}
 

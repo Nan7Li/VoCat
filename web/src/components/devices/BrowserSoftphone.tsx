@@ -35,6 +35,8 @@ export interface SoftphoneProps {
   /** When this changes, the dialer number is replaced (used for redial from history). */
   seedNumber?: string;
   seedToken?: number;
+  /** `cellular` is the DJI browser PCM path. `ims` keeps the VoWiFi threshold. */
+  audioKind?: "cellular" | "ims";
 }
 
 function sanitizeDial(value: string): string {
@@ -136,7 +138,7 @@ function CallSessionView({
 // BrowserSoftphone is the phone page's softphone. Unlike the device overview
 // variant it is ALWAYS visible: when IMS is not ready it explains why instead
 // of disappearing, and dial/answer/hangup stay prominent.
-export function BrowserSoftphone({ deviceId, deviceName, ready, reason, layout = "pad", seedNumber, seedToken }: SoftphoneProps) {
+export function BrowserSoftphone({ deviceId, deviceName, ready, reason, layout = "pad", seedNumber, seedToken, audioKind = "ims" }: SoftphoneProps) {
   const { t } = useI18n();
   const [number, setNumber] = useState("");
   const [calls, setCalls] = useState<VoWiFiCall[]>([]);
@@ -360,11 +362,11 @@ export function BrowserSoftphone({ deviceId, deviceName, ready, reason, layout =
         <div className="min-w-0">
           <div className="text-xs font-bold uppercase tracking-wider text-gray-500">{t("浏览器软电话")}</div>
           <div className="mt-1 text-xs text-gray-400">
-            {deviceName ? `${deviceName} · ` : ""}{t("VoWiFi IMS、浏览器音频与来电通知")}
+            {deviceName ? `${deviceName} · ` : ""}{t(audioKind === "cellular" ? "大疆蜂窝音频与浏览器 PCM" : "VoWiFi IMS、浏览器音频与来电通知")}
           </div>
         </div>
         <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${ready ? "bg-emerald-500/10 text-emerald-600" : "bg-orange-500/10 text-orange-500"}`}>
-          {ready ? "IMS" : t("IMS 未就绪")}
+          {audioKind === "cellular" ? (ready ? t("蜂窝音频") : t("音频未就绪")) : (ready ? "IMS" : t("IMS 未就绪"))}
         </span>
       </div>
 

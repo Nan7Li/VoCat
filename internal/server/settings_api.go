@@ -105,6 +105,9 @@ func (s *Server) routeSettingsAPI(
 	case "settings/sms":
 		s.handleSMSSettings(w, r)
 		return true
+	case "settings/cellbridge":
+		s.handleCellBridgeSettings(w, r)
+		return true
 	}
 	segments := splitAPIPath(cleanPath)
 	if len(segments) == 4 &&

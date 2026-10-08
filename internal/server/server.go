@@ -104,6 +104,20 @@ type Server struct {
 	cellularData              *cellularDataRuntime
 	wireguard                 *wireguard.Manager
 	recordingsDir             string
+	callMediaLeaseMu          sync.Mutex
+	callMediaLeases           map[callMediaLeaseKey]*callMediaLease
+
+	cellBridgeMu           sync.Mutex
+	cellBridgeWake         chan struct{}
+	cellBridgeDirty        bool
+	cellBridgeApplying     bool
+	cellBridgeStatus       cellBridgeStatus
+	cellBridgeCtrl         *cellBridgeLine
+	cellBridgeSIP          cellBridgeSIP
+	cellBridgeBindings     map[string]callBinding
+	cellBridgeAudioFactory func(cellBridgeAudioSpec) cellularAudio
+	cellBridgeALSACheck    func(capture, playback, usbPort string) error
+	cellBridgeALSARoot     string
 }
 
 func New(options Options) (*Server, error) {

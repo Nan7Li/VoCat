@@ -632,6 +632,7 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 	handler.StartTelegramBot(pollContext)
 	handler.StartSMSNotificationDispatchers(pollContext)
 	go handler.StartCellularCallMonitor(pollContext)
+	go handler.RunCellBridge(pollContext)
 	handler.StartAutomaticTasks(pollContext)
 	handler.StartAutoUpdate(pollContext)
 

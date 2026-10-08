@@ -50,6 +50,7 @@ build/*.py
 !ATTRIBUTION.md
 !docs/**/*.md
 *.txt
+!LICENSES/*.txt
 build/lists/
 
 # ---- Editor / IDE ----

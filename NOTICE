@@ -8,3 +8,20 @@ VoCat uses the following Go module for native Qualcomm QMI support:
 
 The full MIT license text is included in:
 LICENSES/quectel-qmi-go-MIT.txt
+
+CellBridge voice bridge, used by the optional cellular call path:
+
+  Upstream: https://github.com/mccding/CellBridge
+  Commit: 2ee9d6b05d8a4391f782e6ce8a6d23ef57015fda
+  License: MIT
+  Copyright: Copyright (c) 2026 CellBridge contributors
+
+Adapted and integrated paths:
+  internal/cellbridge/cellular
+  internal/cellbridge/sip
+  internal/cellbridge/qdc507
+  internal/cellbridge/voice
+  internal/audiowav (WAV framing extracted from the VoCat IMS recorder and shared with this bridge)
+
+The full MIT license text is included in:
+LICENSES/cellbridge-MIT.txt
