@@ -23,24 +23,28 @@ type Options struct {
 	ScanTimeout    time.Duration
 	CardReaders    *pcsc.Service
 	Logger         *slog.Logger
+	// MBNProfileForICCID returns a stored per-card MBN override. An empty
+	// result keeps the HPLMN heuristic used after eSIM profile switches.
+	MBNProfileForICCID func(context.Context, string) (string, error)
 }
 
 type Manager struct {
-	mu             sync.RWMutex
-	uiccMu         sync.Mutex // serializes all multi-command UICC/APDU transactions
-	esimMu         sync.Mutex // serializes eSIM card access (list/switch/download)
-	esimRecoveryMu sync.Mutex
-	esimRecoveries map[string]chan struct{}
-	esimCacheMu    sync.RWMutex
-	esimCache      map[string]EsimInfo
-	discoverer     modem.Discoverer
-	opener         modem.Opener
-	commandTimeout time.Duration
-	longTimeout    time.Duration
-	smsTimeout     time.Duration
-	scanTimeout    time.Duration
-	cardReaders    *pcsc.Service
-	logger         *slog.Logger
+	mu                 sync.RWMutex
+	uiccMu             sync.Mutex // serializes all multi-command UICC/APDU transactions
+	esimMu             sync.Mutex // serializes eSIM card access (list/switch/download)
+	esimRecoveryMu     sync.Mutex
+	esimRecoveries     map[string]*esimRecovery
+	esimCacheMu        sync.RWMutex
+	esimCache          map[string]EsimInfo
+	discoverer         modem.Discoverer
+	opener             modem.Opener
+	commandTimeout     time.Duration
+	longTimeout        time.Duration
+	smsTimeout         time.Duration
+	scanTimeout        time.Duration
+	cardReaders        *pcsc.Service
+	logger             *slog.Logger
+	mbnProfileForICCID func(context.Context, string) (string, error)
 
 	networkEventsMu         sync.Mutex
 	networkEventSubscribers map[chan string]struct{}
@@ -69,6 +73,40 @@ func (manager *Manager) lockESIM() {
 	manager.uiccMu.Lock()
 }
 
+// lockESIMContext keeps HTTP eSIM reads cancellable when another modem
+// operation is slow. A plain Mutex.Lock here used to leave the eSIM page
+// spinning forever behind a wedged refresh transaction.
+func (manager *Manager) lockESIMContext(ctx context.Context) error {
+	if err := lockMutexContext(ctx, &manager.esimMu); err != nil {
+		return err
+	}
+	if err := lockMutexContext(ctx, &manager.uiccMu); err != nil {
+		manager.esimMu.Unlock()
+		return err
+	}
+	return nil
+}
+
+func lockMutexContext(ctx context.Context, mutex *sync.Mutex) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for {
+		if mutex.TryLock() {
+			return nil
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
 func (manager *Manager) unlockESIM() {
 	manager.uiccMu.Unlock()
 	manager.esimMu.Unlock()
@@ -91,6 +129,7 @@ type managedDevice struct {
 	dataEventCancel    context.CancelFunc
 	candidate          modem.Candidate
 	backend            string
+	esimTransport      string
 	lastICCID          string
 	client             modem.Client
 	snapshot           *Snapshot
@@ -127,14 +166,15 @@ func NewManager(options Options) (*Manager, error) {
 		options.CardReaders = pcsc.New()
 	}
 	return &Manager{
-		discoverer:     options.Discoverer,
-		opener:         options.Opener,
-		commandTimeout: options.CommandTimeout,
-		longTimeout:    options.LongTimeout,
-		smsTimeout:     options.SMSTimeout,
-		scanTimeout:    options.ScanTimeout,
-		cardReaders:    options.CardReaders,
-		logger:         options.Logger,
+		discoverer:         options.Discoverer,
+		opener:             options.Opener,
+		commandTimeout:     options.CommandTimeout,
+		longTimeout:        options.LongTimeout,
+		smsTimeout:         options.SMSTimeout,
+		scanTimeout:        options.ScanTimeout,
+		cardReaders:        options.CardReaders,
+		logger:             options.Logger,
+		mbnProfileForICCID: options.MBNProfileForICCID,
 
 		qmiRadioOpener:                openQMIRadioSession,
 		qmiDataOpener:                 openQMIDataSession,
@@ -144,7 +184,7 @@ func NewManager(options Options) (*Manager, error) {
 
 		devices:        make(map[string]*managedDevice),
 		ussdSessions:   make(map[string]ussdSession),
-		esimRecoveries: make(map[string]chan struct{}),
+		esimRecoveries: make(map[string]*esimRecovery),
 		esimCache:      make(map[string]EsimInfo),
 	}, nil
 }
@@ -243,11 +283,22 @@ func (manager *Manager) Discover(ctx context.Context) ([]Device, error) {
 			events = append(events, discoveryEvent{connected: true, candidate: candidate})
 			continue
 		}
-		if !state.discovered {
+		reconnected := !state.discovered
+		endpointChanged := state.candidate.USBGeneration != candidate.USBGeneration ||
+			state.candidate.ATPort.OpenPath() != candidate.ATPort.OpenPath() ||
+			state.candidate.QMIControl != candidate.QMIControl
+		if reconnected {
 			events = append(events, discoveryEvent{connected: true, candidate: candidate})
+		} else if endpointChanged {
+			// A brief USB reset can disappear and reappear entirely between two
+			// discovery passes. The Linux device number still changes, so publish
+			// a synthetic disconnect/connect pair to restart dependent runtimes.
+			events = append(events,
+				discoveryEvent{candidate: state.candidate},
+				discoveryEvent{connected: true, candidate: candidate},
+			)
 		}
-		if state.candidate.ATPort.OpenPath() != candidate.ATPort.OpenPath() ||
-			state.candidate.QMIControl != candidate.QMIControl {
+		if reconnected || endpointChanged {
 			state.resetClientOnLock = true
 		}
 		state.candidate = candidate
@@ -313,6 +364,90 @@ func (manager *Manager) Discover(ctx context.Context) ([]Device, error) {
 		}
 	}
 	return present, nil
+}
+
+// WaitForStableModem prevents cold-boot consumers from opening an EC20 during
+// its provisional first enumeration. Some modules enumerate, reset once while
+// their baseband finishes booting, and then reappear with the same tty names.
+// Once any usable modem has appeared, its complete endpoint signature must stay
+// unchanged for stableFor before startup proceeds. A host with no modem still
+// starts after initialWait so the management UI remains available.
+func (manager *Manager) WaitForStableModem(
+	ctx context.Context,
+	stableFor time.Duration,
+	pollInterval time.Duration,
+	initialWait time.Duration,
+) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if stableFor <= 0 {
+		return nil
+	}
+	if pollInterval <= 0 {
+		pollInterval = time.Second
+	}
+	if initialWait < 0 {
+		initialWait = 0
+	}
+	started := time.Now()
+	everSeen := false
+	stableSince := time.Time{}
+	stableSignature := ""
+	for {
+		devices, err := manager.Discover(ctx)
+		if err != nil && ctx.Err() == nil {
+			stableSince = time.Time{}
+			stableSignature = ""
+		} else if err != nil {
+			return err
+		} else {
+			signature := stableModemSignature(devices)
+			if signature == "" {
+				stableSince = time.Time{}
+				stableSignature = ""
+			} else {
+				everSeen = true
+				if signature != stableSignature {
+					stableSignature = signature
+					stableSince = time.Now()
+				} else if time.Since(stableSince) >= stableFor {
+					return nil
+				}
+			}
+		}
+		if !everSeen && time.Since(started) >= initialWait {
+			return nil
+		}
+		timer := time.NewTimer(pollInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func stableModemSignature(devices []Device) string {
+	parts := make([]string, 0, len(devices))
+	for _, entry := range devices {
+		candidate := entry.Candidate
+		if !entry.Discovered || candidate.HardwareKind == pcsc.HardwareKind ||
+			candidate.DiscoveryIssue != "" || !candidate.HasATPort() {
+			continue
+		}
+		parts = append(parts, strings.Join([]string{
+			entry.ID,
+			candidate.USBGeneration,
+			candidate.ATPort.OpenPath(),
+			candidate.QMIControl,
+		}, "|"))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ";")
 }
 
 func (manager *Manager) resetChangedClients() {
@@ -622,6 +757,34 @@ func (manager *Manager) backendFor(state *managedDevice) string {
 	return state.backend
 }
 
+// SetESIMTransport selects the control path used for eUICC APDU operations.
+// It is intentionally independent from the registration/data backend: an EC20
+// can use QMI for cellular state while using AT+CSIM for its eUICC.
+// An empty value clears the override and falls back to the selected backend.
+func (manager *Manager) SetESIMTransport(id, transport string) error {
+	transport = strings.ToLower(strings.TrimSpace(transport))
+	if transport != "" && transport != "at" && transport != "qmi" && transport != "pcsc" && transport != "none" {
+		return fmt.Errorf("unsupported eSIM transport %q", transport)
+	}
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	state := manager.devices[id]
+	if state == nil || !state.discovered {
+		return ErrNotFound
+	}
+	state.esimTransport = transport
+	return nil
+}
+
+func (manager *Manager) esimTransportFor(state *managedDevice) string {
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+	if state.esimTransport != "" {
+		return state.esimTransport
+	}
+	return state.backend
+}
+
 func (manager *Manager) ExecuteAT(
 	ctx context.Context,
 	id string,
@@ -702,6 +865,10 @@ func (manager *Manager) Reboot(ctx context.Context, id string) error {
 		manager.setResult(id, state, nil, err)
 		return err
 	}
+	if err := manager.requireOnlineModemRestart(ctx, client); err != nil {
+		manager.setResult(id, state, nil, err)
+		return err
+	}
 	state.dataMu.Lock()
 	invalidateQMINetworkSession(state, manager.candidateFor(state))
 	state.dataMu.Unlock()
@@ -719,7 +886,7 @@ func (manager *Manager) Reboot(ctx context.Context, id string) error {
 }
 
 // softResetForProfileSwitch resets the baseband SIM stack using a soft CFUN sequence
-// (AT+CFUN=0 -> AT+CFUN=1/4) instead of rebooting the entire hardware module (AT+CFUN=1,1).
+// (AT+CFUN=0 -> AT+CFUN=4) instead of rebooting the entire hardware module (AT+CFUN=1,1).
 // This causes the baseband to reload the new eSIM profile files within ~1-2 seconds
 // without disconnecting USB/PCIe or dropping serial communication ports.
 func (manager *Manager) softResetForProfileSwitch(ctx context.Context, id string) error {
@@ -754,8 +921,27 @@ func (manager *Manager) softResetSIM(ctx context.Context, id string, forceOnline
 	commandCtx, cancel := manager.withTimeout(ctx, manager.commandTimeout)
 	defer cancel()
 
-	// 1. Cycle SIM interface to minimum functionality / clear cached SIM files
-	_, _ = client.Execute(commandCtx, "AT+CFUN=0")
+	// Profile-switch recovery reloads the USIM without enabling RF. A nil or
+	// partial snapshot has a zero FlightMode and must not authorize CFUN=1.
+	// AT+CSIM recovery (forceOnline) still requests CFUN=1: Quectel
+	// EnableProfile returns +CME ERROR: 0 while the modem stays at minimum
+	// functionality.
+	targetCFUN := "AT+CFUN=4"
+	targetCode := 4
+	if forceOnline {
+		targetCFUN = "AT+CFUN=1"
+		targetCode = 1
+	}
+	if manager.logger != nil {
+		manager.logger.Info("recovering SIM", "category", "hardware", "device_id", id,
+			"recovery_source", "profile_switch", "target_cfun", targetCode)
+	}
+	if _, err := client.Execute(commandCtx, "AT+CFUN=0"); err != nil {
+		err = fmt.Errorf("power down SIM for profile recovery: %w", err)
+		manager.clearSnapshot(id, state)
+		manager.setResult(id, state, nil, err)
+		return err
+	}
 
 	select {
 	case <-ctx.Done():
@@ -763,11 +949,6 @@ func (manager *Manager) softResetSIM(ctx context.Context, id string, forceOnline
 	case <-time.After(500 * time.Millisecond):
 	}
 
-	// 2. Restore radio to trigger fresh USIM file reading
-	targetCFUN := "AT+CFUN=1"
-	if !forceOnline && state.snapshot != nil && state.snapshot.FlightMode {
-		targetCFUN = "AT+CFUN=4"
-	}
 	_, err = client.Execute(commandCtx, targetCFUN)
 
 	manager.clearSnapshot(id, state)

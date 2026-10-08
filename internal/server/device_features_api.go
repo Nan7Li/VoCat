@@ -198,18 +198,24 @@ func (s *Server) handleUSSDContinue(w http.ResponseWriter, r *http.Request) bool
 	// the session as unavailable rather than falling through to the cellular
 	// CUSD path, because the IMS session owns the actual dialog.
 	if deviceID, sessionErr := s.ussdSessionDevice(sessionID); sessionErr == nil {
-		if config, configErr := s.store.Device(r.Context(), deviceID); configErr == nil &&
-			config.VoWiFiEnabled && s.vowifi != nil {
-			if sender, ok := s.vowifi.(imsUSSIController); ok {
-				if state, stateErr := s.vowifi.State(deviceID); stateErr == nil && state.IMSReady {
-					result, sendErr := sender.SendUSSI(ctx, deviceID, vowifi.USSISubmitRequest{Input: input})
-					if sendErr == nil {
-						writeUSSDResult(w, ussdResultFromUSSI(result, deviceID, s))
-						return true
-					}
-					if !errors.Is(sendErr, vowifi.ErrUSSINotReady) {
-						s.writeDeviceError(w, sendErr)
-						return true
+		if s.store != nil && s.vowifi != nil {
+			if config, configErr := s.store.Device(r.Context(), deviceID); configErr == nil &&
+				config.VoWiFiEnabled {
+				if sender, ok := s.vowifi.(imsUSSIController); ok {
+					if state, stateErr := s.vowifi.State(deviceID); stateErr == nil && state.IMSReady {
+						networkSessionID := s.ussdNetworkSession(sessionID)
+						result, sendErr := sender.SendUSSI(ctx, deviceID, vowifi.USSISubmitRequest{
+							SessionID: networkSessionID,
+							Input:     input,
+						})
+						if sendErr == nil {
+							writeUSSDResult(w, ussdResultFromUSSI(result, deviceID, s))
+							return true
+						}
+						if !errors.Is(sendErr, vowifi.ErrUSSINotReady) {
+							s.writeDeviceError(w, sendErr)
+							return true
+						}
 					}
 				}
 			}
@@ -245,11 +251,19 @@ func (s *Server) handleUSSDCancel(w http.ResponseWriter, r *http.Request) bool {
 		writeError(w, http.StatusBadRequest, "invalid_request", "session_id is required")
 		return true
 	}
-	// Drop a USSI-originated session token locally. USSI has no network-side
-	// release signalling in the minimal implementation, so dropping the handle
-	// matches the cellular AT+CUSD=2 "best-effort abort" behavior.
-	if _, sessionErr := s.ussdSessionDevice(sessionID); sessionErr == nil {
+	// Release a USSI-originated session by signalling network cancellation (BYE)
+	// when supported, and dropping the local token.
+	if deviceID, sessionErr := s.ussdSessionDevice(sessionID); sessionErr == nil {
+		networkSessionID := s.ussdNetworkSession(sessionID)
 		s.dropUSSDSession(sessionID)
+		if s.store != nil && s.vowifi != nil {
+			if config, configErr := s.store.Device(r.Context(), deviceID); configErr == nil &&
+				config.VoWiFiEnabled {
+				if canceler, ok := s.vowifi.(imsUSSICanceler); ok {
+					_ = canceler.CancelUSSI(r.Context(), deviceID, networkSessionID)
+				}
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"data": map[string]any{"cancelled": true, "session_id": sessionID},
 		})

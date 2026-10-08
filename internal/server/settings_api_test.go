@@ -719,11 +719,13 @@ func TestCardPolicyDefaultValidationAndPersistence(t *testing.T) {
 	response = decodeSettingsResponse(t, recorder)
 	policy = response["data"].(map[string]any)
 	if policy["source"] != "manual" || policy["vowifi_enabled"] != true ||
-		policy["airplane_enabled"] != false || policy["ip_version"] != "IPV4V6" {
+		policy["airplane_enabled"] != true || policy["ip_version"] != "IPV4V6" {
 		t.Fatalf("saved policy = %#v", policy)
 	}
 	stored, err := test.database.CardPolicy(context.Background(), iccid)
-	if err != nil || !stored.VoWiFiEnabled || stored.AirplaneEnabled || stored.APN != "ims" || stored.CustomPhoneNumber != "+8613800138000" {
+	// The upstream RF policy normalizes VoWiFi to airplane mode even when
+	// an older Halo client submits airplane=false.
+	if err != nil || !stored.VoWiFiEnabled || !stored.AirplaneEnabled || stored.APN != "ims" || stored.CustomPhoneNumber != "+8613800138000" {
 		t.Fatalf("stored policy = %+v, %v", stored, err)
 	}
 
@@ -839,6 +841,47 @@ func TestCardPolicyDefaultValidationAndPersistence(t *testing.T) {
 	}
 }
 
+func TestCardPolicyMBNProfilePersistence(t *testing.T) {
+	test := newSettingsAPITest(t)
+	const iccid = "8985200014631193805"
+	recorder := test.request(t, http.MethodPut, "/api/cards/"+iccid+"/policy", `{"mbn_profile":"CU"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("CU MBN policy status = %d, body = %s", recorder.Code, recorder.Body)
+	}
+	response := decodeSettingsResponse(t, recorder)
+	policy := response["data"].(map[string]any)
+	if policy["mbn_profile"] != "OpenMkt-Commercial-CU" {
+		t.Fatalf("canonical CU MBN = %#v", policy)
+	}
+	stored, err := test.database.CardPolicy(context.Background(), iccid)
+	if err != nil || stored.MBNProfile != "OpenMkt-Commercial-CU" {
+		t.Fatalf("stored CU MBN = %+v, %v", stored, err)
+	}
+
+	recorder = test.request(t, http.MethodPut, "/api/cards/"+iccid+"/policy", `{"mbn_profile":"Volte_OpenMkt-Commercial-CMCC"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("CMCC MBN policy status = %d, body = %s", recorder.Code, recorder.Body)
+	}
+	stored, err = test.database.CardPolicy(context.Background(), iccid)
+	if err != nil || stored.MBNProfile != "Volte_OpenMkt-Commercial-CMCC" {
+		t.Fatalf("stored CMCC MBN = %+v, %v", stored, err)
+	}
+
+	recorder = test.request(t, http.MethodPut, "/api/cards/"+iccid+"/policy", `{"mbn_profile":"auto"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("auto MBN policy status = %d, body = %s", recorder.Code, recorder.Body)
+	}
+	stored, err = test.database.CardPolicy(context.Background(), iccid)
+	if err != nil || stored.MBNProfile != "" {
+		t.Fatalf("cleared MBN = %+v, %v", stored, err)
+	}
+
+	recorder = test.request(t, http.MethodPut, "/api/cards/"+iccid+"/policy", `{"mbn_profile":"not a profile"}`)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("invalid MBN status = %d, body = %s", recorder.Code, recorder.Body)
+	}
+}
+
 func TestTrafficAnalysisUsesAndAggregatesStoredBuckets(t *testing.T) {
 	test := newSettingsAPITest(t)
 	test.server.developerEnabled = true
@@ -909,9 +952,9 @@ func TestTrafficAnalysisIsUnavailableOutsideDeveloperMode(t *testing.T) {
 
 func TestNotificationDestinationAddressPolicyIsIndependentFromWebAccess(t *testing.T) {
 	blocked := []string{
-		"0.0.0.0", "10.0.0.1", "100.100.100.200", "127.0.0.1",
-		"169.254.169.254", "172.16.0.1", "192.168.1.1", "224.0.0.1",
-		"255.255.255.255", "::", "::1", "fc00::1", "fe80::1", "ff02::1",
+		"0.0.0.0", "100.100.100.200", "127.0.0.1",
+		"169.254.169.254", "224.0.0.1",
+		"255.255.255.255", "::", "::1", "fe80::1", "ff02::1",
 	}
 	for _, text := range blocked {
 		address := netip.MustParseAddr(text)
@@ -920,7 +963,8 @@ func TestNotificationDestinationAddressPolicyIsIndependentFromWebAccess(t *testi
 		}
 	}
 	for _, text := range []string{
-		"1.1.1.1", "198.18.0.1", "2606:4700:4700::1111",
+		"1.1.1.1", "10.0.0.1", "10.1.12.32", "100.64.0.1", "172.16.0.1",
+		"192.168.1.1", "198.18.0.1", "fc00::1", "2606:4700:4700::1111",
 	} {
 		address := netip.MustParseAddr(text)
 		if !notificationAddressAllowed(context.Background(), address) {
@@ -935,6 +979,9 @@ func TestNotificationDestinationAddressPolicyIsIndependentFromWebAccess(t *testi
 		"169.254.169.254",
 	); err == nil {
 		t.Fatal("metadata IP was not blocked")
+	}
+	if addresses, err := resolvePublicAddresses(context.Background(), "10.1.12.32"); err != nil || len(addresses) != 1 {
+		t.Fatalf("LAN notification destination = %v, %v", addresses, err)
 	}
 	server := &Server{access: parsedAccessConfig{mode: "internal"}}
 	notificationContext := server.notificationDestinationContext(context.Background())

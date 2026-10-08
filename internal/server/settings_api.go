@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/mail"
@@ -43,9 +44,11 @@ var notificationChannels = []string{
 	"pushplus",
 	"wecom",
 	"lark",
+	"meow",
 }
 
 var notificationFields = map[string]map[string]string{
+	"meow": {"nickname": "string", "url": "string", "img_url": "string"},
 	"telegram": {
 		"bot_token": "string", "chat_id": "string", "admin_id": "string",
 		"base_url": "string", "proxy": "string", "via_interface": "string",
@@ -96,6 +99,12 @@ func (s *Server) routeSettingsAPI(
 	case "settings/logging":
 		s.handleLoggingSettings(w, r)
 		return true
+	case "settings/vowifi":
+		s.handleVoWiFiSettings(w, r)
+		return true
+	case "settings/sms":
+		s.handleSMSSettings(w, r)
+		return true
 	}
 	segments := splitAPIPath(cleanPath)
 	if len(segments) == 4 &&
@@ -140,16 +149,39 @@ func (s *Server) handleNotificationSettings(w http.ResponseWriter, r *http.Reque
 			if !present {
 				continue
 			}
+			var document map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &document); err != nil || document == nil {
+				writeError(w, http.StatusBadRequest, "invalid_notification_config", "notification config must be an object")
+				return
+			}
+			clearSecrets := false
+			if flag, present := document["clear_secrets"]; present {
+				if (channel != "telegram" && channel != "email") || string(flag) == "null" || json.Unmarshal(flag, &clearSecrets) != nil {
+					writeError(w, http.StatusBadRequest, "invalid_notification_config", "clear_secrets must be a boolean for a supported channel")
+					return
+				}
+				delete(document, "clear_secrets")
+			}
+			raw, err := json.Marshal(document)
+			if err != nil {
+				s.writeStoreError(w, err)
+				return
+			}
 			enabled, config, err := decodeNotificationConfig(channel, raw, true)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_notification_config", err.Error())
 				return
 			}
+			clearFields := []string(nil)
+			if clearSecrets {
+				clearFields = store.DefaultNotificationSensitiveFields(channel)
+			}
 			values = append(values, store.NotificationSetting{
-				Channel:         channel,
-				Enabled:         enabled,
-				Config:          config,
-				SensitiveFields: store.DefaultNotificationSensitiveFields(channel),
+				ClearSensitiveFields: clearFields,
+				Channel:              channel,
+				Enabled:              enabled,
+				Config:               config,
+				SensitiveFields:      store.DefaultNotificationSensitiveFields(channel),
 			})
 		}
 		for channel := range request {
@@ -419,7 +451,7 @@ func (s *Server) handleNotificationTest(
 		writeError(w, http.StatusNotFound, "not_found", "notification channel was not found")
 		return
 	}
-	if channel != "webhook" && channel != "telegram" && channel != "email" && channel != "bark" && channel != "wecom" && channel != "lark" {
+	if channel != "webhook" && channel != "telegram" && channel != "email" && channel != "bark" && channel != "wecom" && channel != "lark" && channel != "meow" {
 		writeError(
 			w,
 			http.StatusNotImplemented,
@@ -475,6 +507,8 @@ func (s *Server) handleNotificationTest(
 		err = sendWecomNotificationTest(notificationContext, resolved)
 	case "lark":
 		err = sendLarkNotificationTest(notificationContext, resolved)
+	case "meow":
+		err = sendMeowNotification(notificationContext, resolved, "VoCat 测试通知", "VoCat 消息推送测试")
 	}
 	if err != nil {
 		redacted := store.RedactText(err.Error(), provider)
@@ -610,6 +644,9 @@ func mergeNotificationTestSecretValue(incoming, existing any) any {
 }
 
 func validateNotificationTestConfig(channel string, config map[string]any) error {
+	if channel == "meow" {
+		return validateMeowNotificationConfig(config)
+	}
 	switch channel {
 	case "webhook":
 		urls := configStrings(config, "urls")
@@ -887,10 +924,7 @@ func sendEmailNotificationTest(ctx context.Context, config map[string]any) error
 	// characters, and the body is MIME-base64 encoded by writePlainTextMail.
 	// CodeQL's email-injection query has no sanitizer model for these steps.
 	// Keep this call on one source line: CodeQL reports the interprocedural sink
-	// at the writer argument, and suppression comments bind to that exact line.
-	// codeql[go/email-injection]
-	// CodeQL [go/email-injection]
-	// lgtm[go/email-injection]
+	// CodeQL [go/email-injection] Sender, recipients, and headers are parsed, sanitized, and MIME encoded.
 	if err := writePlainTextMail(writer, from, recipients, "vocat notification test", "This is a vocat notification test."); err != nil {
 		_ = writer.Close()
 		return fmt.Errorf("write SMTP test message: %w", err)
@@ -906,10 +940,11 @@ func sendEmailNotificationTest(ctx context.Context, config map[string]any) error
 
 func parseMailAddress(value string) (*mail.Address, error) {
 	value = strings.TrimSpace(value)
-	if value == "" || strings.ContainsAny(value, "\r\n\x00") {
+	sanitized := strings.ReplaceAll(strings.ReplaceAll(value, "\r", ""), "\n", "")
+	if value == "" || value != sanitized || strings.Contains(value, "\x00") {
 		return nil, errors.New("email address contains a prohibited control character")
 	}
-	address, err := mail.ParseAddress(value)
+	address, err := mail.ParseAddress(sanitized)
 	if err != nil || address.Address == "" || strings.ContainsAny(address.Address, "\r\n\x00") {
 		return nil, errors.New("invalid email address")
 	}
@@ -925,7 +960,8 @@ func formatMailAddress(address *mail.Address) string {
 	if address.Name == "" {
 		return address.Address
 	}
-	return (&mail.Address{Name: address.Name, Address: address.Address}).String()
+	encodedName := mime.QEncoding.Encode("UTF-8", address.Name)
+	return (&mail.Address{Name: encodedName, Address: address.Address}).String()
 }
 
 func validateTelegramViaInterface(name string) error {
@@ -1316,19 +1352,19 @@ func resolveNotificationAddresses(ctx context.Context, host string, allowLocal b
 
 var notificationFakeIPNetworks = []netip.Prefix{
 	netip.MustParsePrefix("198.18.0.0/15"),
+	// Mihomo/Clash can synthesize ULA addresses alongside its RFC 2544
+	// IPv4 Fake-IP range. These addresses are consumed by the local TUN DNS
+	// interceptor and do not identify a LAN service.
+	netip.MustParsePrefix("fdfe:dcba:9876::/48"),
 }
 
 var blockedNotificationDestinationNetworks = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
-	netip.MustParsePrefix("10.0.0.0/8"),
-	netip.MustParsePrefix("100.64.0.0/10"),
 	netip.MustParsePrefix("127.0.0.0/8"),
 	netip.MustParsePrefix("169.254.0.0/16"),
-	netip.MustParsePrefix("172.16.0.0/12"),
 	netip.MustParsePrefix("192.0.0.0/24"),
 	netip.MustParsePrefix("192.0.2.0/24"),
 	netip.MustParsePrefix("192.88.99.0/24"),
-	netip.MustParsePrefix("192.168.0.0/16"),
 	netip.MustParsePrefix("198.51.100.0/24"),
 	netip.MustParsePrefix("203.0.113.0/24"),
 	netip.MustParsePrefix("224.0.0.0/4"),
@@ -1338,7 +1374,6 @@ var blockedNotificationDestinationNetworks = []netip.Prefix{
 	netip.MustParsePrefix("64:ff9b:1::/48"),
 	netip.MustParsePrefix("100::/64"),
 	netip.MustParsePrefix("2001:db8::/32"),
-	netip.MustParsePrefix("fc00::/7"),
 	netip.MustParsePrefix("fe80::/10"),
 	netip.MustParsePrefix("ff00::/8"),
 }
@@ -1470,13 +1505,15 @@ func (s *Server) handleCardPolicy(w http.ResponseWriter, r *http.Request, iccid 
 			APN               *string `json:"apn"`
 			IPVersion         *string `json:"ip_version"`
 			CustomPhoneNumber *string `json:"custom_phone_number"`
+			MBNProfile        *string `json:"mbn_profile"`
 		}
 		if err := s.decodeJSON(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
 		if request.VoWiFiEnabled == nil && request.AirplaneEnabled == nil &&
-			request.APN == nil && request.IPVersion == nil && request.CustomPhoneNumber == nil {
+			request.APN == nil && request.IPVersion == nil && request.CustomPhoneNumber == nil &&
+			request.MBNProfile == nil {
 			writeError(
 				w,
 				http.StatusBadRequest,
@@ -1530,6 +1567,21 @@ func (s *Server) handleCardPolicy(w http.ResponseWriter, r *http.Request, iccid 
 		if request.AirplaneEnabled != nil {
 			policy.AirplaneEnabled = *request.AirplaneEnabled
 		}
+		if request.MBNProfile != nil {
+			mbnProfile, mbnErr := device.NormalizeCardMBNProfile(*request.MBNProfile)
+			if mbnErr != nil {
+				writeError(w, http.StatusBadRequest, "invalid_card_policy", mbnErr.Error())
+				return
+			}
+			policy.MBNProfile = mbnProfile
+		}
+		// VoWiFi always owns an RF-off modem. Store airplane=true even when an
+		// older client omits that implication, so disabling VoWiFi cannot expose a
+		// brief cellular attach window.
+		if policy.VoWiFiEnabled {
+			policy.AirplaneEnabled = true
+			policy.NetworkEnabled = false
+		}
 		if policy.IPVersion == "" {
 			policy.IPVersion = "IPV4V6"
 		}
@@ -1544,10 +1596,49 @@ func (s *Server) handleCardPolicy(w http.ResponseWriter, r *http.Request, iccid 
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"data": cardPolicyResponse(policy)})
+		if request.MBNProfile != nil {
+			s.applyLiveCardMBN(iccid)
+		}
 	default:
 		w.Header().Set("Allow", "GET, PUT")
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 	}
+}
+
+func (s *Server) applyLiveCardMBN(iccid string) {
+	reconciler, ok := s.devices.(interface {
+		ReconcileEC20MBNAfterProfileSwitch(context.Context, string, string) error
+	})
+	if !ok || s.store == nil {
+		return
+	}
+	configs, err := s.store.ListDevices(context.Background())
+	if err != nil {
+		return
+	}
+	clean := strings.TrimSpace(iccid)
+	var deviceID string
+	for _, config := range configs {
+		entry, physicalID, present := s.physicalForConfig(config)
+		if !present || entry.Snapshot == nil {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(entry.Snapshot.ICCID), clean) {
+			continue
+		}
+		deviceID = physicalID
+		break
+	}
+	if deviceID == "" {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		if err := reconciler.ReconcileEC20MBNAfterProfileSwitch(ctx, deviceID, clean); err != nil && s.logger != nil {
+			s.logger.Warn("apply card MBN policy", "device_id", deviceID, "iccid", clean, "error", err)
+		}
+	}()
 }
 
 func defaultCardPolicy(iccid string) store.CardPolicy {
@@ -1850,6 +1941,7 @@ func cardPolicyResponse(policy store.CardPolicy) map[string]any {
 		"apn":                 policy.APN,
 		"ip_version":          policy.IPVersion,
 		"custom_phone_number": policy.CustomPhoneNumber,
+		"mbn_profile":         policy.MBNProfile,
 		"source":              policy.Source,
 	}
 	if !policy.CreatedAt.IsZero() {

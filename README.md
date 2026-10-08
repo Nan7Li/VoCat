@@ -24,9 +24,9 @@
 
 **English** | [العربية](docs/README.ar.md) | [简体中文](docs/README.zh-CN.md) | [繁體中文](docs/README.zh-TW.md) | [Français](docs/README.fr.md) | [Русский](docs/README.ru.md) | [Español](docs/README.es.md) | [日本語](docs/README.ja.md)
 
-> **Halo 1.1.13** is a personal interface and release based on [VoCat](https://github.com/MengMengCode/VoCat) v0.2.23 plus upstream fixes through commit `6b41121`, by the Vocat Project Authors. The modem, IMS, WiFi Calling, eSIM, and proxy stack is their work. This branch only adds a different UI, Halo branding, a customizable accent color, and a few local fixes. The [Vocat Research & Evaluation License](LICENSE) still applies. See [ATTRIBUTION.md](ATTRIBUTION.md).
+> **Halo 1.1.14** is a personal interface and release based on [VoCat](https://github.com/MengMengCode/VoCat) v0.3.15 (`41b6ac6`), by the Vocat Project Authors. The modem, IMS, WiFi Calling, eSIM, and proxy stack is their work. This branch keeps Halo's UI, branding, accent color, phone page, call history, recordings, and WireGuard tunnels, and includes the upstream fixes through that commit. The [Vocat Research & Evaluation License](LICENSE) still applies. See [ATTRIBUTION.md](ATTRIBUTION.md).
 
-Vocat is an open-source web control panel and engineering toolkit for Quectel EC20/EC25-class cellular modems. It combines modem discovery, live radio status, AT and USSD terminals, SMS, WiFi Calling, eSIM management, network selection, proxy routing, notifications, audit logs, and release automation in one self-contained service.
+Vocat is an open-source web control panel and engineering toolkit for Quectel EC20/EC25-class and China Mobile ML307 series cellular modems. It combines modem discovery, live radio status, AT and USSD terminals, SMS, WiFi Calling, eSIM management, network selection, proxy routing, notifications, audit logs, and release automation in one self-contained service.
 
 The backend is written in Go, the interface is built with React and TypeScript, and the production frontend is embedded into the Go binary. A single executable contains the web application and uses SQLite for persistent state.
 
@@ -40,26 +40,27 @@ The backend is written in Go, the interface is built with React and TypeScript, 
 | Area | What Vocat provides |
 | --- | --- |
 | Device management | Automatic serial/USB discovery, multiple modem support, friendly device names, live overview updates, module restart, flight mode, and USB networking mode controls. |
-| Radio and network | Registration status, operator, signal metrics, RSRP/RSRQ/SINR, network mode, band, channel, operator scanning, and automatic or manual network selection. |
+| Radio and network | Registration status, operator, signal metrics, RSRP/RSRQ/SINR, network mode, band, channel, operator scanning, automatic or manual network selection, and LTE cell querying and single-cell lock/unlock (EARFCN/PCI). |
 | AT and USSD | Interactive AT terminal, command history, raw modem responses, USSD start/continue/cancel flows, and clear modem error reporting. |
-| SMS | Direct cellular and IMS SMS transmission, inbound synchronization, multipart handling, delivery reports, conversation history, unread state, timestamps, and per-message delivery status. |
+| SMS | Direct cellular and IMS SMS transmission, inbound synchronization, multipart handling, delivery reports, conversation history, unread state, timestamps, per-message delivery status, and JSON / offline HTML export. |
 | WiFi Calling | IKEv2/ePDG tunnel setup, EAP-AKA authentication, IMS registration, IMS SMS, reconnect controls, status diagnostics, and per-device routing. |
 | eSIM and eUICC | eUICC discovery, EID and production information, certificate metadata, multi-eUICC inventory, installed profile listing, enable/disable/switch operations, download, rename, and delete operations when supported by the card. |
 | Card policy | ICCID-based WiFi Calling and flight-mode behavior with immediate policy application. |
 | Proxy routing | Upstream SOCKS routing, device bindings, country rules, TCP reachability checks, and UDP Associate checks for WiFi Calling data paths. |
-| Notifications | New inbound SMS forwarding through Telegram, Bark, email, Pushplus, signed webhooks, WeCom, and Feishu / Lark group bots. Each SMS is delivered as an individual notification. |
+| Notifications | New inbound SMS forwarding through Telegram, Bark, email, Pushplus, signed webhooks, WeCom, Feishu / Lark group bots, and MeoW. Each SMS is delivered as an individual notification. |
 | Telegram bot | Device status, installed-profile listing and switching, WiFi Calling controls, and SMS sending. Sensitive actions require administrator confirmation. |
 | Operations | Authentication, CSRF protection, access policies, audit events, live logs, log retention, health checks, responsive layout, dark mode, and English/Chinese application UI. |
 | Distribution | Static Linux binaries, systemd installation script, self-update with SHA-256 verification, Docker image, GHCR publishing, and GitHub Actions release builds. |
 
 ## Supported hardware
 
-Vocat targets Qualcomm-based modules that expose a QMI channel, including:
+Vocat targets Qualcomm-based Quectel and China Mobile ML307 series modules that expose compatible AT, QMI, serial, and USB networking interfaces, including:
 
 - Quectel EC20
 - Quectel EC25
 - Quectel EG25 family
 - Compatible EG600 and related modules
+- China Mobile ML307 series (e.g. ML307A-E5, various OEMs)
 - Other Qualcomm modules discovered via `qmi_wwan` (SIMCom, Sierra, Telit, and 410-class dongles)
 - DJI / Baiwang 4G modules, with `vocat doctor --repair-dji-qmi` on Linux
 
@@ -192,7 +193,7 @@ network configuration, and devices added after the container starts. The
 
 This mode intentionally gives Vocat broad access to the host's devices and
 network stack. Use it only on a trusted Linux host. The automatic discovery
-identifies supported Quectel USB modems (USB vendor ID `2c7c`) and PCIe/MHI
+identifies supported Quectel USB modems (USB vendor ID `2c7c`) and China Mobile ML307 series modules by product string, and PCIe/MHI
 modems exposed through the Linux WWAN subsystem; it does not identify arbitrary
 modem layouts. Mapping only individual nodes with `--device`, such as
 `/dev/ttyUSB2`, `/dev/cdc-wdm0`, or `/dev/wwan0qmi0`, limits the container to
@@ -391,18 +392,20 @@ cd web && npm run build
 
 | Network | Address |
 | ------- | ------- |
-| USDT-TRON (TRC20) | `TQQAbboBoU8h5xX4YCA1rqWJU2WjK3seSg` |
-| USDT-BSC (BEP20) | `0xdbfcd4a462550d6ff06d09cbd89026c6b145d9c4` |
-| USDT-Polygon | `0xdbfcd4a462550d6ff06d09cbd89026c6b145d9c4` |
+| USDT-TRON (TRC20) | `TWSAkvzVsFc7KqncDLmUfRxpPQbpV5CgTB` |
+| USDT-BSC (BEP20) | `0xb43031387342ebb1ff536fb9ad6440b9e6377139` |
+| USDT-Polygon | `0xb43031387342ebb1ff536fb9ad6440b9e6377139` |
 
 ## License
 
 See [LICENSE](LICENSE).
 
-<a href="https://star-history.dera.page/#MengMengCode/VoCat">
+## Star History
+
+<a href="https://www.star-history.com/?repos=mengmengcode%2Fvocat&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=MengMengCode/VoCat&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=MengMengCode/VoCat" />
-   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=MengMengCode/VoCat" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=mengmengcode/vocat&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=mengmengcode/vocat&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=mengmengcode/vocat&type=date&legend=top-left" />
  </picture>
 </a>

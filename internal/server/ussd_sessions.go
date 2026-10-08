@@ -20,8 +20,9 @@ type ussdSessionStore struct {
 }
 
 type ussdServerSession struct {
-	deviceID  string
-	createdAt time.Time
+	deviceID         string
+	networkSessionID string
+	createdAt        time.Time
 }
 
 func newUSSDSessionStore() ussdSessionStore {
@@ -29,6 +30,10 @@ func newUSSDSessionStore() ussdSessionStore {
 }
 
 func (store *ussdSessionStore) open(deviceID string) string {
+	return store.openWithNetwork(deviceID, "")
+}
+
+func (store *ussdSessionStore) openWithNetwork(deviceID, networkSessionID string) string {
 	var token [8]byte
 	_, _ = rand.Read(token[:])
 	id := hex.EncodeToString(token[:])
@@ -36,9 +41,23 @@ func (store *ussdSessionStore) open(deviceID string) string {
 	if store.sessions == nil {
 		store.sessions = make(map[string]ussdServerSession)
 	}
-	store.sessions[id] = ussdServerSession{deviceID: deviceID, createdAt: time.Now().UTC()}
+	store.sessions[id] = ussdServerSession{
+		deviceID:         deviceID,
+		networkSessionID: networkSessionID,
+		createdAt:        time.Now().UTC(),
+	}
 	store.mu.Unlock()
 	return id
+}
+
+func (store *ussdSessionStore) networkSession(sessionID string) string {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	session, ok := store.sessions[strings.TrimSpace(sessionID)]
+	if !ok {
+		return ""
+	}
+	return session.networkSessionID
 }
 
 func (store *ussdSessionStore) device(sessionID string) (string, error) {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -24,6 +25,8 @@ const (
 	defaultTransactionTimeout   = 12 * time.Second
 	maxAuthenticationChallenges = 3
 	defaultPANIWLANNode         = "ffffffffffff"
+	registerContactICSIRef      = "urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel," +
+		"urn%3Aurn-7%3A3gpp-service.ims.icsi.sms"
 )
 
 var (
@@ -37,10 +40,13 @@ var (
 // LocalAddress is empty, Provider uses the corresponding value proven by the
 // TunnelSession. The default transport is TCP and the default port is 5060.
 type Config struct {
-	PCSCF           string
-	LocalAddress    string
-	Transport       string
-	TransportByPLMN map[string]string
+	// MTUCompatibility opts new protected TCP connections into conservative MSS.
+	// Nil disables it. The callback is evaluated on connection establishment.
+	MTUCompatibility func(context.Context) bool
+	PCSCF            string
+	LocalAddress     string
+	Transport        string
+	TransportByPLMN  map[string]string
 	// AutoTransportFallback tries the alternate TCP/UDP transport only when
 	// the initial P-CSCF attempt produced no SIP response at all. A challenge
 	// or rejection is authoritative and is never retried as another transport.
@@ -67,6 +73,11 @@ type Config struct {
 	// OnSMSStatus is invoked for an SMS-STATUS-REPORT received after a
 	// submission that requested a delivery report.
 	OnSMSStatus func(context.Context, ReceivedSMSStatus) error
+  // OnSIMDataDownload receives a decoded SMS-PP download for delivery to the
+	// UICC. The callback must return only after the UICC has processed the
+	// ENVELOPE command; a nil callback causes an RP-ACK delivery report to
+	// acknowledge transport receipt.
+	OnSIMDataDownload func(context.Context, SIMDataDownload) error
 	// OnUSSD is invoked for a network-originated USSD MESSAGE received over
 	// IMS (3GPP TS 24.390). Returning an error is logged but does not affect
 	// the 200 OK already sent, because USSI has no RP-ACK transport.
@@ -302,7 +313,7 @@ func (provider *Provider) Start(ctx context.Context, request vowifi.IMSRequest) 
 			transports = append(transports, alternate)
 		}
 		for attempt, candidate := range transports {
-			connection, dialErr := dialSIP(ctx, candidate, localAddress, 0, endpoint.address())
+			connection, dialErr := dialSIP(ctx, candidate, localAddress, 0, endpoint.address(), false)
 			if dialErr != nil {
 				lastErr = fmt.Errorf("ims: connect to P-CSCF over %s: %w", candidate, dialErr)
 				if attempt+1 < len(transports) && ctx.Err() == nil {
@@ -330,7 +341,10 @@ func (provider *Provider) Start(ctx context.Context, request vowifi.IMSRequest) 
 			sipResponseObserved := session.evidence.LastSIPCode != 0
 			session.abort()
 			lastErr = establishErr
-			if sipResponseObserved || attempt+1 >= len(transports) || ctx.Err() != nil {
+			if sipResponseObserved {
+				return nil, establishErr
+			}
+			if attempt+1 >= len(transports) || ctx.Err() != nil {
 				break
 			}
 			provider.logTransportFallback(request.Identity, candidate, transports[attempt+1], establishErr)
@@ -392,14 +406,18 @@ type identitySet struct {
 	private string
 	public  string
 	user    string
+	// Set only when deriveIdentities generates the REGISTER-only identity.
+	// The zero value preserves legacy behavior for explicitly supplied identities.
+	temporaryPublic bool
 }
 
 func deriveIdentities(identity vowifi.SIMIdentity, config Config) (identitySet, error) {
 	imsi := strings.TrimSpace(identity.IMSI)
+	profile := vowifi.ResolveCarrierProfile(identity)
+	imsi = profile.EffectiveSubscriberIMSI(imsi)
 	if !digitsBetween(imsi, 5, 16) {
 		return identitySet{}, errors.New("ims: SIM IMSI is unavailable or invalid")
 	}
-	profile := vowifi.ResolveCarrierProfile(identity)
 	mcc := strings.TrimSpace(profile.RouteMCC)
 	mnc := strings.TrimSpace(profile.RouteMNC)
 	if mcc == "" || mnc == "" {
@@ -443,7 +461,7 @@ func deriveIdentities(identity vowifi.SIMIdentity, config Config) (identitySet, 
 	if user == "" || strings.ContainsAny(user, "<>\" \t;") {
 		return identitySet{}, errors.New("ims: public identity user is invalid")
 	}
-	return identitySet{domain: domain, private: privateIdentity, public: publicIdentity, user: user}, nil
+	return identitySet{domain: domain, private: privateIdentity, public: publicIdentity, user: user, temporaryPublic: config.PublicIdentity == ""}, nil
 }
 
 type pcscfEndpoint struct {
@@ -559,6 +577,7 @@ func dialSIP(
 	localAddress string,
 	localPort int,
 	remoteAddress string,
+	mtuCompatibility bool,
 ) (net.Conn, error) {
 	var local net.Addr
 	var err error
@@ -574,6 +593,9 @@ func dialSIP(
 		return nil, fmt.Errorf("resolve tunnel local address: %w", err)
 	}
 	dialer := net.Dialer{LocalAddr: local}
+	if mtuCompatibility && transport == "tcp" {
+		configureProtectedTCPDialer(&dialer)
+	}
 	return dialer.DialContext(ctx, transport, remoteAddress)
 }
 
@@ -594,6 +616,7 @@ type Session struct {
 	conn             net.Conn
 	reader           *bufio.Reader
 	initialEndpoint  pcscfEndpoint
+	securityMode     SecurityMode
 	securityDeclined bool
 
 	callID             string
@@ -622,6 +645,8 @@ type Session struct {
 	nextRPReference    byte
 	callMu             sync.Mutex
 	calls              map[string]*imsCall
+	ussiMu             sync.Mutex
+	ussiDialogs        map[string]*ussiDialog
 
 	mu                  sync.Mutex
 	closed              bool
@@ -631,6 +656,16 @@ type Session struct {
 	refreshContext      context.Context
 	refreshCancel       context.CancelFunc
 	refreshDone         chan struct{}
+}
+
+func (session *Session) configuredSecurityMode() SecurityMode {
+	if session != nil && session.securityMode != "" {
+		return session.securityMode
+	}
+	if session != nil && session.provider != nil {
+		return session.provider.config.SecurityMode
+	}
+	return SecurityRequired
 }
 
 func newSession(
@@ -649,18 +684,23 @@ func newSession(
 	if err != nil {
 		return nil, err
 	}
-	instanceID, err := randomUUID()
+	instanceID, err := stableInstanceUUID(request)
 	if err != nil {
 		return nil, err
 	}
 	instanceURI := "urn:uuid:" + instanceID
 	profile := vowifi.ResolveCarrierProfile(request.Identity)
+	securityMode := provider.config.SecurityMode
+	if profile.IMSIPSecMode != "" {
+		securityMode = SecurityMode(profile.IMSIPSecMode)
+	}
 	if profile.IMSRegisterOptions.ContactFormat == vowifi.IMSContactFormatGSMA {
 		instanceURI = sipInstanceID(request.Identity, instanceID)
 	}
 	refreshContext, refreshCancel := context.WithCancel(context.Background())
 	session := &Session{
 		provider:           provider,
+		securityMode:       securityMode,
 		request:            request,
 		identity:           identity,
 		endpoint:           endpoint,
@@ -680,6 +720,7 @@ func newSession(
 		transactions:       make(map[sipTransactionKey]chan *sipResponse),
 		inboundConnections: make(map[net.Conn]struct{}),
 		calls:              make(map[string]*imsCall),
+		ussiDialogs:        make(map[string]*ussiDialog),
 		evidence: vowifi.IMSEvidence{
 			RegistrationState: "registering",
 			Transport:         transport,
@@ -688,7 +729,7 @@ func newSession(
 	if transport == "tcp" {
 		session.reader = bufio.NewReader(connection)
 	}
-	if provider.config.SecurityMode != SecurityDisabled {
+	if securityMode != SecurityDisabled {
 		localIP := addressIP(connection.LocalAddr())
 		if localIP == nil {
 			refreshCancel()
@@ -838,7 +879,16 @@ func safeSIPDiagnostic(value string) string {
 	return value
 }
 
+const maxRegistrationIntervalRetries = 2
+
+// register completes a REGISTER transaction, including AKA challenges, and
+// advances cached qop=auth credentials when the registrar permits preauthentication.
 func (session *Session) register(ctx context.Context, expires int) (*sipResponse, error) {
+	profile := vowifi.ResolveCarrierProfile(session.request.Identity)
+	if profile.IMSRegisterOptions.ExpirySeconds != 0 && expires > 0 {
+		expires = profile.IMSRegisterOptions.ExpirySeconds
+	}
+	intervalRetries := 0
 	for challenges := 0; challenges <= maxAuthenticationChallenges; challenges++ {
 		cseq := session.cseq
 		session.cseq++
@@ -871,6 +921,22 @@ func (session *Session) register(ctx context.Context, expires int) (*sipResponse
 			return nil, err
 		}
 		session.evidence.LastSIPCode = response.StatusCode
+		if response.StatusCode == 423 && expires > 0 {
+			minExpires, err := minExpiresFromResponse(response)
+			if err != nil {
+				return nil, err
+			}
+			if minExpires <= expires {
+				return nil, fmt.Errorf("ims: SIP 423 Min-Expires %d does not exceed requested Expires %d", minExpires, expires)
+			}
+			if intervalRetries >= maxRegistrationIntervalRetries {
+				return nil, errors.New("ims: too many SIP registration interval retries")
+			}
+			expires = minExpires
+			intervalRetries++
+			challenges--
+			continue
+		}
 		if response.StatusCode != 401 && response.StatusCode != 407 {
 			return response, nil
 		}
@@ -914,6 +980,7 @@ func (session *Session) register(ctx context.Context, expires int) (*sipResponse
 			return nil, err
 		}
 		auts := base64.StdEncoding.EncodeToString(material.auts)
+		session.clearAuthentication()
 		session.auth = &authenticationState{
 			challenge: challenge,
 			response:  append([]byte(nil), material.response...),
@@ -946,6 +1013,26 @@ func challengeFromResponse(response *sipResponse) (digestChallenge, error) {
 	return digestChallenge{}, lastError
 }
 
+func minExpiresFromResponse(response *sipResponse) (int, error) {
+	if response == nil {
+		return 0, errors.New("ims: missing SIP response")
+	}
+	for _, value := range response.values("Min-Expires") {
+		for _, part := range splitHeaderValues([]string{value}) {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			seconds, err := strconv.Atoi(part)
+			if err == nil && seconds > 0 {
+				return seconds, nil
+			}
+		}
+	}
+	return 0, errors.New("ims: missing or invalid Min-Expires header in SIP 423 response")
+}
+
+
 func (session *Session) buildRegister(
 	cseq uint32,
 	expires int,
@@ -954,9 +1041,6 @@ func (session *Session) buildRegister(
 ) ([]byte, error) {
 	profile := vowifi.ResolveCarrierProfile(session.request.Identity)
 	registerOptions := profile.IMSRegisterOptions
-	if registerOptions.ExpirySeconds != 0 {
-		expires = registerOptions.ExpirySeconds
-	}
 	branch, err := randomHex(12)
 	if err != nil {
 		return nil, err
@@ -1013,8 +1097,19 @@ func (session *Session) buildRegister(
 	if pani := session.pAccessNetworkInfo(); pani != "" {
 		lines = append(lines, "P-Access-Network-Info: "+pani)
 	}
-	if value := strings.TrimSpace(registerOptions.CellularNetworkInfo); value != "" {
-		lines = append(lines, "Cellular-Network-Info: "+value)
+	cellularInfo := strings.TrimSpace(registerOptions.CellularNetworkInfo)
+	if cellularInfo == "" && vowifi.IsATT310280(session.request.Identity) {
+		mcc := strings.TrimSpace(session.request.Identity.HomeMCC)
+		mnc := strings.TrimSpace(session.request.Identity.HomeMNC)
+		if len(mnc) == 2 {
+			mnc = "0" + mnc
+		}
+		if mcc != "" && mnc != "" {
+			cellularInfo = fmt.Sprintf("3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=%s%s0000000;cell-info-age=0", mcc, mnc)
+		}
+	}
+	if cellularInfo != "" {
+		lines = append(lines, "Cellular-Network-Info: "+cellularInfo)
 	}
 
 	acceptContactTags := []string{
@@ -1047,17 +1142,22 @@ func (session *Session) buildRegister(
 			authorization += ", integrity-protected=" + integrity
 		}
 		lines = append(lines, authorizationHeader+": "+authorization)
-	} else if cseq == 1 && session.securityOffered() {
-		lines = append(lines, "Authorization: "+session.emptyDigestAuthorization())
+	} else if session.shouldSendEmptyDigestAuthorization() {
+		identityAuthorization := session.emptyDigestAuthorization()
+		if session.securityActive {
+			identityAuthorization = strings.Replace(identityAuthorization, "integrity-protected=no", "integrity-protected=yes", 1)
+		}
+		lines = append(lines, "Authorization: "+identityAuthorization)
 	}
 	lines = append(lines, "Content-Length: 0", "", "")
 	return []byte(strings.Join(lines, "\r\n")), nil
 }
 
+// buildContact constructs the REGISTER Contact value for the selected carrier format.
 func (session *Session) buildContact(contactAddress string, registerOptions vowifi.IMSRegisterOptions) string {
 	base := fmt.Sprintf("<sip:%s@%s;transport=%s>", session.identity.user, contactAddress, session.transport)
 	instanceID := session.instanceID
-	icsiRef := "urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel"
+	icsiRef := registerContactICSIRef
 
 	switch registerOptions.ContactFormat {
 	case vowifi.IMSContactFormatATT:
@@ -1128,6 +1228,9 @@ func (session *Session) imsUserAgent() string {
 		profile := vowifi.ResolveCarrierProfile(session.request.Identity)
 		if value := strings.TrimSpace(profile.IMSUserAgent); value != "" {
 			return value
+		}
+		if vowifi.IsATT310280(session.request.Identity) {
+			return "SimAdmin VoWiFi"
 		}
 	}
 	if session != nil && session.provider != nil {
@@ -1352,8 +1455,10 @@ func (session *Session) exchange(ctx context.Context, request []byte, cseq uint3
 	}
 }
 
+// applyRegistrationEvidence records only the Contact and lifetime granted to
+// this session and retains replay-protected credentials for its next refresh.
 func (session *Session) applyRegistrationEvidence(response *sipResponse) error {
-	if session.provider.config.SecurityMode == SecurityRequired && !session.securityActive {
+	if session.configuredSecurityMode() == SecurityRequired && !session.securityActive {
 		session.evidence.Registered = false
 		session.evidence.RegistrationState = "security_failed"
 		return ErrIPSecAgreementRequired
@@ -1388,7 +1493,9 @@ func (session *Session) applyRegistrationEvidence(response *sipResponse) error {
 			}
 		}
 	}
-	expiry := registrationExpiry(response, contacts, session.provider.config.RegistrationExpiry)
+	// Other registered devices may have longer grants; only our selected
+	// Contact determines this session's renewal deadline.
+	expiry := registrationExpiry(response, []string{registeredContact}, session.provider.config.RegistrationExpiry)
 	if expiry <= 0 {
 		session.evidence.Registered = false
 		session.evidence.RegistrationState = "rejected_zero_expiry"
@@ -1410,7 +1517,13 @@ func (session *Session) applyRegistrationEvidence(response *sipResponse) error {
 		SecurityMode:         session.effectiveSecurityMode(),
 		SecurityVerified:     session.securityActive,
 	}
-	session.clearAuthentication()
+	// Keep qop=auth digest state for registration refreshes. Its
+	// nonce count advances for each request, so a refresh does not replay the
+	// authenticated REGISTER. Clearing it here forces a new AKA challenge and
+	// can make an established ipsec-3gpp session fail with SIP 494.
+	if session.auth != nil && !strings.EqualFold(session.auth.challenge.QOP, "auth") {
+		session.clearAuthentication()
+	}
 	return nil
 }
 
@@ -1647,6 +1760,11 @@ func (session *Session) Close(ctx context.Context) error {
 		}
 	}
 	session.callMu.Unlock()
+	session.ussiMu.Lock()
+	for id := range session.ussiDialogs {
+		delete(session.ussiDialogs, id)
+	}
+	session.ussiMu.Unlock()
 	var cleanupErrors []error
 	if unregisterErr != nil {
 		cleanupErrors = append(cleanupErrors, unregisterErr)
@@ -1699,17 +1817,38 @@ func randomHex(size int) (string, error) {
 	return hex.EncodeToString(value), nil
 }
 
-func randomUUID() (string, error) {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		return "", fmt.Errorf("ims: create SIP instance identifier: %w", err)
+// stableInstanceUUID derives a UUIDv5 from the RFC 9562 URL namespace and a
+// VoCat-specific identity name. IMEI validation matches the existing GSMA form:
+// exactly 15 ASCII digits after trimming, without additional checksum rules.
+func stableInstanceUUID(request vowifi.IMSRequest) (string, error) {
+	imei := strings.TrimSpace(request.Identity.IMEI)
+	deviceID := strings.TrimSpace(request.DeviceID)
+	imsi := strings.TrimSpace(request.Identity.IMSI)
+	var name string
+	switch {
+	case digitsBetween(imei, 15, 15):
+		name = "urn:vocat:sip-instance:imei:" + imei
+	case deviceID != "":
+		// Production orchestration supplies the configured device ID. This
+		// fallback remains stable only while that configuration is unchanged.
+		name = "urn:vocat:sip-instance:device-id:" + deviceID
+	case digitsBetween(imsi, 5, 16):
+		// Legacy direct Provider callers may supply only a SIM identity;
+		// deriveIdentities already requires a valid IMSI. Preserve this contract
+		// without randomness, but this last resort is SIM-, not hardware-bound.
+		name = "urn:vocat:sip-instance:imsi:" + imsi
+	default:
+		return "", errors.New("ims: stable SIP instance requires a valid IMEI, DeviceID, or IMSI")
 	}
-	value[6] = (value[6] & 0x0f) | 0x40
-	value[8] = (value[8] & 0x3f) | 0x80
-	return fmt.Sprintf(
-		"%x-%x-%x-%x-%x",
-		value[0:4], value[4:6], value[6:8], value[8:10], value[10:16],
-	), nil
+	// RFC URL namespace: 6ba7b811-9dad-11d1-80b4-00c04fd430c8.
+	namespace := [16]byte{0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8}
+	hash := sha1.New() // UUIDv5 requires SHA-1; this is not an authentication secret.
+	_, _ = hash.Write(namespace[:])
+	_, _ = hash.Write([]byte(name))
+	uuid := hash.Sum(nil)[:16]
+	uuid[6] = (uuid[6] & 0x0f) | 0x50
+	uuid[8] = (uuid[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", uuid[:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:]), nil
 }
 
 func addressHost(address net.Addr) string {

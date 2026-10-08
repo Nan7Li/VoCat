@@ -14,7 +14,16 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 24
+// schemaVersion is the merged Halo + VoCat schema.
+//
+// Halo 1.1.14 stamped user_version 24 after its own migrations 20–24
+// (WireGuard, call history, ePDG probes, then the historical cellular IMS
+// and virtual-PCD steps). VoCat v0.3.15 stamped user_version 25 after a
+// different 23–25 (SMS subscription identity, per-card MBN, cellular_attach).
+// Those numbers overlap and do not mean the same schema. Migrations 25–28
+// are idempotent so both lineages, and a shared user_version 22 database,
+// converge on one schema.
+const schemaVersion = 28
 
 var ErrNotFound = errors.New("store: not found")
 
@@ -127,7 +136,14 @@ func migrate(ctx context.Context, db *sql.DB) error {
 					(nextVersion == 8 && strings.Contains(statement, "ADD COLUMN device_type")) ||
 					(nextVersion == 14 && strings.Contains(statement, "ADD COLUMN")) ||
 					(nextVersion == 16 && strings.Contains(statement, "ADD COLUMN sim_pin")) ||
-					(nextVersion == 19 && strings.Contains(statement, "ADD COLUMN"))
+					(nextVersion == 19 && strings.Contains(statement, "ADD COLUMN")) ||
+					// user_version 20/21 databases already have the original
+					// cellular IMS columns. Halo renumbered that step to 22.
+					(nextVersion == 22 && strings.Contains(statement, "ADD COLUMN cellular_ims_")) ||
+					// VoCat v0.3.14/v0.3.15 already applied these under its own
+					// version numbers 23 and 24.
+					(nextVersion == 25 && strings.Contains(statement, "ADD COLUMN")) ||
+					(nextVersion == 26 && strings.Contains(statement, "ADD COLUMN mbn_profile"))
 				if duplicateAdditiveColumn && strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 					continue
 				}

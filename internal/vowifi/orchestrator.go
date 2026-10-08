@@ -589,6 +589,32 @@ func (orchestrator *Orchestrator) SendUSSI(
 	return sender.SendUSSI(ctx, request)
 }
 
+// CancelUSSI aborts an open USSD dialog through the currently registered IMS session.
+func (orchestrator *Orchestrator) CancelUSSI(
+	ctx context.Context,
+	sessionID string,
+) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := orchestrator.lockOperation(ctx); err != nil {
+		return err
+	}
+	defer orchestrator.unlockOperation()
+	orchestrator.mu.Lock()
+	resources := orchestrator.resources
+	ready := orchestrator.state.IMSReady
+	orchestrator.mu.Unlock()
+	if resources == nil || resources.ims == nil || !ready {
+		return nil
+	}
+	canceler, ok := resources.ims.(USSICanceler)
+	if !ok {
+		return nil
+	}
+	return canceler.CancelUSSI(ctx, sessionID)
+}
+
 func (orchestrator *Orchestrator) Calls() ([]Call, error) {
 	orchestrator.mu.Lock()
 	resources := orchestrator.resources

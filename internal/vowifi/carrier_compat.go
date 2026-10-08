@@ -30,6 +30,7 @@ const (
 type CarrierProfile struct {
 	ID                                 string
 	MatchSource                        string
+	SubscriberIMSIRewrite              SubscriberIMSIRewrite
 	RouteMCC                           string
 	RouteMNC                           string
 	EPDG                               string
@@ -40,6 +41,7 @@ type CarrierProfile struct {
 	IMSTransport                       string
 	IMSIdentityProfile                 string
 	IMSRegisterProfile                 string
+	IMSIPSecMode                       string
 	IMSIPSecEncryption                 string
 	SMSCenter                          string
 	PANIEnabled                        *bool
@@ -49,6 +51,14 @@ type CarrierProfile struct {
 	IMSDialURIScheme                   string
 	IMSUserEqPhone                     bool
 	IMSVoiceCodecs                     []string
+}
+
+// SubscriberIMSIRewrite maps a sponsor/roaming IMSI prefix to the subscriber
+// identity prefix used by the carrier's EAP-AKA and IMS backends. The suffix is
+// preserved, so the rule remains per-subscriber without storing every IMSI.
+type SubscriberIMSIRewrite struct {
+	FromPrefix string
+	ToPrefix   string
 }
 
 // IMSRegisterOptions carries carrier-specific SIP REGISTER header values.
@@ -78,13 +88,23 @@ type carrierProfileDocument struct {
 }
 
 type carrierProfileRule struct {
-	ID       string                `json:"id"`
-	Match    carrierProfileMatch   `json:"match,omitzero"`
-	MatchAny []carrierProfileMatch `json:"match_any,omitempty"`
-	Route    carrierProfileRoute   `json:"route,omitzero"`
-	EPDG     carrierProfileEPDG    `json:"epdg,omitzero"`
-	IKE      carrierProfileIKE     `json:"ike,omitzero"`
-	IMS      carrierProfileIMS     `json:"ims,omitzero"`
+	ID       string                 `json:"id"`
+	Match    carrierProfileMatch    `json:"match,omitzero"`
+	MatchAny []carrierProfileMatch  `json:"match_any,omitempty"`
+	Identity carrierProfileIdentity `json:"identity,omitzero"`
+	Route    carrierProfileRoute    `json:"route,omitzero"`
+	EPDG     carrierProfileEPDG     `json:"epdg,omitzero"`
+	IKE      carrierProfileIKE      `json:"ike,omitzero"`
+	IMS      carrierProfileIMS      `json:"ims,omitzero"`
+}
+
+type carrierProfileIdentity struct {
+	SubscriberIMSIRewrite carrierProfileIMSIRewrite `json:"subscriber_imsi_rewrite,omitzero"`
+}
+
+type carrierProfileIMSIRewrite struct {
+	FromPrefix string `json:"from_prefix,omitempty"`
+	ToPrefix   string `json:"to_prefix,omitempty"`
 }
 
 type carrierProfileMatch struct {
@@ -116,6 +136,7 @@ type carrierProfileIMS struct {
 	Transport                          string                        `json:"transport,omitempty"`
 	IdentityProfile                    string                        `json:"identity_profile,omitempty"`
 	RegisterProfile                    string                        `json:"register_profile,omitempty"`
+	IPSecMode                          string                        `json:"ipsec_mode,omitempty"`
 	IPSecEncryption                    string                        `json:"ipsec_encryption,omitempty"`
 	SMSCenter                          string                        `json:"sms_center,omitempty"`
 	PANIEnabled                        *bool                         `json:"pani_enabled,omitempty"`
@@ -312,6 +333,13 @@ func validCarrierProfileRule(rule carrierProfileRule) bool {
 		(rule.Route.MCC != "" && canonicalPLMN(rule.Route.MCC, rule.Route.MNC) == "") {
 		return false
 	}
+	fromPrefix := strings.TrimSpace(rule.Identity.SubscriberIMSIRewrite.FromPrefix)
+	toPrefix := strings.TrimSpace(rule.Identity.SubscriberIMSIRewrite.ToPrefix)
+	if (fromPrefix == "") != (toPrefix == "") ||
+		(fromPrefix != "" && (len(fromPrefix) < 5 || len(fromPrefix) > 15 || len(fromPrefix) != len(toPrefix) ||
+			!decimalString(fromPrefix) || !decimalString(toPrefix))) {
+		return false
+	}
 	if proposal := strings.TrimSpace(rule.IKE.Proposal); proposal != "" &&
 		proposal != IKEProposalModern && proposal != IKEProposalLegacy {
 		return false
@@ -322,6 +350,10 @@ func validCarrierProfileRule(rule carrierProfileRule) bool {
 	}
 	if encryption := strings.ToLower(strings.TrimSpace(rule.IMS.IPSecEncryption)); encryption != "" &&
 		encryption != "aes-cbc" && encryption != "null" {
+		return false
+	}
+	if mode := strings.ToLower(strings.TrimSpace(rule.IMS.IPSecMode)); mode != "" &&
+		mode != "required" && mode != "optional" && mode != "disabled" {
 		return false
 	}
 	if country := strings.ToUpper(strings.TrimSpace(rule.IMS.PANICountry)); country != "" &&
@@ -538,6 +570,10 @@ func matchesAny(values []string, match func(string) bool) bool {
 func applyCarrierProfileRule(base CarrierProfile, rule carrierProfileRule, source string, identity SIMIdentity) CarrierProfile {
 	base.ID = rule.ID
 	base.MatchSource = source
+	base.SubscriberIMSIRewrite = SubscriberIMSIRewrite{
+		FromPrefix: strings.TrimSpace(rule.Identity.SubscriberIMSIRewrite.FromPrefix),
+		ToPrefix:   strings.TrimSpace(rule.Identity.SubscriberIMSIRewrite.ToPrefix),
+	}
 	base.RouteMCC = strings.TrimSpace(rule.Route.MCC)
 	base.RouteMNC = strings.TrimSpace(rule.Route.MNC)
 	if base.RouteMCC == "" {
@@ -591,6 +627,9 @@ func applyCarrierProfileRule(base CarrierProfile, rule carrierProfileRule, sourc
 	if value := strings.ToLower(strings.TrimSpace(rule.IMS.IPSecEncryption)); value != "" {
 		base.IMSIPSecEncryption = value
 	}
+	if value := strings.ToLower(strings.TrimSpace(rule.IMS.IPSecMode)); value != "" {
+		base.IMSIPSecMode = value
+	}
 	base.SMSCenter = strings.TrimSpace(rule.IMS.SMSCenter)
 	if rule.IMS.PANIEnabled != nil {
 		enabled := *rule.IMS.PANIEnabled
@@ -614,7 +653,58 @@ func applyCarrierProfileRule(base CarrierProfile, rule carrierProfileRule, sourc
 		base.AllowSMSWithoutContactConfirmation = *rule.IMS.AllowSMSWithoutContactConfirmation
 	}
 	base.IMSRegisterOptions = applyRegisterOptions(base.IMSRegisterOptions, rule.IMS.RegisterOptions)
+	if (base.IMSIdentityProfile == "" || base.IMSIdentityProfile == IMSProfileStandard) && isATTEPDG(base.EPDG) {
+		base.IMSIdentityProfile = IMSProfileATT
+	}
+	if (base.IMSRegisterProfile == "" || base.IMSRegisterProfile == IMSProfileStandard) && isATTEPDG(base.EPDG) {
+		base.IMSRegisterProfile = IMSProfileATT
+	}
+	if base.IMSRegisterProfile == IMSProfileATT {
+		if base.IMSRegisterOptions.ContactFormat == "" {
+			base.IMSRegisterOptions.ContactFormat = IMSContactFormatATT
+		}
+		if base.IMSRegisterOptions.ExpirySeconds == 0 {
+			base.IMSRegisterOptions.ExpirySeconds = 18400
+		}
+		if len(base.IMSRegisterOptions.ContactExtraTags) == 0 {
+			base.IMSRegisterOptions.ContactExtraTags = []string{`+g.3gpp.accesstype="wlan1"`}
+		}
+		if base.IMSRegisterOptions.SupportedHeader == nil {
+			supported := "path,sec-agree,gruu"
+			base.IMSRegisterOptions.SupportedHeader = &supported
+		}
+		if base.IMSRegisterOptions.PVisitedNetworkID == "" {
+			base.IMSRegisterOptions.PVisitedNetworkID = "one.att.net"
+		}
+		base.IMSRegisterOptions.PPreferredIdentity = true
+		if len(base.IMSRegisterOptions.AcceptContactTags) == 0 {
+			base.IMSRegisterOptions.AcceptContactTags = []string{
+				"*;+g.3gpp.smsip",
+				`*;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel"`,
+			}
+		}
+		if base.PANINode == "" {
+			base.PANINode = "000000000000"
+		}
+	}
 	return base
+}
+
+func isATTEPDG(epdg string) bool {
+	epdg = strings.ToLower(strings.TrimSpace(epdg))
+	return epdg == "epdg.epc.att.net" || strings.HasSuffix(epdg, ".att.net")
+}
+
+// EffectiveSubscriberIMSI returns the identity presented to EAP-AKA and IMS.
+// It never mutates the SIM-reported IMSI stored in runtime state.
+func (profile CarrierProfile) EffectiveSubscriberIMSI(imsi string) string {
+	imsi = strings.TrimSpace(imsi)
+	fromPrefix := strings.TrimSpace(profile.SubscriberIMSIRewrite.FromPrefix)
+	toPrefix := strings.TrimSpace(profile.SubscriberIMSIRewrite.ToPrefix)
+	if fromPrefix != "" && toPrefix != "" && strings.HasPrefix(imsi, fromPrefix) {
+		return toPrefix + strings.TrimPrefix(imsi, fromPrefix)
+	}
+	return imsi
 }
 
 func applyRegisterOptions(base IMSRegisterOptions, rule carrierProfileRegisterOptions) IMSRegisterOptions {

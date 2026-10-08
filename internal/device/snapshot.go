@@ -2,10 +2,8 @@ package device
 
 import (
 	"context"
-	"encoding/csv"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -30,13 +28,23 @@ func (manager *Manager) readSnapshot(
 		OperatingMode: -1,
 		UpdatedAt:     time.Now().UTC(),
 	}
+	ml307 := modem.IsML307(candidate)
 	ati, err := manager.command(ctx, client, "ATI")
 	if err != nil {
 		return snapshot, fmt.Errorf("probe modem: %w", err)
 	}
 	snapshot.Responsive = true
 	snapshot.Manufacturer, snapshot.Model, snapshot.Firmware = parseATI(ati.Lines)
-	if snapshot.Model == "" && !strings.EqualFold(candidate.Product, "Android") {
+	if ml307 {
+		if snapshot.Firmware == "" {
+			if response, firmwareErr := manager.command(ctx, client, "AT+CGMR"); firmwareErr == nil {
+				snapshot.Firmware = parseCGMR(response)
+			}
+		}
+		if snapshot.Model == "" {
+			snapshot.Model = "ML307"
+		}
+	} else if snapshot.Model == "" && !strings.EqualFold(candidate.Product, "Android") {
 		snapshot.Model = candidate.Product
 	}
 	// Native MHI/QMI devices expose their immutable modem identity through DMS.
@@ -69,19 +77,26 @@ func (manager *Manager) readSnapshot(
 	if !snapshot.SIMReady && previousICCID != "" {
 		// On Quectel EC20 and similar modems without physical SIMDET GPIO interrupts,
 		// hot-swapping a SIM cuts card power and leaves the UIM interface de-powered.
-		// A fast soft cycle (AT+CFUN=0 -> AT+CFUN=1/4) re-powers the SIM interface,
+		// A fast soft cycle (AT+CFUN=0 -> AT+CFUN=4) re-powers the SIM interface,
 		// triggers ATR and card initialization without hardware restart.
-		_, _ = manager.command(ctx, client, "AT+CFUN=0")
+		if manager.logger != nil {
+			manager.logger.Info("recovering SIM with cellular RF disabled", "category", "hardware", "device_id", id,
+				"recovery_source", "snapshot", "target_cfun", 4)
+		}
+		if _, err := manager.command(ctx, client, "AT+CFUN=0"); err != nil {
+			return snapshot, fmt.Errorf("power down SIM for snapshot recovery: %w", err)
+		}
 		select {
 		case <-ctx.Done():
 			return snapshot, ctx.Err()
 		case <-time.After(300 * time.Millisecond):
 		}
-		targetCFUN := "AT+CFUN=1"
-		if snapshot.FlightMode {
-			targetCFUN = "AT+CFUN=4"
+		// CFUN is read near the end of this snapshot: FlightMode still has its
+		// zero value here. Restore RF-off mode; policy reconciliation can later
+		// explicitly enable cellular operation for the identified card.
+		if _, err := manager.command(ctx, client, "AT+CFUN=4"); err != nil {
+			return snapshot, fmt.Errorf("restore RF-off SIM interface: %w", err)
 		}
-		_, _ = manager.command(ctx, client, targetCFUN)
 		select {
 		case <-ctx.Done():
 			return snapshot, ctx.Err()
@@ -91,9 +106,17 @@ func (manager *Manager) readSnapshot(
 			snapshot.SIMStatus, snapshot.SIMReady = parseCPIN(response)
 		}
 	}
-	ccid, ccidErr := manager.command(ctx, client, "AT+CCID")
-	if ccidErr != nil {
-		ccid, ccidErr = manager.command(ctx, client, "AT+QCCID")
+	var ccid modem.Response
+	var ccidErr error
+	for _, command := range []string{"AT+CCID", "AT+QCCID", "AT+MCCID"} {
+		ccid, ccidErr = manager.command(ctx, client, command)
+		if ccidErr == nil {
+			snapshot.ICCID = parseICCIDIdentifier(ccid, []string{"+CCID:", "+QCCID:", "+MCCID:"}, 18, 22)
+			if snapshot.ICCID != "" {
+				break
+			}
+			ccidErr = fmt.Errorf("%s returned no valid ICCID", command)
+		}
 	}
 	if ccidErr != nil && strings.EqualFold(strings.TrimSpace(backend), "qmi") && isNativeQMICandidate(candidate) &&
 		strings.EqualFold(strings.TrimSpace(snapshot.SIMStatus), "READY") {
@@ -113,16 +136,14 @@ func (manager *Manager) readSnapshot(
 	}
 	if ccidErr != nil {
 		snapshot.Warnings = append(snapshot.Warnings, "read ICCID: "+ccidErr.Error())
-	} else {
-		if snapshot.ICCID == "" {
-			snapshot.ICCID = parseICCIDIdentifier(ccid, []string{"+CCID:", "+QCCID:"}, 18, 22)
-		}
 	}
 	if previousICCID != "" && snapshot.ICCID != "" && !strings.EqualFold(previousICCID, snapshot.ICCID) {
 		// A different physical SIM must never inherit the previous card's
 		// permission to use cellular RF. Disable RF before reading serving-cell
 		// or operator state; policy reconciliation will then start VoWiFi.
-		_, _ = manager.command(ctx, client, "AT+CFUN=4")
+		if _, err := manager.command(ctx, client, "AT+CFUN=4"); err != nil {
+			return snapshot, fmt.Errorf("protect changed SIM from cellular RF: %w", err)
+		}
 		snapshot.SIMChanged = true
 	}
 	if response, ok := optional("AT+CIMI"); ok {
@@ -159,7 +180,25 @@ func (manager *Manager) readSnapshot(
 		snapshot.SignalRaw, snapshot.SignalPercent, snapshot.RSSIDBm = parseCSQ(response)
 	}
 	servingPLMN := ""
-	if response, ok := optional(`AT+QENG="servingcell"`); ok {
+	if ml307 {
+		if response, err := manager.command(ctx, client, `AT+MUESTATS="cell"`); err == nil {
+			metrics := parseMUESTATSCell(response)
+			servingPLMN = metrics.PLMN
+			snapshot.AccessTech = metrics.AccessTech
+			snapshot.Channel = metrics.Channel
+			snapshot.RSRP = metrics.RSRP
+			snapshot.RSRQ = metrics.RSRQ
+			snapshot.SINR = metrics.SINR
+			if metrics.RSSI != nil {
+				snapshot.RSSIDBm = metrics.RSSI
+			}
+		}
+		if response, err := manager.command(ctx, client, `AT+MUESTATS="sband"`); err == nil {
+			if band := parseMUESTATSSBand(response); band != "" {
+				snapshot.Band = "B" + band
+			}
+		}
+	} else if response, ok := optional(`AT+QENG="servingcell"`); ok {
 		metrics := parseQENG(response)
 		servingPLMN = metrics.PLMN
 		snapshot.AccessTech = metrics.AccessTech
@@ -219,12 +258,15 @@ func (manager *Manager) readSnapshot(
 		// caller's deadline (30s during a periodic refresh) and starve every other
 		// device operation behind the lock. Give it an independent short timeout
 		// and let the WWAN transport's drain discard the trailing stale bytes.
-		cgsnCtx, cancelCGSN := context.WithTimeout(ctx, manager.commandTimeout)
-		cgsnResponse, cgsnErr := manager.command(cgsnCtx, client, "AT+CGSN")
-		cancelCGSN()
-		if cgsnErr == nil {
-			if imei := parseIdentifier(cgsnResponse, []string{"+CGSN:", "+GSN:"}, 14, 17); imei != "" {
-				snapshot.IMEI = imei
+		for _, command := range []string{"AT+CGSN", "AT+CGSN=1"} {
+			cgsnCtx, cancelCGSN := context.WithTimeout(ctx, manager.commandTimeout)
+			cgsnResponse, cgsnErr := manager.command(cgsnCtx, client, command)
+			cancelCGSN()
+			if cgsnErr == nil {
+				if imei := modem.ParseIMEI(cgsnResponse); imei != "" {
+					snapshot.IMEI = imei
+					break
+				}
 			}
 		}
 	}
@@ -417,13 +459,26 @@ func parseATI(lines []string) (manufacturer, model, firmware string) {
 		switch {
 		case strings.HasPrefix(upper, "REVISION:"):
 			firmware = strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
-		case strings.Contains(upper, "QUECTEL"):
+		case strings.Contains(upper, "QUECTEL") || strings.EqualFold(upper, "CMCC"):
 			manufacturer = line
 		case strings.HasPrefix(upper, "EC20") || strings.HasPrefix(upper, "EC25"):
+			model = line
+		case strings.HasPrefix(upper, "ML307") && model == "":
 			model = line
 		}
 	}
 	return
+}
+
+func parseCGMR(response modem.Response) string {
+	for _, line := range response.Lines {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.EqualFold(line, response.Command) &&
+			!strings.HasPrefix(strings.ToUpper(line), "+CME ERROR:") {
+			return strings.TrimPrefix(line, "Revision:")
+		}
+	}
+	return ""
 }
 
 func parseCPIN(response modem.Response) (string, bool) {
@@ -459,52 +514,6 @@ func parseCSQ(response modem.Response) (raw, percent, dbm *int) {
 	signalDBM := -113 + value*2
 	dbm = intPointer(signalDBM)
 	return
-}
-
-type qengMetrics struct {
-	PLMN       string
-	AccessTech string
-	Band       string
-	Channel    string
-	RSSI       *int
-	RSRP       *int
-	RSRQ       *int
-	SINR       *int
-}
-
-func parseQENG(response modem.Response) qengMetrics {
-	for _, line := range response.Lines {
-		if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "+QENG:") {
-			continue
-		}
-		values := csvValues(strings.TrimSpace(strings.SplitN(line, ":", 2)[1]))
-		if len(values) < 3 || !strings.EqualFold(values[0], "servingcell") {
-			continue
-		}
-		result := qengMetrics{AccessTech: strings.ToUpper(values[2])}
-		if strings.EqualFold(values[2], "LTE") && len(values) >= 17 {
-			if decimalDigits(values[4], 3, 3) && decimalDigits(values[5], 2, 3) {
-				result.PLMN = values[4] + values[5]
-			}
-			result.Channel = values[8]
-			if values[9] != "" {
-				result.Band = "B" + values[9]
-			}
-			result.RSRP = parseOptionalInt(values[13])
-			result.RSRQ = parseOptionalInt(values[14])
-			result.RSSI = parseOptionalInt(values[15])
-			result.SINR = parseOptionalInt(values[16])
-		}
-		return result
-	}
-	return qengMetrics{}
-}
-
-func decimalDigits(value string, minimum, maximum int) bool {
-	value = strings.TrimSpace(value)
-	return len(value) >= minimum && len(value) <= maximum && strings.IndexFunc(value, func(character rune) bool {
-		return character < '0' || character > '9'
-	}) < 0
 }
 
 type operatorInfo struct {
@@ -564,30 +573,6 @@ func parseCFUN(response modem.Response) (int, bool) {
 
 func isRadioOffMode(mode int) bool {
 	return mode == 0 || mode == 4
-}
-
-func valueAfterPrefix(response modem.Response, prefix string) string {
-	for _, line := range response.Lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(strings.ToUpper(line), strings.ToUpper(prefix)) {
-			return strings.TrimSpace(line[len(prefix):])
-		}
-	}
-	return ""
-}
-
-func csvValues(value string) []string {
-	reader := csv.NewReader(strings.NewReader(value))
-	reader.TrimLeadingSpace = true
-	reader.LazyQuotes = true
-	record, err := reader.Read()
-	if err != nil && err != io.EOF {
-		return nil
-	}
-	for index := range record {
-		record[index] = strings.TrimSpace(record[index])
-	}
-	return record
 }
 
 func firstDigitLine(response modem.Response, minimum, maximum int) string {
@@ -650,16 +635,4 @@ func parseICCIDIdentifier(
 		}
 	}
 	return ""
-}
-
-func parseOptionalInt(value string) *int {
-	number, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil {
-		return nil
-	}
-	return intPointer(number)
-}
-
-func intPointer(value int) *int {
-	return &value
 }

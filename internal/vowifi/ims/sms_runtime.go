@@ -43,6 +43,8 @@ type smsCenterReader interface {
 type ReceivedSMS struct {
 	MessageID              string
 	DeviceID               string
+	ICCID                  string
+	ModemIMEI              string
 	IMSI                   string
 	From                   string
 	Text                   string
@@ -57,9 +59,22 @@ type ReceivedSMS struct {
 	DecodeError            string
 }
 
+// SIMDataDownload is an SMS-PP binary command that must be passed to the UICC
+// through an SMS-PP DOWNLOAD ENVELOPE before the network is acknowledged.
+type SIMDataDownload struct {
+	DeviceID string
+	IMSI     string
+	PID      byte
+	DCS      byte
+	TPDU     []byte
+	RPDU     []byte
+}
+
 // ReceivedSMSStatus is network delivery evidence for one submitted SMS part.
 type ReceivedSMSStatus struct {
 	DeviceID               string
+	ICCID                  string
+	ModemIMEI              string
 	IMSI                   string
 	To                     string
 	MessageReference       int
@@ -81,6 +96,7 @@ type ReceivedSMSStatus struct {
 type ReceivedUSSD struct {
 	MessageID    string
 	DeviceID     string
+	ICCID        string
 	IMSI         string
 	From         string
 	Text         string
@@ -360,6 +376,9 @@ func (session *Session) exchangeRuntime(
 }
 
 func (session *Session) handleSIPRequest(request *sipRequest, respond func([]byte) error) {
+	if session.handleUSSIRequest(request, respond) {
+		return
+	}
 	if session.handleCallRequest(request, respond) {
 		return
 	}
@@ -422,7 +441,9 @@ func supportsUSSIContentType(value string) bool {
 	if err != nil {
 		return false
 	}
-	return strings.EqualFold(mediaType, ussiContentType)
+	return strings.EqualFold(mediaType, ussiContentType) ||
+		strings.EqualFold(mediaType, ussiXMLContentType) ||
+		strings.EqualFold(mediaType, "multipart/mixed")
 }
 
 func buildSIPResponse(request *sipRequest, status int, tag string) ([]byte, error) {
@@ -500,11 +521,45 @@ func (session *Session) processSMSMessage(request *sipRequest) {
 			"carrier_profile", carrierProfile.ID,
 			"direction", message.Direction, "error", decodeErr)
 	}
+	if message.SIMDataDownload {
+		if decodeErr != nil {
+			session.logInboundSMS(slog.LevelWarn, "IMS SIM data download decode failed", request,
+				"stage", "tpdu", "rp_reference", int(rpdu.reference), "error", decodeErr)
+			session.sendLoggedDeliveryReport(request, buildRPError(rpdu.reference, 95), "rp_error")
+			return
+		}
+		if session.provider.config.OnSIMDataDownload == nil {
+			session.logInboundSMS(slog.LevelWarn, "IMS SIM data download has no UICC handler", request,
+				"stage", "uicc", "rp_reference", int(rpdu.reference))
+      session.sendLoggedDeliveryReport(request, []byte{0x02, rpdu.reference}, "rp_ack")
+			return
+		}
+		if err := session.provider.config.OnSIMDataDownload(context.Background(), SIMDataDownload{
+			DeviceID: session.request.DeviceID,
+			IMSI:     session.request.Identity.IMSI,
+			PID:      byte(message.ProtocolID),
+			DCS:      byte(message.DataCodingScheme),
+			TPDU:     append([]byte(nil), rpdu.tpdu...),
+			RPDU:     append([]byte(nil), payload...),
+		}); err != nil {
+			session.logInboundSMS(slog.LevelWarn, "IMS SIM data download UICC delivery failed", request,
+				"stage", "uicc", "rp_reference", int(rpdu.reference), "error", err)
+			session.sendLoggedDeliveryReport(request, buildRPError(rpdu.reference, 22), "rp_error")
+			return
+		}
+		// The callback has completed the UICC ENVELOPE transaction.
+		session.logInboundSMS(slog.LevelInfo, "IMS SIM data download suppressed from SMS inbox", request,
+			"stage", "tpdu", "rp_reference", int(rpdu.reference))
+		session.sendLoggedDeliveryReport(request, []byte{0x02, rpdu.reference}, "rp_ack")
+		return
+	}
 
 	switch {
 	case message.Direction == device.SMSDirectionStatusReport:
 		status := ReceivedSMSStatus{
 			DeviceID:               session.request.DeviceID,
+			ICCID:                  session.request.Identity.ICCID,
+			ModemIMEI:              strings.TrimSpace(session.request.Identity.IMEI),
 			IMSI:                   session.request.Identity.IMSI,
 			To:                     message.To,
 			MessageReference:       intPtrValue(message.MessageReference),
@@ -549,6 +604,8 @@ func (session *Session) processSMSMessage(request *sipRequest) {
 			// visible even when its TPDU and text happen to be identical.
 			MessageID:              fmt.Sprintf("ims:%s:%d", callID, rpdu.reference),
 			DeviceID:               session.request.DeviceID,
+			ICCID:                  session.request.Identity.ICCID,
+			ModemIMEI:              strings.TrimSpace(session.request.Identity.IMEI),
 			IMSI:                   session.request.Identity.IMSI,
 			From:                   message.From,
 			Text:                   message.Text,
@@ -731,6 +788,7 @@ func (session *Session) processUSSIMessage(request *sipRequest) {
 	received := ReceivedUSSD{
 		MessageID: fmt.Sprintf("ims-ussd:%s", callID),
 		DeviceID:  session.request.DeviceID,
+		ICCID:     session.request.Identity.ICCID,
 		IMSI:      session.request.Identity.IMSI,
 		From:      firstURI(request.value("P-Asserted-Identity")),
 		Text:      text,
@@ -813,68 +871,7 @@ func extractUSSDString(body []byte) (raw []byte, dcs *int, text string) {
 // menu reply in request.Input. USSI does not require the +g.3gpp.smsip contact
 // to be confirmed — only IMS registration.
 func (session *Session) SendUSSI(ctx context.Context, request vowifi.USSISubmitRequest) (vowifi.USSISubmitResult, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	session.smsMu.Lock()
-	defer session.smsMu.Unlock()
-
-	session.mu.Lock()
-	if session.closed || !session.evidence.Registered {
-		session.mu.Unlock()
-		return vowifi.USSISubmitResult{}, vowifi.ErrUSSINotReady
-	}
-	target := session.ussiTarget()
-	session.mu.Unlock()
-
-	payload := strings.TrimSpace(firstNonEmpty(request.Input, request.Code))
-	if payload == "" {
-		return vowifi.USSISubmitResult{}, errors.New("ims: USSI payload is empty")
-	}
-	body, dcs, err := encodeUSSDBody(payload)
-	if err != nil {
-		return vowifi.USSISubmitResult{}, err
-	}
-	// TS 24.390 §5.2.1: [language indicator]? [length][DCS][USSD string].
-	// The length byte counts the DCS plus the string octets that follow it.
-	stringOctets := body
-	length := len(stringOctets) + 1
-	if length > 255 {
-		return vowifi.USSISubmitResult{}, errors.New("ims: USSD string exceeds 254 octets")
-	}
-	message := make([]byte, 0, 2+len(stringOctets))
-	message = append(message, byte(length), byte(*dcs))
-	message = append(message, stringOctets...)
-	response, sendErr := session.sendSIPMessageWith(ctx, target, message, "", ussiContentType, "ussd")
-	result := vowifi.USSISubmitResult{
-		SubmissionStatus: "pending",
-	}
-	if response != nil {
-		result.SIPCode = response.StatusCode
-	}
-	if sendErr != nil {
-		result.SubmissionStatus = "failed"
-		result.Raw = strings.ToUpper(hex.EncodeToString(message))
-		return result, sendErr
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		result.SubmissionStatus = "rejected_by_ims"
-		result.Status = "failed"
-		result.Raw = strings.ToUpper(hex.EncodeToString(message))
-		return result, fmt.Errorf("ims: USSI rejected with SIP %d", response.StatusCode)
-	}
-	// A 2xx response may carry the network's reply in the same MESSAGE body.
-	text, replyDCS := session.parseUSSIReply(response)
-	result.Text = text
-	result.DCS = replyDCS
-	result.Status = "final"
-	result.Continueable = false
-	result.Raw = strings.ToUpper(hex.EncodeToString(message))
-	if result.Status == "" {
-		result.Status = "final"
-	}
-	result.SubmissionStatus = "accepted_by_ims"
-	return result, nil
+	return session.sendUSSI(ctx, request)
 }
 
 // parseUSSIReply decodes the USSD body of a 2xx response when the network
@@ -940,11 +937,16 @@ func (session *Session) sendDeliveryReport(request *sipRequest, report []byte) e
 	if target == "" {
 		return errors.New("ims: SMS MESSAGE omitted a delivery-report target")
 	}
-	response, err := session.sendSIPMessage(
+	// TS 24.341 5.3.2.4 uses a public identity of the SMS receiver.
+	// Prefer the called identity only if the registrar associated it with us.
+	response, err := session.sendSIPMessageWithIdentity(
 		context.Background(),
 		target,
 		report,
 		strings.TrimSpace(request.value("Call-ID")),
+		smsContentType,
+		"smsip",
+		request.value("P-Called-Party-ID"),
 	)
 	if err != nil {
 		return err
@@ -962,6 +964,9 @@ func (session *Session) SendSMS(ctx context.Context, request vowifi.SMSSubmitReq
 	session.smsMu.Lock()
 	defer session.smsMu.Unlock()
 
+	if err := ctx.Err(); err != nil {
+		return vowifi.SMSSubmitResult{}, err
+	}
 	session.mu.Lock()
 	if session.closed || !session.evidence.Registered || !session.smsCapabilityReady() {
 		session.mu.Unlock()
@@ -976,6 +981,12 @@ func (session *Session) SendSMS(ctx context.Context, request vowifi.SMSSubmitReq
 		var readErr error
 		if ok {
 			smsc, readErr = reader.ReadSMSCenter(ctx, session.request.DeviceID)
+		}
+		if err := ctx.Err(); err != nil {
+			return vowifi.SMSSubmitResult{}, err
+		}
+		if errors.Is(readErr, context.Canceled) || errors.Is(readErr, context.DeadlineExceeded) {
+			return vowifi.SMSSubmitResult{}, readErr
 		}
 		if strings.TrimSpace(smsc) == "" {
 			smsc = smsCenterForIdentity(session.provider.config, session.request.Identity)
@@ -1009,8 +1020,27 @@ func (session *Session) SendSMS(ctx context.Context, request vowifi.SMSSubmitReq
 	session.logOutboundSMS(slog.LevelInfo, "IMS outbound SMS submission started",
 		"stage", "prepare", "parts", len(parts), "smsc_source", smscSource,
 		"recipient_type", smsRecipientType(parts[0].To))
-	psi := "tel:" + normalizeE164(smsc)
+	psi, err := session.smsTarget(ctx, smsc)
+	if err != nil {
+		result.SubmissionStatus = "failed"
+		return result, err
+	}
+	// Preflight before attempting any part. The MESSAGE builder rechecks the
+	// current registration evidence under mu immediately before constructing it.
+	session.mu.Lock()
+	if session.identity.temporaryPublic {
+		_, _, err = originatingSMSPublicIdentity(session.identity.public, session.evidence.AssociatedIdentities)
+	}
+	session.mu.Unlock()
+	if err != nil {
+		result.SubmissionStatus = "failed"
+		return result, err
+	}
 	for _, part := range parts {
+		if err := ctx.Err(); err != nil {
+			result.SubmissionStatus = "failed"
+			return result, err
+		}
 		reference := session.allocateRPReference()
 		if len(part.TPDU) < 2 {
 			return result, errors.New("ims: SMS-SUBMIT TPDU is truncated")
@@ -1129,6 +1159,18 @@ func (session *Session) sendSIPMessageWith(
 	contentType string,
 	acceptContactTag string,
 ) (*sipResponse, error) {
+	return session.sendSIPMessageWithIdentity(ctx, target, body, inReplyTo, contentType, acceptContactTag, "")
+}
+
+func (session *Session) sendSIPMessageWithIdentity(
+	ctx context.Context,
+	target string,
+	body []byte,
+	inReplyTo string,
+	contentType string,
+	acceptContactTag string,
+	preferredIdentity string,
+) (*sipResponse, error) {
 	callToken, err := randomHex(18)
 	if err != nil {
 		return nil, err
@@ -1141,6 +1183,16 @@ func (session *Session) sendSIPMessageWith(
 	session.mu.Lock()
 	cseq := session.cseq
 	session.cseq++
+	var identity, identitySource string
+	if session.identity.temporaryPublic && contentType == smsContentType && inReplyTo == "" {
+		identity, identitySource, err = originatingSMSPublicIdentity(session.identity.public, session.evidence.AssociatedIdentities)
+		if err != nil {
+			session.mu.Unlock()
+			return nil, err
+		}
+	} else {
+		identity, identitySource = messagePublicIdentity(session.identity.public, preferredIdentity, session.evidence.AssociatedIdentities)
+	}
 	serviceRoutes := append([]string(nil), session.evidence.ServiceRoute...)
 	securityHeaders := runtimeSecurityHeaders(
 		session.securityActive,
@@ -1162,11 +1214,11 @@ func (session *Session) sendSIPMessageWith(
 		}
 	}
 	lines = append(lines,
-		"From: <"+session.identity.public+">;tag="+session.fromTag,
+		"From: <"+identity+">;tag="+session.fromTag,
 		"To: <"+target+">",
 		"Call-ID: "+callID,
 		fmt.Sprintf("CSeq: %d MESSAGE", cseq),
-		"P-Preferred-Identity: <"+session.identity.public+">",
+		"P-Preferred-Identity: <"+identity+">",
 	)
 	if pani := session.pAccessNetworkInfo(); pani != "" {
 		lines = append(lines, "P-Access-Network-Info: "+pani)
@@ -1191,6 +1243,7 @@ func (session *Session) sendSIPMessageWith(
 	request := append([]byte(strings.Join(lines, "\r\n")), body...)
 	session.logOutboundSMS(slog.LevelDebug, "IMS SIP MESSAGE transaction started",
 		"stage", "sip_send", "call_id", callID, "cseq", cseq,
+		"identity_source", identitySource,
 		"body_bytes", len(body), "service_routes", len(serviceRoutes))
 	response, exchangeErr := session.exchangeRuntime(
 		ctx,

@@ -614,6 +614,8 @@
         "proposal": "modern"
       },
       "ims": {
+        "identity_profile": "att",
+        "register_profile": "att",
         "ipsec_encryption": "aes-cbc"
       }
     },
@@ -3797,8 +3799,16 @@
           "8985203"
         ]
       },
+      "epdg": {
+        "hostname": "wlan.three.com.hk"
+      },
       "ike": {
         "proposal": "modern"
+      },
+      "ims": {
+        "ipsec_mode": "optional",
+        "pani_enabled": true,
+        "pani_country": "AUTO"
       }
     },
     {
@@ -8492,14 +8502,25 @@
           ]
         }
       ],
+      "route": {
+        "mcc": "310",
+        "mnc": "240"
+      },
       "epdg": {
-        "hostname": "ss.epdg.epc.mnc260.mcc310.pub.3gppnetwork.org"
+        "hostname": "epdg.epc.mnc240.mcc310.pub.3gppnetwork.org"
       },
       "ike": {
         "proposal": "modern"
       },
       "ims": {
-        "ipsec_encryption": "aes-cbc"
+        "ipsec_encryption": "aes-cbc",
+        "register_options": {
+          "contact_extra_tags": [
+            "+g.3gpp.accesstype=\"wlan1\"",
+            "+g.3gpp.smsip-msisdnless",
+            "+g.3gpp.smsip-msisdn-less"
+          ]
+        }
       }
     },
     {
@@ -11798,6 +11819,27 @@
           "DITO"
         ]
       },
+      "match_any": [
+        {
+          "home_plmns": [
+            "51566",
+            "515066",
+            "20404"
+          ],
+          "imsi_prefixes": [
+            "204047616"
+          ],
+          "iccid_prefixes": [
+            "89636626"
+          ]
+        }
+      ],
+      "identity": {
+        "subscriber_imsi_rewrite": {
+          "from_prefix": "204047616",
+          "to_prefix": "515661015"
+        }
+      },
       "route": {
         "mcc": "515",
         "mnc": "66"
@@ -11806,7 +11848,7 @@
         "hostname": "epdg.epc.mnc066.mcc515.pub.3gppnetwork.org"
       },
       "ike": {
-        "proposal": "modern"
+        "proposal": "legacy-sha1-modp1024"
       },
       "ims": {
         "ipsec_encryption": "aes-cbc"

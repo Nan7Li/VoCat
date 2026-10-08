@@ -177,6 +177,45 @@ func buildEnableProfileRequestWithRefresh(iccid string, refresh bool) ([]byte, e
 	return derConstruct(0xBF31, profileID, derEncode(0x81, []byte{refreshFlag})), nil
 }
 
+// buildEnableProfileRequestWithAID constructs an ES10c EnableProfileRequest
+// with ISD-P AID addressing (tag 4F) per GSMA SGP.22 clause 5.7.17:
+//
+//	BF31 { A0 { 4F <AID> } 81 01 <refreshFlag> }
+func buildEnableProfileRequestWithAID(aid []byte, refresh bool) ([]byte, error) {
+	if len(aid) == 0 || len(aid) > 16 {
+		return nil, fmt.Errorf("esim: invalid ISD-P AID length %d (must be 1-16 octets)", len(aid))
+	}
+	profileID := derConstruct(0xA0, derEncode(0x4F, aid))
+	refreshFlag := byte(0x00)
+	if refresh {
+		refreshFlag = 0xFF
+	}
+	return derConstruct(0xBF31, profileID, derEncode(0x81, []byte{refreshFlag})), nil
+}
+
+// isHexAID reports whether an identifier represents an ISD-P AID (a hexadecimal
+// string of up to 16 octets / 32 hex chars) rather than a decimal ICCID.
+func isHexAID(id string) bool {
+	id = strings.TrimSpace(id)
+	if len(id) < 10 || len(id) > 32 || len(id)%2 != 0 {
+		return false
+	}
+	for _, c := range id {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	if len(id) == 32 {
+		return true
+	}
+	for _, c := range id {
+		if (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
+			return true
+		}
+	}
+	return false
+}
+
 // parseCSIM extracts the payload and status word from an AT+CSIM response.
 func parseCSIM(response modem.Response) ([]byte, int, error) {
 	value := valueAfterPrefix(response, "+CSIM:")
@@ -285,7 +324,9 @@ func (manager *Manager) csim(ctx context.Context, id string, apdu []byte) ([]byt
 	if err != nil {
 		return nil, 0, err
 	}
-	state.opMu.Lock()
+	if err := lockMutexContext(ctx, &state.opMu); err != nil {
+		return nil, 0, err
+	}
 	defer state.opMu.Unlock()
 	if err := manager.validateActive(id, state); err != nil {
 		return nil, 0, err
@@ -303,6 +344,31 @@ func (manager *Manager) csim(ctx context.Context, id string, apdu []byte) ([]byt
 		return nil, 0, err
 	}
 	return parseCSIM(response)
+}
+
+// probeATLogicalChannel requires the UICC lock. It only opens and closes its
+// own temporary channel; no application is selected and no profile is changed.
+func (manager *Manager) probeATLogicalChannel(ctx context.Context, id string) error {
+	probeContext, cancelProbe := context.WithTimeout(ctx, 2*time.Second)
+	payload, sw, err := manager.csim(probeContext, id, []byte{0x00, 0x70, 0x00, 0x00, 0x01})
+	cancelProbe()
+	if err != nil {
+		return fmt.Errorf("esim: open temporary AT channel: %w", err)
+	}
+	if sw != 0x9000 || len(payload) != 1 || payload[0] == 0 || payload[0] > 19 {
+		return fmt.Errorf("esim: invalid temporary AT channel response (SW=%04X)", sw)
+	}
+	// 即使页面请求已取消，也用独立且有界的上下文清理刚分配的通道。
+	closeContext, cancelClose := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancelClose()
+	_, sw, err = manager.csim(closeContext, id, []byte{0x00, 0x70, 0x80, payload[0], 0x00})
+	if err != nil {
+		return fmt.Errorf("esim: close temporary AT channel %d: %w", payload[0], err)
+	}
+	if sw != 0x9000 {
+		return fmt.Errorf("esim: close temporary AT channel %d (SW=%04X)", payload[0], sw)
+	}
+	return nil
 }
 
 // openEuicc opens a logical channel and selects the ISD-R AID on it.
@@ -368,6 +434,7 @@ func (manager *Manager) openEuiccOnce(ctx context.Context, id string) (*euiccCha
 }
 
 func (manager *Manager) openEuiccOnceAID(ctx context.Context, id, aidHex string) (*euiccChannel, error) {
+	aidHex = strings.ToUpper(strings.TrimSpace(aidHex))
 	state, lookupErr := manager.lookup(id)
 	if lookupErr != nil {
 		return nil, lookupErr
@@ -376,7 +443,7 @@ func (manager *Manager) openEuiccOnceAID(ctx context.Context, id, aidHex string)
 	if candidate.HardwareKind == pcsc.HardwareKind {
 		return manager.openPCSCEuiccOnceAID(ctx, id, candidate, aidHex)
 	}
-	if strings.EqualFold(manager.backendFor(state), "qmi") && isNativeQMICandidate(candidate) {
+	if strings.EqualFold(manager.esimTransportFor(state), "qmi") && isNativeQMICandidate(candidate) {
 		return manager.openQMIEuiccOnceAID(ctx, id, candidate, aidHex)
 	}
 	// MANAGE CHANNEL (open): 00 70 00 00 01 -> "<channel> 90 00". This EC20
@@ -384,15 +451,14 @@ func (manager *Manager) openEuiccOnceAID(ctx context.Context, id, aidHex string)
 	// channel but then rejects SELECT ISD-R at the AT+CSIM layer.
 	payload, sw, err := manager.csim(ctx, id, []byte{0x00, 0x70, 0x00, 0x00, 0x01})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("esim: AT MANAGE CHANNEL AID=%s: %w", aidHex, err)
 	}
 	if sw != 0x9000 || len(payload) != 1 {
-		return nil, errNoLogicalChannel
+		return nil, fmt.Errorf("%w: AT MANAGE CHANNEL AID=%s SW=%04X response_bytes=%d", errNoLogicalChannel, aidHex, sw, len(payload))
 	}
 	channel := &euiccChannel{manager: manager, id: id, channel: int(payload[0])}
 
 	// SELECT ISD-R by AID on the logical channel: CLA=channel, INS=A4, P1=04.
-	aidHex = strings.ToUpper(strings.TrimSpace(aidHex))
 	aid, err := hex.DecodeString(aidHex)
 	if err != nil || len(aid) == 0 || len(aid) > 255 {
 		channel.close(context.Background())
@@ -402,17 +468,21 @@ func (manager *Manager) openEuiccOnceAID(ctx context.Context, id, aidHex string)
 	_, sw, err = manager.csim(ctx, id, selectAID)
 	if err != nil {
 		channel.close(context.Background())
-		return nil, err
+		return nil, fmt.Errorf("esim: AT SELECT AID=%s: %w", aidHex, err)
 	}
 	if sw>>8 == 0x61 {
 		// Drain the select FCP the card is holding with a proper GET RESPONSE
 		// (CLA=0x80|channel, INS=0xC0). transmit() injects the channel into the
 		// CLA low nibble, so the first byte here stays 0x80.
-		_, sw, _ = channel.transmit(ctx, []byte{0x80, 0xC0, 0x00, 0x00, byte(sw & 0xFF)}, 0x80)
+		_, sw, err = channel.transmit(ctx, []byte{0x80, 0xC0, 0x00, 0x00, byte(sw & 0xFF)}, 0x80)
+		if err != nil {
+			channel.close(context.Background())
+			return nil, fmt.Errorf("esim: AT SELECT GET RESPONSE AID=%s: %w", aidHex, err)
+		}
 	}
 	if sw != 0x9000 {
 		channel.close(context.Background())
-		return nil, errNoEUICC
+		return nil, fmt.Errorf("%w: AT SELECT AID=%s SW=%04X", errNoEUICC, aidHex, sw)
 	}
 	return channel, nil
 }
@@ -444,7 +514,7 @@ func (manager *Manager) openQMIEuiccOnceAID(ctx context.Context, id string, cand
 	}
 	if err != nil {
 		_ = session.Close()
-		return nil, fmt.Errorf("%w: %v", errNoEUICC, err)
+		return nil, fmt.Errorf("%w: QMI OpenLogicalChannel AID=%s: %s", errNoEUICC, aidHex, HardwareErrorDetail(err))
 	}
 	return &euiccChannel{
 		manager: manager, id: id, channel: int(logicalChannel),
@@ -465,7 +535,7 @@ func (manager *Manager) openPCSCEuiccOnceAID(ctx context.Context, id string, can
 		if err != nil {
 			return nil, fmt.Errorf("esim: PC/SC MANAGE CHANNEL: %w", err)
 		}
-		return nil, errNoLogicalChannel
+		return nil, fmt.Errorf("%w: PC/SC MANAGE CHANNEL SW=%04X response_bytes=%d", errNoLogicalChannel, sw, len(payload))
 	}
 	channel := &euiccChannel{manager: manager, id: id, channel: int(payload[0]), pcscSession: session}
 	aidHex = strings.ToUpper(strings.TrimSpace(aidHex))
@@ -478,7 +548,10 @@ func (manager *Manager) openPCSCEuiccOnceAID(ctx context.Context, id string, can
 	_, selectSW, err := channel.transmit(ctx, selectAID, 0x00)
 	if err != nil || selectSW != 0x9000 {
 		channel.close(context.Background())
-		return nil, errNoEUICC
+		if err != nil {
+			return nil, fmt.Errorf("%w: PC/SC SELECT AID=%s: %s", errNoEUICC, aidHex, HardwareErrorDetail(err))
+		}
+		return nil, fmt.Errorf("%w: PC/SC SELECT AID=%s SW=%04X", errNoEUICC, aidHex, selectSW)
 	}
 	return channel, nil
 }
@@ -489,6 +562,13 @@ func (manager *Manager) openPCSCEuiccOnceAID(ctx context.Context, id string, can
 // OpenEUICC's eSTK integration, generic AIDs are not appended after an eSTK SE
 // opens, because the standard AID aliases one of the same storages.
 func (manager *Manager) discoverEuiccAIDs(ctx context.Context, id string) []string {
+	aids, _ := manager.discoverEuiccAIDsWithErrors(ctx, id)
+	return aids
+}
+
+// 保留候选应用的探测失败，供最终未读到任何 eUICC 时记录；不将普通 SIM 的缺失应用单独报错。
+func (manager *Manager) discoverEuiccAIDsWithErrors(ctx context.Context, id string) ([]string, error) {
+	var failures []error
 	product, err := manager.openEuiccAID(ctx, id, estkProductAID)
 	if err == nil {
 		product.close(context.Background())
@@ -497,31 +577,35 @@ func (manager *Manager) discoverEuiccAIDs(ctx context.Context, id string) []stri
 		for _, aid := range []string{estkSE0AID, estkSE1AID} {
 			channel, err := manager.openEuiccAID(ctx, id, aid)
 			if err != nil {
+				failures = append(failures, err)
 				continue
 			}
 			channel.close(context.Background())
 			found = append(found, aid)
 		}
 		if len(found) > 0 {
-			return found
+			return found, errors.Join(failures...)
 		}
+	} else {
+		failures = append(failures, err)
 	}
 
 	var found []string
 	for _, aid := range []string{isdRAID, xesimISDRAID} {
 		channel, err := manager.openEuiccAID(ctx, id, aid)
 		if err != nil {
+			failures = append(failures, err)
 			continue
 		}
 		channel.close(context.Background())
 		found = append(found, aid)
 	}
 	if len(found) > 0 {
-		return found
+		return found, errors.Join(failures...)
 	}
 	// Preserve the old error path for a physical SIM with no eUICC. The caller
 	// retries the standard AID once and returns ErrNoEUICC to the HTTP layer.
-	return []string{isdRAID}
+	return []string{isdRAID}, errors.Join(failures...)
 }
 
 func isTransientEuiccCME(err error) bool {
@@ -532,6 +616,17 @@ func isTransientEuiccCME(err error) bool {
 
 // close releases the logical channel (MANAGE CHANNEL close).
 func (channel *euiccChannel) close(ctx context.Context) {
+	// Closing a logical channel is best-effort cleanup. Never let a modem that
+	// stopped answering turn this cleanup into an unbounded wait (the eSIM page
+	// would otherwise remain in its loading state forever).
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+	}
 	if channel.qmiSession != nil {
 		if channel.channel > 0 {
 			_ = channel.qmiSession.CloseLogicalChannel(ctx, channel.qmiSlot, byte(channel.channel))
@@ -759,7 +854,11 @@ func validProfileICCID(iccid string) bool {
 
 // ESIMListProfiles reads the eUICC profile list via ES10c GetProfilesInfo.
 func (manager *Manager) ESIMListProfiles(ctx context.Context, id string) (EsimInfo, error) {
-	manager.lockESIM()
+	ctx, cancel := boundESIMContext(ctx)
+	defer cancel()
+	if err := manager.lockESIMContext(ctx); err != nil {
+		return EsimInfo{}, err
+	}
 	defer manager.unlockESIM()
 	if manager.esimRecoveryActive(id) {
 		if cached, ok := manager.cachedESIMInfo(id); ok {
@@ -790,7 +889,6 @@ func (manager *Manager) ESIMListProfiles(ctx context.Context, id string) (EsimIn
 	return EsimInfo{}, ErrNoEUICC
 }
 
-// ESIMSwitchProfile enables one profile by ICCID via ES10c EnableProfile.
 func (manager *Manager) usesATCSimEUICC(id string) bool {
 	state, err := manager.lookup(id)
 	if err != nil {
@@ -810,6 +908,48 @@ func (manager *Manager) wakeRadioForATCSim(ctx context.Context, id string) error
 	return nil
 }
 
+func boundESIMContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, 10*time.Second)
+}
+
+// resolveProfileAID attempts to look up the ISD-P AID for a profile by its ICCID.
+// It checks the in-memory eSIM cache first; if missing and an active eUICC
+// channel is provided, it executes a live GetProfilesInfo (BF2D) on the open channel.
+func (manager *Manager) resolveProfileAID(ctx context.Context, id string, channel *euiccChannel, iccid string) string {
+	clean := strings.TrimSpace(iccid)
+	if cached, ok := manager.cachedESIMInfo(id); ok {
+		for _, p := range cached.Profiles {
+			if strings.TrimSpace(p.ICCID) == clean && strings.TrimSpace(p.AID) != "" {
+				return strings.TrimSpace(p.AID)
+			}
+		}
+	}
+	if channel != nil {
+		probeContext, cancelProbe := context.WithTimeout(context.WithoutCancel(ctx), csimAPDUTimeout)
+		payload, err := channel.es10(probeContext, []byte{0xBF, 0x2D, 0x00})
+		cancelProbe()
+		if err == nil {
+			profiles := parseProfilesInfo(payload)
+			for _, p := range profiles {
+				if strings.TrimSpace(p.ICCID) == clean && strings.TrimSpace(p.AID) != "" {
+					return strings.TrimSpace(p.AID)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// ESIMSwitchProfile enables a profile via ES10c and verifies its live ICCID.
+// PC/SC uses refresh=false and a host reset to apply the switch; modem transports
+// retain their own REFRESH handling. Accepting EnableProfile is not sufficient:
+// recovery must expose the requested ICCID before this method reports success.
 func (manager *Manager) ESIMSwitchProfile(ctx context.Context, id string, iccid string, aidHex string) error {
 	iccid = strings.TrimSpace(iccid)
 	if iccid == "" {
@@ -835,7 +975,11 @@ func (manager *Manager) ESIMSwitchProfile(ctx context.Context, id string, iccid 
 		manager.unlockESIM()
 		return err
 	}
-	refreshRequested := !nativeQMI
+	// PC/SC applies profile switches with the host reset below.
+	// Some removable eUICCs reject refresh=true with commandError (0x07),
+	// including when addressed by AID. Use the existing CloseWithReset below
+	// to apply the switch before recovering and verifying the live ICCID.
+	refreshRequested := !nativeQMI && channel.pcscSession == nil
 	if nativeQMI {
 		refreshContext, cancelRefresh := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		refreshRequested, err = channel.registerProfileRefresh(refreshContext)
@@ -854,7 +998,18 @@ func (manager *Manager) ESIMSwitchProfile(ctx context.Context, id string, iccid 
 			refreshRequested = false
 		}
 	}
-	der, err := buildEnableProfileRequestWithRefresh(iccid, refreshRequested)
+	var der []byte
+	if isHexAID(iccid) {
+		aidBytes, hexErr := hex.DecodeString(strings.TrimSpace(iccid))
+		if hexErr != nil {
+			channel.close(context.Background())
+			manager.unlockESIM()
+			return fmt.Errorf("esim: decode ISD-P AID %q: %w", iccid, hexErr)
+		}
+		der, err = buildEnableProfileRequestWithAID(aidBytes, refreshRequested)
+	} else {
+		der, err = buildEnableProfileRequestWithRefresh(iccid, refreshRequested)
+	}
 	if err != nil {
 		channel.close(context.Background())
 		manager.unlockESIM()
@@ -878,6 +1033,30 @@ func (manager *Manager) ESIMSwitchProfile(ctx context.Context, id string, iccid 
 	// Parse the card-level result before waiting for an indication, otherwise
 	// every retry needlessly waits for the refresh timeout.
 	resultBeforeClose, resultPresentBeforeClose := enableProfileResult(payload)
+
+	// If addressing by ICCID was rejected with commandError (0x07),
+	// undefinedError (0x7F), or notFound (0x01), try ISD-P AID addressing
+	// per SGP.22 clause 5.7.17 while the logical channel remains open.
+	// commandError alone does not identify a directory lookup failure.
+	if err == nil && resultPresentBeforeClose && !isHexAID(iccid) &&
+		(byte(resultBeforeClose) == 7 || byte(resultBeforeClose) == 0x7F || byte(resultBeforeClose) == 1) {
+		if aidStr := manager.resolveProfileAID(ctx, id, channel, iccid); aidStr != "" {
+			if aidBytes, decErr := hex.DecodeString(aidStr); decErr == nil && len(aidBytes) > 0 {
+				if aidDer, buildErr := buildEnableProfileRequestWithAID(aidBytes, refreshRequested); buildErr == nil {
+					aidCommitContext, cancelAIDCommit := context.WithTimeout(context.WithoutCancel(ctx), csimAPDUTimeout)
+					aidPayload, aidErr := channel.es10(aidCommitContext, aidDer)
+					cancelAIDCommit()
+					if aidErr == nil {
+						if aidRes, aidOk := enableProfileResult(aidPayload); aidOk {
+							payload = aidPayload
+							resultBeforeClose = aidRes
+							resultPresentBeforeClose = aidOk
+						}
+					}
+				}
+			}
+		}
+	}
 	if err == nil && resultPresentBeforeClose && byte(resultBeforeClose) == 5 && nativeQMI {
 		// Registering CAT2 may immediately deliver a proactive command that was
 		// already pending before EnableProfile. Drain it on catBusy so the raw
@@ -978,59 +1157,81 @@ func (manager *Manager) ESIMSwitchProfile(ctx context.Context, id string, iccid 
 			_, _ = manager.Refresh(refreshContext, id)
 			cancelRefresh()
 			manager.unlockESIM()
+			mbnContext, cancelMBN := context.WithTimeout(context.WithoutCancel(ctx), profileSwitchVerificationTimeout(manager))
+			defer cancelMBN()
+			manager.reconcileEC20MBNAfterProfileSwitchBestEffort(mbnContext, id, iccid)
 			return nil
 		}
 	}
 	// The eUICC accepted the target profile. Reset and repopulate the modem in
 	// a detached recovery so it survives an HTTP disconnect, but keep this API
 	// call pending until the live modem ICCID proves that the switch took effect.
-	manager.startProfileSwitchRecovery(id)
+	recovery := manager.startProfileSwitchRecovery(id)
 	manager.unlockESIM()
 
 	verifyContext, cancelVerify := context.WithTimeout(context.WithoutCancel(ctx), profileSwitchVerificationTimeout(manager))
 	defer cancelVerify()
-	if err := manager.waitForESIMRecovery(verifyContext, id); err != nil {
+	if err := manager.waitForESIMRecoveryResult(verifyContext, recovery); err != nil {
 		return err
 	}
-	return manager.verifySwitchedICCID(verifyContext, id, iccid)
+	if err := manager.verifySwitchedICCID(verifyContext, id, iccid); err != nil {
+		return err
+	}
+	mbnContext, cancelMBN := context.WithTimeout(context.WithoutCancel(ctx), profileSwitchVerificationTimeout(manager))
+	defer cancelMBN()
+	manager.reconcileEC20MBNAfterProfileSwitchBestEffort(mbnContext, id, iccid)
+	return nil
 }
 
 type esimCATBusyRetryKey struct{}
 type esimCMERetryKey struct{}
 
-func (manager *Manager) startProfileSwitchRecovery(id string) {
-	done := make(chan struct{})
+// esimRecovery retains an initiating operation's result after the active entry
+// is removed. Closing done publishes err to all waiters.
+type esimRecovery struct {
+	done chan struct{}
+	err  error
+}
+
+func (manager *Manager) startProfileSwitchRecovery(id string) *esimRecovery {
+	recovery := &esimRecovery{done: make(chan struct{})}
 	manager.esimRecoveryMu.Lock()
 	if manager.esimRecoveries == nil {
-		manager.esimRecoveries = make(map[string]chan struct{})
+		manager.esimRecoveries = make(map[string]*esimRecovery)
 	}
-	if manager.esimRecoveries[id] != nil {
+	if active := manager.esimRecoveries[id]; active != nil {
 		manager.esimRecoveryMu.Unlock()
-		return
+		return active
 	}
-	manager.esimRecoveries[id] = done
+	manager.esimRecoveries[id] = recovery
 	manager.esimRecoveryMu.Unlock()
 	go func() {
-		manager.recoverAfterProfileSwitch(id)
+		err := manager.recoverAfterProfileSwitch(id)
 		manager.esimRecoveryMu.Lock()
-		if manager.esimRecoveries[id] == done {
+		recovery.err = err
+		if manager.esimRecoveries[id] == recovery {
 			delete(manager.esimRecoveries, id)
-			close(done)
 		}
+		close(recovery.done)
 		manager.esimRecoveryMu.Unlock()
 	}()
+	return recovery
 }
 
 func (manager *Manager) waitForESIMRecovery(ctx context.Context, id string) error {
 	manager.esimRecoveryMu.Lock()
-	done := manager.esimRecoveries[id]
+	recovery := manager.esimRecoveries[id]
 	manager.esimRecoveryMu.Unlock()
-	if done == nil {
+	return manager.waitForESIMRecoveryResult(ctx, recovery)
+}
+
+func (manager *Manager) waitForESIMRecoveryResult(ctx context.Context, recovery *esimRecovery) error {
+	if recovery == nil {
 		return nil
 	}
 	select {
-	case <-done:
-		return nil
+	case <-recovery.done:
+		return recovery.err
 	case <-ctx.Done():
 		return fmt.Errorf("esim: wait for profile-switch recovery: %w", ctx.Err())
 	}
@@ -1065,13 +1266,15 @@ func (manager *Manager) markCachedProfileEnabled(id, iccid string) {
 	manager.esimCacheMu.Lock()
 	info, ok := manager.esimCache[id]
 	if ok {
+		clean := strings.TrimSpace(iccid)
 		for index := range info.Profiles {
-			if info.Profiles[index].ICCID == iccid {
-				info.Profiles[index].State = 1
-				info.Profiles[index].StateText = i18n.T("已启用")
+			p := &info.Profiles[index]
+			if strings.TrimSpace(p.ICCID) == clean || (strings.TrimSpace(p.AID) != "" && strings.EqualFold(strings.TrimSpace(p.AID), clean)) {
+				p.State = 1
+				p.StateText = i18n.T("已启用")
 			} else {
-				info.Profiles[index].State = 0
-				info.Profiles[index].StateText = i18n.T("已禁用")
+				p.State = 0
+				p.StateText = i18n.T("已禁用")
 			}
 		}
 		manager.esimCache[id] = info
@@ -1083,10 +1286,12 @@ func (manager *Manager) markCachedProfileDisabled(id, iccid string) {
 	manager.esimCacheMu.Lock()
 	info, ok := manager.esimCache[id]
 	if ok {
+		clean := strings.TrimSpace(iccid)
 		for index := range info.Profiles {
-			if info.Profiles[index].ICCID == iccid {
-				info.Profiles[index].State = 0
-				info.Profiles[index].StateText = i18n.T("已禁用")
+			p := &info.Profiles[index]
+			if strings.TrimSpace(p.ICCID) == clean || (strings.TrimSpace(p.AID) != "" && strings.EqualFold(strings.TrimSpace(p.AID), clean)) {
+				p.State = 0
+				p.StateText = i18n.T("已禁用")
 				break
 			}
 		}
@@ -1128,7 +1333,7 @@ func (manager *Manager) renameCachedProfile(id, iccid, nickname string) {
 
 // recoverAfterProfileSwitch owns the post-commit SIM reset independently of the
 // initiating HTTP request.
-func (manager *Manager) recoverAfterProfileSwitch(id string) {
+func (manager *Manager) recoverAfterProfileSwitch(id string) error {
 	resetContext, cancelReset := context.WithTimeout(context.Background(), manager.longTimeout)
 	if native, err := manager.powerCycleNativeQMISIM(resetContext, id); native {
 		cancelReset()
@@ -1138,15 +1343,17 @@ func (manager *Manager) recoverAfterProfileSwitch(id string) {
 		// Native WWAN identity and profile verification are both QMI-backed.
 		// Do not enter the AT refresh path: OpenStick firmware can accept the
 		// switch while timing out every EC20-specific AT identity command.
-		return
+		return err
 	}
 	cancelReset()
+	var resetErr error
 	if !manager.isPCSCDevice(id) {
 		resetContext, cancelReset := context.WithTimeout(context.Background(), manager.commandTimeout*2)
-		_ = manager.softResetForProfileSwitch(resetContext, id)
+		resetErr = manager.softResetForProfileSwitch(resetContext, id)
 		cancelReset()
 	}
 	manager.refreshAfterProfileSwitch(id)
+	return resetErr
 }
 
 // refreshAfterProfileSwitch repopulates the device snapshot in the background
@@ -1203,12 +1410,16 @@ func enableProfileResult(payload []byte) (int, bool) {
 }
 
 var (
-	ErrESIMEnableProfileNotFound  = errors.New("esim: profile to enable was not found on the selected eUICC")
-	ErrESIMProfileNotDisabled     = errors.New("esim: profile is not currently disabled")
-	ErrESIMEnableDisallowedPolicy = errors.New("esim: profile switch is not allowed by the active profile policy")
-	ErrESIMWrongProfileReenabling = errors.New("esim: profile cannot be re-enabled from the current profile state")
-	ErrESIMEnableCATBusy          = errors.New("esim: card application toolkit is busy; retry enabling later")
-	ErrESIMEnableUndefined        = errors.New("esim: eUICC returned undefinedError while enabling this profile; the card did not provide a more specific reason")
+	ErrESIMEnableProfileNotFound      = errors.New("esim: profile to enable was not found on the selected eUICC")
+	ErrESIMProfileNotDisabled         = errors.New("esim: profile is not currently disabled")
+	ErrESIMEnableDisallowedPolicy     = errors.New("esim: profile switch is not allowed by the active profile policy")
+	ErrESIMWrongProfileReenabling     = errors.New("esim: profile cannot be re-enabled from the current profile state")
+	ErrESIMEnableCATBusy              = errors.New("esim: card application toolkit is busy; retry enabling later")
+	ErrESIMDisallowedByEnterpriseRule = errors.New("esim: profile switch is not allowed by enterprise rule")
+	ErrESIMCommandError               = errors.New("esim: eUICC internal command error (commandError)")
+	ErrESIMDisallowedForRPM           = errors.New("esim: profile switch is disallowed for roaming position management")
+	ErrESIMNoEsimPortAvailable        = errors.New("esim: no eSIM port available on eUICC")
+	ErrESIMEnableUndefined            = errors.New("esim: eUICC returned undefinedError while enabling this profile; the card did not provide a more specific reason")
 )
 
 // enableProfileResponseError maps the complete SGP.22 EnableProfileResult
@@ -1232,6 +1443,14 @@ func enableProfileResponseError(result byte, payload []byte) error {
 		return wrap(ErrESIMWrongProfileReenabling)
 	case 5:
 		return wrap(ErrESIMEnableCATBusy)
+	case 6:
+		return wrap(ErrESIMDisallowedByEnterpriseRule)
+	case 7:
+		return wrap(ErrESIMCommandError)
+	case 9:
+		return wrap(ErrESIMDisallowedForRPM)
+	case 10:
+		return wrap(ErrESIMNoEsimPortAvailable)
 	case 0x7F:
 		return wrap(ErrESIMEnableUndefined)
 	default:
@@ -1323,7 +1542,7 @@ func (manager *Manager) verifySwitchedICCIDAttempts(
 			}
 			lastErr = err
 		} else {
-			for _, command := range []string{"AT+CCID", "AT+QCCID"} {
+			for _, command := range []string{"AT+CCID", "AT+QCCID", "AT+MCCID"} {
 				commandContext, cancel := context.WithTimeout(ctx, manager.commandTimeout)
 				response, err := manager.ExecuteAT(commandContext, id, command)
 				cancel()
@@ -1331,7 +1550,7 @@ func (manager *Manager) verifySwitchedICCIDAttempts(
 					lastErr = err
 					continue
 				}
-				live := parseICCIDIdentifier(response, []string{"+CCID:", "+QCCID:"}, 18, 22)
+				live := parseICCIDIdentifier(response, []string{"+CCID:", "+QCCID:", "+MCCID:"}, 18, 22)
 				if live == "" {
 					lastErr = errors.New("modem response contained no valid ICCID")
 					continue

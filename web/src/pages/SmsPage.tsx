@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type UIEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { AddRegular, DeleteRegular } from "@fluentui/react-icons";
+import { AddRegular, ArrowDownloadRegular, DeleteRegular } from "@fluentui/react-icons";
+import { SmsExportModal } from "../components/sms/SmsExportModal";
 import { ApiError, apiMessage } from "../api";
 import { Button, ErrorState, PageHeader, RefreshButton, Spinner, confirmDialog, message } from "../components/ui";
 import { usePolling } from "../lib/usePolling";
@@ -93,6 +94,7 @@ export default function SmsPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [sending, setSending] = useState(false);
   const [newSmsOpen, setNewSmsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [newSmsDevice, setNewSmsDevice] = useState("");
   const [composer, setComposer] = useState("");
   const [deletingMessageId, setDeletingMessageId] = useState<number | null>(null);
@@ -292,8 +294,9 @@ export default function SmsPage() {
     if (device !== "all") query.deviceId = device;
     else {
       query.modemImei = thread.modemImei;
-      query.imsi = thread.imsi;
     }
+		if (thread.iccid) query.iccid = thread.iccid;
+		else query.imsi = thread.imsi;
     try {
       const list = sortMessages(await getThread(query));
       if (id !== threadReqId.current) return false;
@@ -419,8 +422,9 @@ export default function SmsPage() {
       if (device !== "all") query.deviceId = device;
       else {
         query.modemImei = thread.modemImei;
-        query.imsi = thread.imsi;
       }
+			if (thread.iccid) query.iccid = thread.iccid;
+			else query.imsi = thread.imsi;
       const older = sortMessages(await getThread(query));
       setMessagesState([...older, ...messagesRef.current]);
       setHasMoreState(older.length === THREAD_PAGE);
@@ -538,8 +542,8 @@ export default function SmsPage() {
       try {
         const q: DeleteThreadQuery =
           deviceRef.current !== "all"
-            ? { deviceId: deviceRef.current, peer: t.peer }
-            : { deviceId: "all", modemImei: t.modemImei, imsi: t.imsi, peer: t.peer };
+						? { deviceId: deviceRef.current, iccid: t.iccid || undefined, imsi: t.iccid ? undefined : t.imsi, peer: t.peer }
+						: { deviceId: "all", modemImei: t.modemImei, iccid: t.iccid || undefined, imsi: t.iccid ? undefined : t.imsi, peer: t.peer };
         await deleteThread(q);
         message.success(tl("已删除对话"));
         if (keyRef.current === t.key) clearSelection(true);
@@ -620,8 +624,11 @@ export default function SmsPage() {
         title={t("短信功能检测")}
         subtitle={t("通过收发测试验证模组 SMS 收发功能是否正常")}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <RefreshButton loading={contactsLoading} onClick={refreshAll} />
+            <Button onClick={() => setExportOpen(true)} icon={<ArrowDownloadRegular />}>
+              {t("导出短信")}
+            </Button>
             <Button variant="primary" onClick={openNewSms} className="font-bold !border-0" icon={<AddRegular />}>
               {t("发送测试短信")}
             </Button>
@@ -757,6 +764,9 @@ export default function SmsPage() {
           </div>
         </div>
       ) : null}
+      {exportOpen && (
+        <SmsExportModal devices={devices} defaultDeviceId={selectedDevice} onClose={() => setExportOpen(false)} />
+      )}
       <NewSmsModal
         open={newSmsOpen}
         devices={devices}

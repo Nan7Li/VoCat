@@ -607,3 +607,54 @@ func nonCollidingServerSPIs(ueClient uint32, ueServer uint32) (uint32, uint32) {
 	}
 	return client, server
 }
+
+func TestProtectedReregisterRetainsAuthorizationIdentity(t *testing.T) {
+	s := &Session{provider: &Provider{config: Config{SecurityMode: SecurityRequired}}, conn: &fakeConn{}, transport: "tcp", identity: identitySet{user: "001010123456789", private: "001010123456789@ims.example.test", public: "sip:001010123456789@ims.example.test", domain: "ims.example.test"}, endpoint: pcscfEndpoint{host: "192.0.2.20", port: 5060}, securityActive: true, instanceID: "urn:uuid:test", callID: "test", fromTag: "test"}
+	for _, expires := range []int{0, 3600} {
+		b, err := s.buildRegister(3, expires, "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := parseSIPPacket(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := p.Request.value("Authorization")
+		if !strings.Contains(a, `username="001010123456789@ims.example.test"`) || !strings.Contains(a, "integrity-protected=yes") {
+			t.Errorf("protected REGISTER expires=%d missing private identity/integrity indication; Authorization=%q", expires, a)
+		}
+	}
+}
+
+func TestOptionalSecurityDeclineKeepsEmptyDigestForDeregister(t *testing.T) {
+	s := &Session{
+		provider:         &Provider{config: Config{SecurityMode: SecurityOptional, RegistrationExpiry: time.Hour}},
+		securityMode:     SecurityOptional,
+		conn:             &fakeConn{},
+		transport:        "tcp",
+		identity: identitySet{
+			user:    "001010123456789",
+			private: "001010123456789@ims.example.test",
+			public:  "sip:001010123456789@ims.example.test",
+			domain:  "ims.example.test",
+		},
+		endpoint:         pcscfEndpoint{host: "192.0.2.20", port: 5060},
+		instanceID:       "urn:uuid:test",
+		callID:           "dereg-test",
+		fromTag:          "test-from",
+		securityDeclined: true, // sec-agree declined because registrar didn't provide Security-Server
+	}
+	packet, err := s.buildRegister(3, 0, "", "")
+	if err != nil {
+		t.Fatalf("buildRegister(expires=0) error = %v", err)
+	}
+	raw := string(packet)
+	if !strings.Contains(raw, "Expires: 0") {
+		t.Fatalf("deregister missing Expires: 0:\n%s", raw)
+	}
+	if !strings.Contains(raw, `Authorization: Digest username="001010123456789@ims.example.test"`) ||
+		!strings.Contains(raw, "algorithm=AKAv1-MD5") ||
+		!strings.Contains(raw, "integrity-protected=no") {
+		t.Fatalf("deregister with declined optional security omitted empty AKAv1-MD5 Authorization:\n%s", raw)
+	}
+}

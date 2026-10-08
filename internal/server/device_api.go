@@ -44,7 +44,7 @@ type DeviceController interface {
 	ReRegisterOperator(context.Context, string) (device.OperatorSelection, error)
 	ScanOperators(context.Context, string) (device.OperatorScanResult, error)
 	SendSMS(context.Context, string, string, string) (device.SMSSendResult, error)
-	ListSMS(context.Context, string) ([]device.SMSMessage, error)
+	ListSMS(context.Context, string) (device.SMSListing, error)
 	ReadSMS(context.Context, string, int) (device.SMSMessage, error)
 	DeleteSMS(context.Context, string, int) error
 	DeleteSMSFromStorage(context.Context, string, string, int) error
@@ -282,6 +282,12 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) bool {
 		}
 		if selector, ok := s.devices.(interface{ SetBackend(string, string) error }); ok {
 			if err := selector.SetBackend(selected.ID, config.DeviceBackend); err != nil {
+				s.writeDeviceError(w, err)
+				return true
+			}
+		}
+		if selector, ok := s.devices.(interface{ SetESIMTransport(string, string) error }); ok {
+			if err := selector.SetESIMTransport(selected.ID, config.ESIMTransport); err != nil {
 				s.writeDeviceError(w, err)
 				return true
 			}
@@ -536,6 +542,12 @@ func (s *Server) handleDevicePath(
 						return true
 					}
 				}
+				if selector, ok := s.devices.(interface{ SetESIMTransport(string, string) error }); ok {
+					if err := selector.SetESIMTransport(physicalID, next.ESIMTransport); err != nil {
+						s.writeDeviceError(w, err)
+						return true
+					}
+				}
 			}
 			if err := s.store.UpsertDevice(r.Context(), next); err != nil {
 				s.writeStoreError(w, err)
@@ -674,6 +686,16 @@ func (s *Server) handleDevicePath(
 			return true
 		}
 		return s.handleUSBNetMode(w, r, physicalID)
+	case "cells":
+		if !s.requirePhysicalDevice(w, physicalPresent) {
+			return true
+		}
+		return s.handleCells(w, r, physicalID)
+	case "cell-lock":
+		if !s.requirePhysicalDevice(w, physicalPresent) {
+			return true
+		}
+		return s.handleCellLock(w, r, config.ID, physicalID)
 	case "operator_selection":
 		if !s.requirePhysicalDevice(w, physicalPresent) {
 			return true
@@ -1214,12 +1236,25 @@ type imsUSSIController interface {
 	SendUSSI(context.Context, string, vowifi.USSISubmitRequest) (vowifi.USSISubmitResult, error)
 }
 
+// imsUSSICanceler is the optional VoWiFi runtime capability used to abort an active USSI dialog.
+type imsUSSICanceler interface {
+	CancelUSSI(context.Context, string, string) error
+}
+
 // openUSSDSession mirrors device.Manager.openUSSDSession but lives on the HTTP
 // server so a USSI awaiting-input reply can hand back a token the existing
 // continue/cancel endpoints understand. The token is only a device handle;
 // the IMS session owns the actual dialog.
 func (s *Server) openUSSDSession(deviceID string) string {
 	return s.ussdSessions.open(deviceID)
+}
+
+func (s *Server) openUSSDSessionWithNetwork(deviceID, networkSessionID string) string {
+	return s.ussdSessions.openWithNetwork(deviceID, networkSessionID)
+}
+
+func (s *Server) ussdNetworkSession(sessionID string) string {
+	return s.ussdSessions.networkSession(sessionID)
 }
 
 // ussdSessionDevice resolves a USSD session token created by openUSSDSession
@@ -1321,14 +1356,10 @@ func ussdResultFromUSSI(result vowifi.USSISubmitResult, deviceID string, server 
 		Status:       result.Status,
 		Continueable: result.Continueable,
 	}
-	// USSI has no inline continue/terminate flag in the 2xx response body, so
-	// treat any non-empty successful reply as potentially multi-round. The cancel
-	// endpoint drops the local token; the network will time the dialog out if it
-	// was actually final.
-	if mapped.Status != "failed" && mapped.Status != "terminated" && mapped.Text != "" {
+	if result.Status == "awaiting_input" || (result.Continueable && result.Status != "failed" && result.Status != "terminated") {
 		mapped.Status = "awaiting_input"
 		mapped.Continueable = true
-		mapped.SessionID = server.openUSSDSession(deviceID)
+		mapped.SessionID = server.openUSSDSessionWithNetwork(deviceID, result.SessionID)
 	}
 	return mapped
 }
@@ -1836,6 +1867,8 @@ func (s *Server) writeDeviceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_apn", "APN must contain only letters, digits, dots, underscores, or hyphens")
 	case errors.Is(err, device.ErrRegionBlocked):
 		writeError(w, http.StatusForbidden, "region_blocked", err.Error())
+	case errors.Is(err, device.ErrRFOffRestart):
+		writeError(w, http.StatusConflict, "rf_off_restart_blocked", "Cellular RF is disabled, so the modem restart was blocked. Disable VoWiFi and airplane mode before restarting; this will enable cellular RF.")
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, modem.ErrCommandTimeout):
 		writeError(w, http.StatusGatewayTimeout, "modem_timeout", "the modem did not answer before the command timeout")
 	case errors.Is(err, context.Canceled):
@@ -1957,6 +1990,9 @@ func (s *Server) configuredDeviceSummary(
 	result["proxy_port"] = config.ProxyPort
 	result["esim_transport"] = config.ESIMTransport
 	result["sms_enabled"] = config.SMSEnabled
+	if usage, ok := s.smsStorageUsage(config.ID); ok {
+		result["sms_storage"] = usage
+	}
 	result["network_enabled"] = config.NetworkEnabled
 	result["developer_enabled"] = s.developerActive(context.Background())
 	dataRuntime := s.cellularDataRuntime().status(config.ID, config.NetworkEnabled)
@@ -2290,6 +2326,7 @@ func deviceSummary(entry device.Device) map[string]any {
 		"private_ip":               "",
 		"interface":                entry.Candidate.NetworkInterface,
 		"esim_transport":           backendMode(entry.Candidate),
+		"supports_cell_lock":       device.SupportsCellLock(entry.Candidate),
 		"sms_enabled":              true,
 		"network_enabled":          false,
 		"vowifi_enabled":           false,
@@ -2381,6 +2418,8 @@ func fillConfigFromPhysical(config *store.Device, entry device.Device) {
 		config.NetworkEnabled = false
 		config.SMSEnabled = true
 		config.VoWiFiEnabled = true
+	} else if modem.IsML307(candidate) {
+		config.DeviceType = store.DeviceTypeML307
 	} else if modem.IsDJI4GUSB(candidate.VendorID, candidate.ProductID) {
 		config.DeviceType = store.DeviceTypeDJI4G
 	}
@@ -2410,6 +2449,9 @@ func fillConfigFromPhysical(config *store.Device, entry device.Device) {
 func discoveredDeviceType(candidate modem.Candidate) string {
 	if candidate.HardwareKind == "pcsc" {
 		return store.DeviceTypeUSBSIMReader
+	}
+	if modem.IsML307(candidate) {
+		return store.DeviceTypeML307
 	}
 	if modem.IsDJI4GUSB(candidate.VendorID, candidate.ProductID) {
 		return store.DeviceTypeDJI4G

@@ -150,11 +150,18 @@ func (adapter *EC20Adapter) ReadIdentity(
 		return SIMIdentity{}, err
 	}
 
-	imeiResponse, err := adapter.execute(ctx, deviceID, "AT+CGSN")
-	if err != nil {
-		return SIMIdentity{}, fmt.Errorf("read EC20 IMEI: %w", err)
+	imeiResponse, imeiErr := adapter.execute(ctx, deviceID, "AT+CGSN")
+	imei := ""
+	if imeiErr == nil {
+		imei = modem.ParseIMEI(imeiResponse)
 	}
-	imei := digitIdentifier(imeiResponse, []string{"+CGSN:", "+GSN:"}, 14, 17)
+	if imei == "" {
+		imeiResponse, imeiErr = adapter.execute(ctx, deviceID, "AT+CGSN=1")
+		if imeiErr != nil {
+			return SIMIdentity{}, fmt.Errorf("read EC20 IMEI: %w", imeiErr)
+		}
+		imei = modem.ParseIMEI(imeiResponse)
+	}
 	if imei == "" {
 		return SIMIdentity{}, errors.New("vocat: EC20 returned no valid IMEI")
 	}
@@ -381,7 +388,7 @@ func (adapter *EC20Adapter) readICCID(
 ) (string, error) {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		for _, command := range []string{"AT+CCID", "AT+QCCID"} {
+		for _, command := range []string{"AT+CCID", "AT+QCCID", "AT+MCCID"} {
 			response, err := adapter.execute(ctx, deviceID, command)
 			if err != nil {
 				lastErr = err
@@ -389,7 +396,7 @@ func (adapter *EC20Adapter) readICCID(
 			}
 			value := iccidIdentifier(
 				response,
-				[]string{"+CCID:", "+QCCID:"},
+				[]string{"+CCID:", "+QCCID:", "+MCCID:"},
 				18,
 				22,
 			)
@@ -508,7 +515,7 @@ func (adapter *EC20Adapter) authenticateWithApplication(
 		}
 		binding.aid = aid
 		binding.application = application
-		binding.basicChannel = false
+		// 保留已验证的 CSIM 访问方式；仍须成功选择 ISIM 后才能鉴权。
 		adapter.mu.Lock()
 		adapter.bindings[binding.iccid] = binding
 		adapter.mu.Unlock()
@@ -544,21 +551,9 @@ func (adapter *EC20Adapter) authenticateWithApplication(
 	apdu := buildUSIMAuthenticateAPDU(challenge)
 	var raw []byte
 	if binding.basicChannel {
-		if err := adapter.selectBasicApplication(
-			ctx,
-			binding.deviceID,
-			binding.aid,
-		); err != nil {
-			return AKAResult{}, err
-		}
-		raw, err = adapter.transmitBasicAPDU(
-			ctx,
-			binding.deviceID,
-			apdu,
-			true,
-		)
+		raw, err = adapter.authenticateBasicApplication(ctx, binding, apdu)
 		if err != nil {
-			return AKAResult{}, ErrEC20AKACommand
+			return AKAResult{}, err
 		}
 	} else {
 		channel, err := adapter.openLogicalChannel(
@@ -567,7 +562,25 @@ func (adapter *EC20Adapter) authenticateWithApplication(
 			binding.aid,
 		)
 		if err != nil {
-			return AKAResult{}, err
+			var commandErr *modem.CommandError
+			if binding.application != "ISIM" || ctx.Err() != nil ||
+				!errors.As(err, &commandErr) || commandErr.Final != "ERROR" {
+				return AKAResult{}, err
+			}
+			// 仅在 CCHO 明确拒绝时复用已有 CSIM 路径，不降级到 USIM。
+			raw, basicErr := adapter.authenticateBasicApplication(ctx, binding, apdu)
+			if basicErr != nil {
+				if errors.Is(basicErr, ErrEC20AKACommand) {
+					// SELECT 已成功，仅保留 CCHO 原因，不再标记应用不存在。
+					return AKAResult{}, errors.Join(fmt.Errorf("open application: %w", commandErr), basicErr)
+				}
+				return AKAResult{}, errors.Join(err, basicErr)
+			}
+			binding.basicChannel = true
+			adapter.mu.Lock()
+			adapter.bindings[binding.iccid] = binding
+			adapter.mu.Unlock()
+			return parseUSIMAuthenticateResponse(raw)
 		}
 		var commandErr error
 		raw, commandErr = adapter.transmitLogicalAPDU(
@@ -592,6 +605,17 @@ func (adapter *EC20Adapter) authenticateWithApplication(
 		}
 	}
 	return parseUSIMAuthenticateResponse(raw)
+}
+
+func (adapter *EC20Adapter) authenticateBasicApplication(ctx context.Context, binding ec20SIMBinding, apdu []byte) ([]byte, error) {
+	if err := adapter.selectBasicApplication(ctx, binding.deviceID, binding.aid); err != nil {
+		return nil, err
+	}
+	raw, err := adapter.transmitBasicAPDU(ctx, binding.deviceID, apdu, true)
+	if err != nil {
+		return nil, ErrEC20AKACommand
+	}
+	return raw, nil
 }
 
 func buildUSIMAuthenticateAPDU(challenge AKAChallenge) []byte {
@@ -1051,6 +1075,13 @@ func (adapter *EC20Adapter) discoverPreferredAKAApplication(
 	aidPrefix string,
 	application string,
 ) (string, string, error) {
+	// CUAD 不可用时会读 EF_DIR，多条基本通道命令必须持有同一事务锁。
+	adapter.apduMu.Lock()
+	defer adapter.apduMu.Unlock()
+	if locker, ok := adapter.executor.(EC20UICCLocker); ok {
+		locker.LockUICC()
+		defer locker.UnlockUICC()
+	}
 	response, err := adapter.execute(ctx, deviceID, "AT+CUAD")
 	if err == nil {
 		data, parseErr := parseCUADData(response)
@@ -1061,6 +1092,9 @@ func (adapter *EC20Adapter) discoverPreferredAKAApplication(
 				}
 			}
 		}
+	}
+	if discovered, discoverErr := adapter.discoverBasicApplicationAID(ctx, deviceID, aidPrefix); discoverErr == nil {
+		return discovered, application, nil
 	}
 	// AT+CUAD is optional. Returning the standard AID prefix still lets CCHO
 	// perform the authoritative application probe on older EC20 firmware.
@@ -1136,7 +1170,7 @@ func (adapter *EC20Adapter) openLogicalChannel(
 		fmt.Sprintf(`AT+CCHO="%s"`, aid),
 	)
 	if err != nil {
-		return 0, fmt.Errorf("%w: open application", ErrEC20ApplicationAbsent)
+		return 0, fmt.Errorf("%w: open application: %w", ErrEC20ApplicationAbsent, err)
 	}
 	value := valueAfterATPrefix(response, "+CCHO:")
 	if value == "" {

@@ -1,6 +1,7 @@
 package vowifi
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -15,6 +16,57 @@ func TestResolveCarrierProfileUsesStandardDefault(t *testing.T) {
 	if profile.IKEProposal != IKEProposalModern || !profile.AdvertiseEAPOnly ||
 		profile.IMSIdentityProfile != IMSProfileStandard || profile.IMSRegisterProfile != IMSProfileStandard {
 		t.Fatalf("default profile lost standard capabilities: %#v", profile)
+	}
+}
+
+func TestCarrierProfileSubscriberIMSIRewriteValidation(t *testing.T) {
+	rewrite := []byte(`{"version":1,"profiles":[{"id":"subscriber-rewrite","match":{"iccid_prefixes":["89636626"]},"identity":{"subscriber_imsi_rewrite":{"from_prefix":"204047616","to_prefix":"515661015"}}}]}`)
+	rules, err := loadCarrierProfiles(rewrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := applyCarrierProfileRule(defaultCarrierProfile(), rules[0], "iccid", SIMIdentity{})
+	if got := profile.EffectiveSubscriberIMSI("204047616000001"); got != "515661015000001" {
+		t.Fatalf("rewritten subscriber IMSI = %q", got)
+	}
+	if got := profile.EffectiveSubscriberIMSI("204041234567890"); got != "204041234567890" {
+		t.Fatalf("unmatched subscriber IMSI changed to %q", got)
+	}
+	for _, malformed := range []string{
+		`{"version":1,"profiles":[{"id":"missing-target","match":{"iccid_prefixes":["896366"]},"identity":{"subscriber_imsi_rewrite":{"from_prefix":"204047616"}}}]}`,
+		`{"version":1,"profiles":[{"id":"length-mismatch","match":{"iccid_prefixes":["896366"]},"identity":{"subscriber_imsi_rewrite":{"from_prefix":"204047616","to_prefix":"51566"}}}]}`,
+		`{"version":1,"profiles":[{"id":"non-decimal","match":{"iccid_prefixes":["896366"]},"identity":{"subscriber_imsi_rewrite":{"from_prefix":"20404x616","to_prefix":"515661015"}}}]}`,
+	} {
+		if _, err := loadCarrierProfiles([]byte(malformed)); err == nil {
+			t.Fatalf("invalid subscriber rewrite was accepted: %s", malformed)
+		}
+	}
+}
+
+func TestBuiltinDITOProfileRewritesRoamingSubscriberPrefix(t *testing.T) {
+	for _, homePLMN := range []struct{ mcc, mnc string }{
+		{mcc: "515", mnc: "66"},
+		{mcc: "204", mnc: "04"},
+	} {
+		profile := ResolveCarrierProfile(SIMIdentity{
+			HomeMCC: homePLMN.mcc,
+			HomeMNC: homePLMN.mnc,
+			ICCID:   "89636626000000000001",
+			IMSI:    "204047616000001",
+		})
+		if profile.ID != "ipcc-dito-51566" {
+			t.Fatalf("carrier profile for %s%s = %q, want ipcc-dito-51566", homePLMN.mcc, homePLMN.mnc, profile.ID)
+		}
+		if got := profile.EffectiveSubscriberIMSI("204047616000001"); got != "515661015000001" {
+			t.Fatalf("rewritten subscriber IMSI for %s%s = %q", homePLMN.mcc, homePLMN.mnc, got)
+		}
+		if profile.IKEProposal != IKEProposalLegacy {
+			t.Fatalf("IKE proposal for %s%s = %q", homePLMN.mcc, homePLMN.mnc, profile.IKEProposal)
+		}
+	}
+	profile := ResolveCarrierProfile(SIMIdentity{HomeMCC: "515", HomeMNC: "66", SPN: "DITO"})
+	if got := profile.EffectiveSubscriberIMSI("515661015000001"); got != "515661015000001" {
+		t.Fatalf("native DITO subscriber IMSI changed to %q", got)
 	}
 }
 
@@ -71,6 +123,34 @@ func TestResolveCarrierProfileGiffgaffIMSHeaders(t *testing.T) {
 	}
 }
 
+// TestResolveCarrierProfileUltraMobileIMS locks the live-validated ePDG and
+// REGISTER Contact capabilities to the Ultra Mobile carrier selector.
+func TestResolveCarrierProfileUltraMobileIMS(t *testing.T) {
+	profile := ResolveCarrierProfile(SIMIdentity{
+		IMSI: "310240000000001", HomeMCC: "310", HomeMNC: "240", GID1: "4153FFFF",
+	})
+	if profile.ID != "ipcc-ultramint-mobile-310026" || profile.MatchSource != "hplmn+gid1" {
+		t.Fatalf("Ultra Mobile profile = %#v", profile)
+	}
+	if profile.EPDG != "epdg.epc.mnc240.mcc310.pub.3gppnetwork.org" {
+		t.Fatalf("Ultra Mobile ePDG = %q", profile.EPDG)
+	}
+	if profile.RouteMCC != "310" || profile.RouteMNC != "240" {
+		t.Fatalf("Ultra Mobile route = %s/%s, want 310/240", profile.RouteMCC, profile.RouteMNC)
+	}
+	if profile.IMSIPSecEncryption != "aes-cbc" {
+		t.Fatalf("Ultra Mobile IMS encryption = %q", profile.IMSIPSecEncryption)
+	}
+	wantTags := []string{
+		`+g.3gpp.accesstype="wlan1"`,
+		"+g.3gpp.smsip-msisdnless",
+		"+g.3gpp.smsip-msisdn-less",
+	}
+	if got := profile.IMSRegisterOptions.ContactExtraTags; !slices.Equal(got, wantTags) {
+		t.Fatalf("Ultra Mobile Contact tags = %#v, want %#v", got, wantTags)
+	}
+}
+
 func TestResolveCarrierProfileATT(t *testing.T) {
 	profile := ResolveCarrierProfile(SIMIdentity{
 		ICCID: "8901410000000000001", IMSI: "310410000000001", HomeMCC: "310", HomeMNC: "410",
@@ -78,15 +158,37 @@ func TestResolveCarrierProfileATT(t *testing.T) {
 	if !strings.Contains(profile.ID, "att") {
 		t.Fatalf("AT&T profile = %#v", profile)
 	}
+	if profile.IMSIdentityProfile != IMSProfileATT || profile.IMSRegisterProfile != IMSProfileATT {
+		t.Fatalf("AT&T IMS profiles = %q/%q, want %q/%q", profile.IMSIdentityProfile, profile.IMSRegisterProfile, IMSProfileATT, IMSProfileATT)
+	}
+	if profile.IMSRegisterOptions.ContactFormat != IMSContactFormatATT {
+		t.Fatalf("AT&T ContactFormat = %q, want %q", profile.IMSRegisterOptions.ContactFormat, IMSContactFormatATT)
+	}
+	if profile.IMSRegisterOptions.PVisitedNetworkID != "one.att.net" {
+		t.Fatalf("AT&T PVisitedNetworkID = %q, want one.att.net", profile.IMSRegisterOptions.PVisitedNetworkID)
+	}
 }
 
 func TestResolveCarrierProfileRedPocketOutranksBroadATTICCID(t *testing.T) {
-	profile := ResolveCarrierProfile(SIMIdentity{
+	identity := SIMIdentity{
 		ICCID: "8901410000000000001", IMSI: "310170000000001",
 		HomeMCC: "310", HomeMNC: "170", SPN: "Red Pocket", GID1: "42FFFF",
-	})
+	}
+	profile := ResolveCarrierProfile(identity)
 	if profile.ID != "ipcc-redpocket-310170" || profile.MatchSource != "hplmn+gid1" {
 		t.Fatalf("RedPocket profile = %#v", profile)
+	}
+	if profile.IMSIdentityProfile != IMSProfileATT || profile.IMSRegisterProfile != IMSProfileATT {
+		t.Fatalf("RedPocket IMS profiles = %q/%q, want %q/%q", profile.IMSIdentityProfile, profile.IMSRegisterProfile, IMSProfileATT, IMSProfileATT)
+	}
+	if !IsATT310280(identity) {
+		t.Fatalf("IsATT310280(RedPocket) = false, want true")
+	}
+	if profile.IMSRegisterOptions.ContactFormat != IMSContactFormatATT {
+		t.Fatalf("RedPocket ContactFormat = %q, want %q", profile.IMSRegisterOptions.ContactFormat, IMSContactFormatATT)
+	}
+	if profile.IMSRegisterOptions.PVisitedNetworkID != "one.att.net" {
+		t.Fatalf("RedPocket PVisitedNetworkID = %q, want one.att.net", profile.IMSRegisterOptions.PVisitedNetworkID)
 	}
 }
 
@@ -169,5 +271,62 @@ func TestCTExcelMVNOResolution(t *testing.T) {
 	}
 	if ctexcel.IMSDialURIScheme != "sip" || !ctexcel.IMSUserEqPhone {
 		t.Fatalf("CTExcel dial URI scheme = %q, userEqPhone = %v", ctexcel.IMSDialURIScheme, ctexcel.IMSUserEqPhone)
+	}
+}
+
+func TestCarrierSwapSeparation(t *testing.T) {
+	// 1. Red Pocket on AT&T (310280)
+	redPocket := ResolveCarrierProfile(SIMIdentity{
+		IMSI: "310280000000001", HomeMCC: "310", HomeMNC: "280", SPN: "Red Pocket", GID1: "42",
+	})
+	if redPocket.IMSIdentityProfile != IMSProfileATT || redPocket.IMSRegisterProfile != IMSProfileATT {
+		t.Fatalf("Red Pocket profile = %q/%q, want att/att", redPocket.IMSIdentityProfile, redPocket.IMSRegisterProfile)
+	}
+
+	// 2. Swapped to Vodafone UK (23415)
+	vodafone := ResolveCarrierProfile(SIMIdentity{
+		IMSI: "234150000000001", HomeMCC: "234", HomeMNC: "15",
+	})
+	if vodafone.IMSIdentityProfile != IMSProfileStandard || vodafone.IMSRegisterProfile != IMSProfileStandard {
+		t.Fatalf("Vodafone UK profile = %q/%q, want standard/standard", vodafone.IMSIdentityProfile, vodafone.IMSRegisterProfile)
+	}
+	if vodafone.IMSRegisterOptions.ContactFormat != "" || vodafone.IMSRegisterOptions.PVisitedNetworkID != "" {
+		t.Fatalf("Vodafone UK leaked AT&T register options: %#v", vodafone.IMSRegisterOptions)
+	}
+
+	// 3. Swapped to Cricket (on AT&T)
+	cricket := ResolveCarrierProfile(SIMIdentity{
+		ICCID: "8901150000000000001", IMSI: "310410000000001", HomeMCC: "310", HomeMNC: "410",
+	})
+	if cricket.IMSIdentityProfile != IMSProfileATT || cricket.IMSRegisterProfile != IMSProfileATT {
+		t.Fatalf("Cricket profile = %q/%q, want att/att", cricket.IMSIdentityProfile, cricket.IMSRegisterProfile)
+	}
+
+	// 4. Swapped to Unknown / Standard SIM (99999)
+	standard := ResolveCarrierProfile(SIMIdentity{HomeMCC: "999", HomeMNC: "99"})
+	if standard.IMSIdentityProfile != IMSProfileStandard || standard.IMSRegisterProfile != IMSProfileStandard {
+		t.Fatalf("Standard profile = %q/%q, want standard/standard", standard.IMSIdentityProfile, standard.IMSRegisterProfile)
+	}
+}
+
+func TestThreeHKCarrierProfileAndPANI(t *testing.T) {
+	identity := SIMIdentity{
+		IMSI:    "454030000000001",
+		ICCID:   "8985203000000000001",
+		HomeMCC: "454",
+		HomeMNC: "03",
+	}
+	profile := ResolveCarrierProfile(identity)
+	if profile.ID != "ipcc-hutchison-hk-45403" {
+		t.Fatalf("3HK profile ID = %q, want ipcc-hutchison-hk-45403", profile.ID)
+	}
+	if profile.EPDG != "wlan.three.com.hk" {
+		t.Fatalf("3HK ePDG = %q, want wlan.three.com.hk", profile.EPDG)
+	}
+	if profile.IMSIPSecMode != "optional" {
+		t.Fatalf("3HK IMSIPSecMode = %q, want optional", profile.IMSIPSecMode)
+	}
+	if profile.PANIEnabled == nil || !*profile.PANIEnabled || profile.PANICountry != "AUTO" {
+		t.Fatalf("3HK PANI configuration = enabled=%v country=%q", profile.PANIEnabled, profile.PANICountry)
 	}
 }

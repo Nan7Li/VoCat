@@ -306,6 +306,8 @@ func (manager *Manager) SetFlight(
 	}
 
 	changed := target != previous
+	current := previous
+	currentKnown := false
 	if changed {
 		if enabled {
 			// Entering RF-off tears down the packet service. Forget the previous
@@ -319,25 +321,41 @@ func (manager *Manager) SetFlight(
 			client,
 			fmt.Sprintf("AT+CFUN=%d", target),
 		); err != nil {
-			manager.setResult(id, state, nil, err)
-			return FlightResult{
-				PreviousMode: previous,
-				CurrentMode:  previous,
-				FlightMode:   isRadioOffMode(previous),
-				RadioOff:     isRadioOffMode(previous),
-			}, err
+			_, recoveredMode, recoveryErr := manager.recoverOperatingModeAfterTransportLoss(
+				ctx, id, state, client, target, err,
+			)
+			if recoveryErr != nil {
+				manager.setResult(id, state, nil, recoveryErr)
+				return FlightResult{
+					PreviousMode: previous,
+					CurrentMode:  previous,
+					FlightMode:   isRadioOffMode(previous),
+					RadioOff:     isRadioOffMode(previous),
+				}, recoveryErr
+			}
+			current = recoveredMode
+			currentKnown = true
 		}
 	}
-	current, err := manager.readOperatingMode(ctx, client)
-	if err != nil {
-		manager.setResult(id, state, nil, err)
-		return FlightResult{
-			PreviousMode: previous,
-			CurrentMode:  target,
-			Changed:      changed,
-			FlightMode:   isRadioOffMode(target),
-			RadioOff:     isRadioOffMode(target),
-		}, err
+	if !currentKnown {
+		current, err = manager.readOperatingMode(ctx, client)
+		if err != nil {
+			recoveredClient, recoveredMode, recoveryErr := manager.recoverOperatingModeAfterTransportLoss(
+				ctx, id, state, client, target, err,
+			)
+			if recoveryErr != nil {
+				manager.setResult(id, state, nil, recoveryErr)
+				return FlightResult{
+					PreviousMode: previous,
+					CurrentMode:  target,
+					Changed:      changed,
+					FlightMode:   isRadioOffMode(target),
+					RadioOff:     isRadioOffMode(target),
+				}, recoveryErr
+			}
+			client = recoveredClient
+			current = recoveredMode
+		}
 	}
 	if !enabled && !isRadioOffMode(current) {
 		state.preFlightMode = nil
@@ -351,6 +369,84 @@ func (manager *Manager) SetFlight(
 		FlightMode:   isRadioOffMode(current),
 		RadioOff:     isRadioOffMode(current),
 	}, nil
+}
+
+// recoverOperatingModeAfterTransportLoss handles modems that commit CFUN and
+// then briefly disappear from USB before returning the final AT response. It
+// is deliberately limited to poisoned transports and only reports success
+// after a fresh session reads back the requested mode.
+func (manager *Manager) recoverOperatingModeAfterTransportLoss(
+	ctx context.Context,
+	id string,
+	state *managedDevice,
+	client modem.Client,
+	target int,
+	commandErr error,
+) (modem.Client, int, error) {
+	poisoned, ok := client.(modem.PoisonedClient)
+	if !ok || !poisoned.Poisoned() {
+		return nil, 0, commandErr
+	}
+
+	_ = client.Close()
+	state.client = nil
+
+	recoveryCtx, cancel := manager.withTimeout(ctx, manager.longTimeout)
+	defer cancel()
+	lastErr := commandErr
+	for {
+		manager.rediscoverCandidateForRecovery(recoveryCtx, id, state)
+		reopened, err := manager.clientLocked(recoveryCtx, state, manager.candidateFor(state))
+		if err == nil {
+			mode, readErr := manager.readOperatingMode(recoveryCtx, reopened)
+			if readErr == nil && mode == target {
+				return reopened, mode, nil
+			}
+			if readErr != nil {
+				lastErr = readErr
+			} else {
+				lastErr = fmt.Errorf("modem operating mode is %d, want %d", mode, target)
+			}
+			if poisoned, ok := reopened.(modem.PoisonedClient); ok && poisoned.Poisoned() {
+				_ = reopened.Close()
+				state.client = nil
+			}
+		} else {
+			lastErr = err
+		}
+
+		select {
+		case <-recoveryCtx.Done():
+			return nil, 0, fmt.Errorf(
+				"%w; confirm AT+CFUN=%d after transport recovery: %v",
+				commandErr, target, lastErr,
+			)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+func (manager *Manager) rediscoverCandidateForRecovery(
+	ctx context.Context,
+	id string,
+	state *managedDevice,
+) {
+	candidates, err := manager.discoverer.Discover(ctx)
+	if err != nil {
+		return
+	}
+	for _, candidate := range candidates {
+		if candidate.ID != id {
+			continue
+		}
+		manager.mu.Lock()
+		if manager.devices[id] == state {
+			state.candidate = candidate
+			state.discovered = true
+		}
+		manager.mu.Unlock()
+		return
+	}
 }
 
 func (manager *Manager) readOperatingMode(
@@ -382,4 +478,21 @@ func (manager *Manager) updateSnapshotMode(
 	state.snapshot.ModeKnown = true
 	state.snapshot.FlightMode = isRadioOffMode(mode)
 	state.snapshot.RadioOff = state.snapshot.FlightMode
+}
+
+// ErrRFOffRestart indicates that an online restart would violate RF-off mode.
+var ErrRFOffRestart = errors.New("online modem restart is not permitted while cellular RF is disabled")
+
+// CFUN=1,1 is an online restart. Reapplying CFUN=4 after enumeration cannot
+// prevent an attach during boot. Check live mode before changing configuration
+// that requires this restart; stale or incomplete snapshots cannot authorize it.
+func (manager *Manager) requireOnlineModemRestart(ctx context.Context, client modem.Client) error {
+	mode, err := manager.readOperatingMode(ctx, client)
+	if err != nil {
+		return fmt.Errorf("verify RF mode before modem restart: %w", err)
+	}
+	if mode != 1 {
+		return ErrRFOffRestart
+	}
+	return nil
 }

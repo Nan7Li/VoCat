@@ -474,6 +474,143 @@ func migrationStatements(version int) []string {
 				AND TRIM(at_port) = ''
 				AND TRIM(modem_imei) = ''`,
 		}
+	case 25:
+		return []string{
+			// VoCat v0.3.15 migration 23. Halo databases do not have these
+			// columns yet. A VoCat database at user_version 24 or 25 already
+			// does; duplicate-column errors are ignored by migrate.
+			`ALTER TABLE sms_messages
+				ADD COLUMN iccid TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE sms_messages
+				ADD COLUMN local_phone TEXT NOT NULL DEFAULT ''`,
+			`CREATE INDEX IF NOT EXISTS sms_messages_subscription_thread_idx
+				ON sms_messages(modem_imei, iccid, imsi, peer, message_time DESC, id DESC)`,
+		}
+	case 26:
+		return []string{
+			// VoCat v0.3.15 migration 24. Empty keeps the HPLMN heuristic
+			// (ROW_Generic_3GPP when a known operator MBN does not match).
+			`ALTER TABLE card_policies
+				ADD COLUMN mbn_profile TEXT NOT NULL DEFAULT ''`,
+		}
+	case 27:
+		// Rebuild both tables to widen the task-type CHECK while preserving
+		// run history, foreign keys, and AUTOINCREMENT high-water marks.
+		return []string{
+			`ALTER TABLE automatic_task_runs RENAME TO automatic_task_runs_v24`,
+			`ALTER TABLE automatic_tasks RENAME TO automatic_tasks_v24`,
+			`CREATE TABLE automatic_tasks (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				name TEXT NOT NULL,
+				enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+				device_id TEXT NOT NULL,
+				profile_iccid TEXT NOT NULL,
+				profile_aid TEXT NOT NULL DEFAULT '',
+				task_type TEXT NOT NULL CHECK (task_type IN ('sms', 'call', 'public_ip', 'cellular_attach')),
+				environment TEXT NOT NULL CHECK (environment IN ('vowifi', 'cellular')),
+				interval_days INTEGER NOT NULL CHECK (interval_days BETWEEN 1 AND 365),
+				start_date TEXT NOT NULL,
+				run_time TEXT NOT NULL,
+				timezone TEXT NOT NULL DEFAULT 'Local',
+				payload_json TEXT NOT NULL DEFAULT '{}',
+				retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count BETWEEN 0 AND 10),
+				notify INTEGER NOT NULL DEFAULT 0 CHECK (notify IN (0, 1)),
+				next_run_at INTEGER NOT NULL,
+				last_run_at INTEGER NOT NULL DEFAULT 0,
+				last_status TEXT NOT NULL DEFAULT '',
+				last_error TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+			)`,
+			`INSERT INTO automatic_tasks SELECT * FROM automatic_tasks_v24`,
+			`CREATE TABLE automatic_task_runs (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				task_id INTEGER NOT NULL,
+				device_id TEXT NOT NULL,
+				scheduled_at INTEGER NOT NULL,
+				started_at INTEGER NOT NULL DEFAULT 0,
+				finished_at INTEGER NOT NULL DEFAULT 0,
+				status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'success', 'failed')),
+				attempts INTEGER NOT NULL DEFAULT 0,
+				output TEXT NOT NULL DEFAULT '',
+				error TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				FOREIGN KEY (task_id) REFERENCES automatic_tasks(id) ON DELETE CASCADE
+			)`,
+			`INSERT INTO automatic_task_runs SELECT * FROM automatic_task_runs_v24`,
+			`UPDATE sqlite_sequence SET seq = MAX(seq, COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'automatic_tasks_v24'), 0)) WHERE name = 'automatic_tasks'`,
+			`UPDATE sqlite_sequence SET seq = MAX(seq, COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'automatic_task_runs_v24'), 0)) WHERE name = 'automatic_task_runs'`,
+			`DROP TABLE automatic_task_runs_v24`,
+			`DROP TABLE automatic_tasks_v24`,
+			// Renaming the tables keeps the old index names. Drop them before
+			// recreating so this step can also run on a VoCat database that
+			// already widened the task-type CHECK.
+			`DROP INDEX IF EXISTS automatic_tasks_due_idx`,
+			`DROP INDEX IF EXISTS automatic_tasks_device_idx`,
+			`DROP INDEX IF EXISTS automatic_task_runs_task_idx`,
+			`DROP INDEX IF EXISTS automatic_task_runs_status_idx`,
+			`CREATE INDEX automatic_tasks_due_idx ON automatic_tasks(enabled, next_run_at, id)`,
+			`CREATE INDEX automatic_tasks_device_idx ON automatic_tasks(device_id, next_run_at, id)`,
+			`CREATE INDEX automatic_task_runs_task_idx ON automatic_task_runs(task_id, id DESC)`,
+			`CREATE INDEX automatic_task_runs_status_idx ON automatic_task_runs(status, id)`,
+		}
+	case 28:
+		// Halo 1.1.14 created these tables as migrations 20 and 21. A VoCat
+		// database is already at user_version 25, so it never runs those
+		// steps. CREATE IF NOT EXISTS also repairs a Halo database whose
+		// user_version reached 24 without the tables (the 20/21 numbers were
+		// inserted ahead of the older cellular-IMS steps).
+		return []string{
+			`CREATE TABLE IF NOT EXISTS wireguard_tunnels (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				interface TEXT NOT NULL UNIQUE,
+				config_text TEXT NOT NULL,
+				autostart INTEGER NOT NULL DEFAULT 0 CHECK (autostart IN (0, 1)),
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS wireguard_tunnels_name_idx
+				ON wireguard_tunnels(name, id)`,
+			`CREATE TABLE IF NOT EXISTS call_records (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				device_id TEXT NOT NULL,
+				call_id TEXT NOT NULL,
+				number TEXT NOT NULL DEFAULT '',
+				direction TEXT NOT NULL,
+				state TEXT NOT NULL,
+				started_at INTEGER NOT NULL,
+				answered_at INTEGER,
+				ended_at INTEGER,
+				duration_seconds INTEGER NOT NULL DEFAULT 0 CHECK (duration_seconds >= 0),
+				transport TEXT NOT NULL DEFAULT 'vowifi',
+				recording TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				UNIQUE (device_id, call_id)
+			)`,
+			`CREATE INDEX IF NOT EXISTS call_records_started_idx
+				ON call_records(started_at DESC, id DESC)`,
+			`CREATE INDEX IF NOT EXISTS call_records_device_started_idx
+				ON call_records(device_id, started_at DESC, id DESC)`,
+			`CREATE TABLE IF NOT EXISTS epdg_probe_status (
+				device_id TEXT PRIMARY KEY,
+				iccid TEXT NOT NULL DEFAULT '',
+				epdg TEXT NOT NULL DEFAULT '',
+				port_500_ok INTEGER NOT NULL DEFAULT 0 CHECK (port_500_ok IN (0, 1)),
+				port_4500_ok INTEGER NOT NULL DEFAULT 0 CHECK (port_4500_ok IN (0, 1)),
+				rtt_500_ms INTEGER NOT NULL DEFAULT 0,
+				rtt_4500_ms INTEGER NOT NULL DEFAULT 0,
+				error TEXT NOT NULL DEFAULT '',
+				checked_at INTEGER NOT NULL,
+				last_success_at INTEGER,
+				last_failure_at INTEGER,
+				disabled_vowifi INTEGER NOT NULL DEFAULT 0 CHECK (disabled_vowifi IN (0, 1)),
+				FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+			)`,
+		}
 	default:
 		return nil
 	}

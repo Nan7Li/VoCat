@@ -1,6 +1,6 @@
 export type ApiStatus = "ok" | "error";
 
-export type DeviceType = "wifi_410" | "dji_4g" | "pcie_ec20_ec25" | "usb_sim_reader";
+export type DeviceType = "wifi_410" | "dji_4g" | "ml307" | "pcie_ec20_ec25" | "usb_sim_reader";
 
 export interface Session {
   authenticated: boolean;
@@ -74,6 +74,29 @@ export interface EPDGProbeStatus {
 
 export interface CallRecordsResponse {
   records: CallRecord[];
+}
+
+export interface CellLockTarget {
+  earfcn: number;
+  pci: number;
+}
+
+export interface CellLockStatus {
+  target: CellLockTarget | null;
+}
+
+export interface CellInfo extends CellLockTarget {
+  plmn: string;
+  source: "serving" | "neighbor";
+  rsrp?: number;
+  rsrq?: number;
+  rssi?: number;
+  sinr?: number;
+}
+
+export interface DeviceCells {
+  items: CellInfo[];
+  neighborsStatus: "available" | "unsupported" | "unavailable";
 }
 
 export interface VoWiFiRuntime {
@@ -150,10 +173,25 @@ export interface PublicIPInfo {
   organization?: string;
 }
 
+export interface SMSStorageArea {
+  used?: number;
+  total?: number;
+}
+
+export interface SMSStorageUsage {
+  sm?: SMSStorageArea;
+  me?: SMSStorageArea;
+}
+
+export interface SMSSettings {
+  autoClearModemStorage: boolean;
+}
+
 export interface DeviceListItem {
   id: string;
   name: string;
   deviceType: DeviceType;
+  supportsCellLock: boolean;
   running: boolean;
   healthy: boolean;
   controlOnline: boolean;
@@ -168,6 +206,7 @@ export interface DeviceListItem {
   interface: string;
   esimTransport: string;
   smsEnabled: boolean;
+  smsStorage?: SMSStorageUsage;
 	  networkEnabled: boolean;
   vowifiEnabled: boolean;
   vowifiActive?: boolean;
@@ -336,6 +375,7 @@ export interface CardPolicy {
   apn?: string;
   ipVersion?: string;
   customPhoneNumber?: string;
+  mbnProfile?: string;
   source?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -345,6 +385,7 @@ export interface SMSContact {
   deviceId: string;
   deviceName?: string;
   modemImei?: string;
+  iccid?: string;
   imsi: string;
   localPhone?: string;
   peer: string;
@@ -364,6 +405,7 @@ export interface SMSMessage {
   messageId?: string;
   deviceId: string;
   modemImei?: string;
+  iccid?: string;
   imsi: string;
   peer: string;
   direction: "inbound" | "outbound" | "received" | "sent";
@@ -477,6 +519,7 @@ export interface EsimOverview {
 }
 
 export interface NotificationSettings {
+  meow: { enabled: boolean; nickname: string; url: string; imgUrl: string };
   telegram: Record<string, unknown>;
   webhook: Record<string, unknown>;
   bark: Record<string, unknown>;
@@ -580,6 +623,7 @@ export interface DeveloperSettings {
   smsHourlyLimit: number;
   defaultSmsHourlyLimit: number;
   maxSmsHourlyLimit: number;
+  autoClearModemStorage?: boolean;
 }
 
 export type Notice = {

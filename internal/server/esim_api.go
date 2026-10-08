@@ -401,6 +401,11 @@ func (s *Server) handleEsimSwitch(w http.ResponseWriter, r *http.Request, config
 		writeError(w, http.StatusBadRequest, "invalid_request", "iccid is required")
 		return
 	}
+	// Keep the subscription identity used by the periodic SM/ME scanner stable
+	// for the entire profile transition. syncModemSMS takes the same lock and
+	// validates its before/after snapshots before persisting any message.
+	s.smsSyncMu.Lock()
+	defer s.smsSyncMu.Unlock()
 	dataRuntime := s.cellularDataRuntime()
 	s.clearPublicIP(configuredID)
 	desiredData := true
@@ -447,8 +452,17 @@ func (s *Server) handleEsimSwitch(w http.ResponseWriter, r *http.Request, config
 	controller := http.NewResponseController(w)
 	_ = controller.SetWriteDeadline(time.Time{})
 	aidHex := firstNonEmpty(request.AIDHex, request.AIDHexCamel)
-	if err := s.devices.ESIMSwitchProfile(r.Context(), physicalID, iccid, aidHex); err != nil {
-		s.writeDeviceError(w, err)
+	switchErr := s.devices.ESIMSwitchProfile(r.Context(), physicalID, iccid, aidHex)
+	// The device manager keeps a committed profile change alive across client
+	// disconnects. Apply its verified result to the saved policy and runtime even
+	// when the original request was canceled, with a separate time budget.
+	finalizeContext, cancelFinalize := context.WithTimeout(context.WithoutCancel(r.Context()), 45*time.Second)
+	defer cancelFinalize()
+	r = r.WithContext(finalizeContext)
+	if switchErr != nil {
+		endMaintenance()
+		s.restoreProfileSwitchFailureState(r.Context(), configuredID, physicalID)
+		s.writeDeviceError(w, switchErr)
 		return
 	}
 	policy, err := s.store.CardPolicy(r.Context(), iccid)
@@ -552,6 +566,38 @@ func (s *Server) quiesceVoWiFiForProfileSwitch(ctx context.Context, configuredID
 			return fmt.Errorf("wait for VoWiFi to stop before switching profile: %w", waitContext.Err())
 		case <-ticker.C:
 		}
+	}
+}
+
+// restoreProfileSwitchFailureState keeps RF off unless the live subscription
+// explicitly permits cellular operation. VoWiFi=false alone is insufficient;
+// a rejected switch can leave the old identity cached or the new one unreadable.
+func (s *Server) restoreProfileSwitchFailureState(ctx context.Context, configuredID, physicalID string) {
+	if s.store == nil || s.devices == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+	defer cancel()
+	config, err := s.store.Device(ctx, configuredID)
+	if err != nil {
+		_, _ = s.devices.SetFlight(ctx, physicalID, true)
+		return
+	}
+	if config.VoWiFiEnabled && s.vowifi != nil {
+		if _, err := s.vowifi.RequestEnabled(configuredID, true); err != nil {
+			s.logger.Warn("profile switch failed; error restoring VoWiFi runtime", "device_id", configuredID, "error", err)
+		}
+	}
+	flightEnabled := true
+	if !config.VoWiFiEnabled {
+		if snapshot, refreshErr := s.devices.Refresh(ctx, physicalID); refreshErr == nil && snapshot.ICCID != "" {
+			if policy, policyErr := s.store.CardPolicy(ctx, snapshot.ICCID); policyErr == nil {
+				flightEnabled = policy.AirplaneEnabled || policy.VoWiFiEnabled
+			}
+		}
+	}
+	if _, err := s.devices.SetFlight(ctx, physicalID, flightEnabled); err != nil {
+		s.logger.Warn("profile switch failed; error restoring airplane mode", "device_id", configuredID, "error", err)
 	}
 }
 

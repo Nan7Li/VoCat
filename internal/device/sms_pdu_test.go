@@ -413,6 +413,40 @@ func TestDecode8BitPDUShowsHexPayload(t *testing.T) {
 	}
 }
 
+func TestDecodeSIMDataDownloadMarksBinaryPayload(t *testing.T) {
+	// O2 SMS-PP data download: PID 0x7F, 8-bit class-2 DCS 0xF6 and
+	// UDH IEI 0x70 (UICC toolkit security header).
+	tpdu, err := hex.DecodeString("440C919471071610007FF6629041718111403D02700000381516001212B201000D5F284696D1470A06A44E649D62B3BC7B6A11D49874DBE86C379BD4A87805BDA5ED2FF2DE9416A43640832306C159E1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := DecodeSMSDeliverTPDU(tpdu)
+	if err != nil {
+		t.Fatalf("decode SIM data download: %v", err)
+	}
+	if !message.SIMDataDownload || message.ProtocolID != 0x7f ||
+		message.DataCodingScheme != 0xf6 || message.Encoding != SMSEncoding8BitPDU {
+		t.Fatalf("SIM data download = %#v", message)
+	}
+}
+
+func TestSIMDataDownloadRequiresPIDAndClass2DCS(t *testing.T) {
+	for _, test := range []struct {
+		pid, dcs byte
+		want     bool
+	}{
+		{pid: 0x7f, dcs: 0xf6, want: true},
+		{pid: 0x7f, dcs: 0x16, want: true},
+		{pid: 0x00, dcs: 0xf6, want: false},
+		{pid: 0x7f, dcs: 0xf5, want: false},
+		{pid: 0x7f, dcs: 0x06, want: false},
+	} {
+		if got := isSIMDataDownload(test.pid, test.dcs); got != test.want {
+			t.Fatalf("isSIMDataDownload(0x%02X, 0x%02X) = %v, want %v", test.pid, test.dcs, got, test.want)
+		}
+	}
+}
+
 func TestDecodeUserDataUnderstandsDCSGroups(t *testing.T) {
 	septets, ok := encodeGSM7("HELLO")
 	if !ok {
@@ -495,4 +529,55 @@ func TestDecodePortAddressed8BitSMSRemainsBinary(t *testing.T) {
 		message.Encoding != SMSEncoding8BitPDU {
 		t.Fatalf("message = %#v", message)
 	}
+}
+
+func TestDecodeWAPPushMMSShowsSubject(t *testing.T) {
+	payload := minimalWAPMMS("OK")
+	message := SMSMessage{}
+	if err := decodeUserData(payload, 0, 0x04, len(payload), &message); err != nil {
+		t.Fatalf("decode WAP Push MMS: %v", err)
+	}
+	if message.Text != "OK" || message.Encoding != SMSEncodingWAPPush {
+		t.Fatalf("message = %#v", message)
+	}
+
+	header := []byte{0x06, 0x05, 0x04, 0x0b, 0x84, 0x23, 0xf0}
+	ported := append(append([]byte(nil), header...), payload...)
+	message = SMSMessage{}
+	if err := decodeUserData(ported, 0x40, 0x04, len(ported), &message); err != nil {
+		t.Fatalf("decode port-addressed WAP Push: %v", err)
+	}
+	if message.Text != "OK" || message.Encoding != SMSEncodingWAPPush {
+		t.Fatalf("ported message = %#v", message)
+	}
+}
+
+func TestDecodeMultipartWAPPushSegmentStaysHex(t *testing.T) {
+	payload := minimalWAPMMS("OK")
+	header := []byte{
+		0x0b,
+		0x00, 0x03, 0x01, 0x02, 0x01,
+		0x05, 0x04, 0x0b, 0x84, 0x23, 0xf0,
+	}
+	data := append(append([]byte(nil), header...), payload...)
+	message := SMSMessage{}
+	if err := decodeUserData(data, 0x40, 0x04, len(data), &message); err != nil {
+		t.Fatalf("decode multipart WAP Push segment: %v", err)
+	}
+	if message.Concat == nil || message.Concat.Total != 2 {
+		t.Fatalf("concat = %#v", message.Concat)
+	}
+	want := strings.ToUpper(hex.EncodeToString(payload))
+	if message.Text != want || message.Encoding != SMSEncoding8BitPDU {
+		t.Fatalf("message = %#v", message)
+	}
+}
+
+func minimalWAPMMS(subject string) []byte {
+	headers := []byte{0xbe, 0xaf, 0x84}
+	body := append([]byte{0x8c, 0x82, 0x96}, subject...)
+	body = append(body, 0)
+	payload := []byte{0x01, 0x06, byte(len(headers))}
+	payload = append(payload, headers...)
+	return append(payload, body...)
 }

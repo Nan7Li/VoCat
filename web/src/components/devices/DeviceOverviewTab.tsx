@@ -1,4 +1,7 @@
 import { useState } from "react";
+import { CellLockButton } from "./CellLockButton";
+import { CellLockDialog } from "./CellLockDialog";
+import { useDeviceCellLock } from "./useDeviceCellLock";
 import { OverviewNetworkCard } from "./OverviewNetworkCard";
 import { OverviewVowifiCard } from "./OverviewVowifiCard";
 import { OverviewSimPanel } from "./OverviewSimPanel";
@@ -28,6 +31,9 @@ export function DeviceOverviewTab(props: DeviceOverviewTabProps) {
   const [operatorOpen, setOperatorOpen] = useState(false);
   const { device } = props;
 	const wifiCallingOnly = device.deviceType === "usb_sim_reader";
+  const supportsCellLock = device.supportsCellLock === true;
+  const cellLock = useDeviceCellLock(device.id, supportsCellLock);
+  const cellLocked = !!cellLock.status?.target;
 	const showNetworkDetails = !!device.developerEnabled && !wifiCallingOnly;
   return (
     <div className="space-y-4">
@@ -35,9 +41,13 @@ export function DeviceOverviewTab(props: DeviceOverviewTabProps) {
         <div className="ui-panel-muted p-4">
           <div className="mb-3 text-xs font-bold uppercase tracking-wider text-gray-500">{t("运行状态")}</div>
 		  {isVoWiFiInUse(device) && !(device.modem?.imei && device.modem?.simInserted === false) ? (
-            <OverviewVowifiCard device={device} />
+            <>
+              <OverviewVowifiCard device={device} />
+              {supportsCellLock ? <CellLockButton onClick={cellLock.openDialog} locked={cellLocked} /> : null}
+            </>
           ) : (
-            <OverviewNetworkCard device={device} onOpenOperatorSelection={() => setOperatorOpen(true)} />
+            <OverviewNetworkCard device={device} onOpenOperatorSelection={() => setOperatorOpen(true)}
+              onOpenCellLock={supportsCellLock ? cellLock.openDialog : undefined} cellLocked={cellLocked} />
           )}
         </div>
         <OverviewSimPanel
@@ -72,6 +82,7 @@ export function DeviceOverviewTab(props: DeviceOverviewTabProps) {
           onUpdated={props.onRefresh}
         />
       ) : null}
+      {supportsCellLock && cellLock.dialogOpen ? <CellLockDialog cellLock={cellLock} /> : null}
     </div>
   );
 }
