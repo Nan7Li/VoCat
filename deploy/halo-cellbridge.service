@@ -1,0 +1,18 @@
+[Unit]
+Description=Halo CellBridge call bridge
+Wants=network-online.target pcscd.socket
+After=network-online.target pcscd.socket
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/halo
+Environment=VOCAT_ADDR=0.0.0.0:7575
+Environment=VOCAT_DATABASE_PATH=/opt/halo/data/halo.db
+ExecStart=/opt/halo/bin/halo serve
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+
+[Install]
+WantedBy=multi-user.target

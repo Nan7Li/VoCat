@@ -64,3 +64,7 @@ Thumbs.db
 # ---- Claude Code / agent ----
 .claude/
 .worktrees/
+
+# NAS deployment state and separately supplied QDC507 vendor payloads.
+nas-data/
+qdc507-runtime/
