@@ -34,3 +34,7 @@ build/lists/
 *.cookies
 *.session
 vc.jar
+
+# NAS deployment state and separately supplied QDC507 vendor payloads.
+nas-data/
+qdc507-runtime/

@@ -103,8 +103,16 @@ export function softphoneReadyReason(device?: {
   vowifiEnabled?: boolean;
   vowifiRuntime?: { phase?: string; imsReady?: boolean; lastError?: string; lastReason?: string };
   epdgProbe?: { disabledVoWiFi?: boolean; error?: string; epdg?: string };
+  callAudioReady?: boolean;
+  callAudioReason?: string;
+  callAudioTransport?: "" | "cellular" | "vowifi";
 } | null): string {
   if (!device) return "";
+  if (device.callAudioTransport === "cellular") {
+    if (device.callAudioReady) return "";
+    return device.callAudioReason || tl("大疆通话音频未就绪");
+  }
+  if (device.callAudioTransport === "vowifi" && device.callAudioReady) return "";
   if (!device.vowifiEnabled) {
     return tl("VoWiFi 未开启：请先在设备页打开「VoWiFi」开关，等待 IMS 注册完成。");
   }

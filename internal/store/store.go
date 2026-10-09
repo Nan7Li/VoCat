@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -14,7 +16,16 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 24
+// schemaVersion is the merged Halo + VoCat schema.
+//
+// Halo 1.1.14 stamped user_version 24 after its own migrations 20–24
+// (WireGuard, call history, ePDG probes, then the historical cellular IMS
+// and virtual-PCD steps). VoCat v0.3.15 stamped user_version 25 after a
+// different 23–25 (SMS subscription identity, per-card MBN, cellular_attach).
+// Those numbers overlap and do not mean the same schema. Migrations 25–28
+// are idempotent so both lineages, and a shared user_version 22 database,
+// converge on one schema.
+const schemaVersion = 28
 
 var ErrNotFound = errors.New("store: not found")
 
@@ -83,6 +94,77 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// BackupForUpdate writes a consistent SQLite snapshot, including committed
+// WAL frames, into a private file under the database directory. In-memory
+// databases have nothing durable to copy and return an empty path.
+func (s *Store) BackupForUpdate(ctx context.Context) (string, error) {
+	if s == nil || s.db == nil {
+		return "", errors.New("sqlite backup store is not configured")
+	}
+	// SQLite supplies the actual main file for both plain paths and file: URI
+	// connections. Memory databases report an empty filename.
+	rows, err := s.db.QueryContext(ctx, "PRAGMA database_list")
+	if err != nil {
+		return "", fmt.Errorf("locate sqlite database for backup: %w", err)
+	}
+	databasePath := ""
+	for rows.Next() {
+		var sequence int
+		var name, filename string
+		if err := rows.Scan(&sequence, &name, &filename); err != nil {
+			_ = rows.Close()
+			return "", fmt.Errorf("read sqlite database location: %w", err)
+		}
+		if name == "main" {
+			databasePath = filename
+		}
+	}
+	queryErr := rows.Err()
+	_ = rows.Close()
+	if queryErr != nil {
+		return "", fmt.Errorf("read sqlite database location: %w", queryErr)
+	}
+	if databasePath == "" {
+		return "", nil
+	}
+	backupDir := filepath.Join(filepath.Dir(databasePath), "update-backups")
+	if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		return "", fmt.Errorf("create update backup directory: %w", err)
+	}
+	if err := os.Chmod(backupDir, 0o700); err != nil {
+		return "", fmt.Errorf("protect update backup directory: %w", err)
+	}
+	nonce := make([]byte, 4)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", fmt.Errorf("create update backup name: %w", err)
+	}
+	dest := filepath.Join(backupDir, fmt.Sprintf(
+		"halo-%s-%s.db",
+		time.Now().UTC().Format("20060102T150405.000000000Z"),
+		hex.EncodeToString(nonce),
+	))
+	literal, err := sqliteStringLiteral(dest)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.db.ExecContext(ctx, "VACUUM INTO "+literal); err != nil {
+		_ = os.Remove(dest)
+		return "", fmt.Errorf("sqlite backup: %w", err)
+	}
+	if err := os.Chmod(dest, 0o600); err != nil {
+		_ = os.Remove(dest)
+		return "", fmt.Errorf("protect update backup: %w", err)
+	}
+	return dest, nil
+}
+
+func sqliteStringLiteral(path string) (string, error) {
+	if path == "" || strings.ContainsAny(path, "\x00\r\n") {
+		return "", errors.New("sqlite backup path is invalid")
+	}
+	return "'" + strings.ReplaceAll(path, "'", "''") + "'", nil
+}
+
 func prepareDatabasePath(path string) error {
 	if !isFilesystemPath(path) {
 		return nil
@@ -127,7 +209,14 @@ func migrate(ctx context.Context, db *sql.DB) error {
 					(nextVersion == 8 && strings.Contains(statement, "ADD COLUMN device_type")) ||
 					(nextVersion == 14 && strings.Contains(statement, "ADD COLUMN")) ||
 					(nextVersion == 16 && strings.Contains(statement, "ADD COLUMN sim_pin")) ||
-					(nextVersion == 19 && strings.Contains(statement, "ADD COLUMN"))
+					(nextVersion == 19 && strings.Contains(statement, "ADD COLUMN")) ||
+					// user_version 20/21 databases already have the original
+					// cellular IMS columns. Halo renumbered that step to 22.
+					(nextVersion == 22 && strings.Contains(statement, "ADD COLUMN cellular_ims_")) ||
+					// VoCat v0.3.14/v0.3.15 already applied these under its own
+					// version numbers 23 and 24.
+					(nextVersion == 25 && strings.Contains(statement, "ADD COLUMN")) ||
+					(nextVersion == 26 && strings.Contains(statement, "ADD COLUMN mbn_profile"))
 				if duplicateAdditiveColumn && strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 					continue
 				}

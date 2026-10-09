@@ -19,6 +19,9 @@ func (s *Server) handleCalls(w http.ResponseWriter, r *http.Request, config stor
 	if !requireMethod(w, r, http.MethodGet) {
 		return true
 	}
+	if s.serveCellBridgeCallList(w, config) {
+		return true
+	}
 	transport := s.callTransport(config.ID)
 	if transport == "vowifi" {
 		controller, ok := s.vowifi.(VoWiFiCallController)
@@ -36,10 +39,15 @@ func (s *Server) handleCalls(w http.ResponseWriter, r *http.Request, config stor
 		}})
 		return true
 	}
+	generation, present := s.legacyPhysicalGeneration(physicalID)
+	revision := s.captureLegacyRevision()
 	response, err := s.devices.ExecuteAT(r.Context(), physicalID, "AT+CLCC")
 	if err != nil {
 		s.writeDeviceError(w, err)
 		return true
+	}
+	if response.OK() && s.legacyPhysicalUnchanged(physicalID, generation, present) {
+		s.commitLegacyCLCC([]string{config.ID, physicalID}, parseCLCC(response), revision, generation)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
@@ -105,6 +113,18 @@ func (s *Server) handleCallAction(w http.ResponseWriter, r *http.Request, config
 		writeError(w, http.StatusNotFound, "not_found", "call action not found")
 		return true
 	}
+	if action == "dial" || action == "answer" {
+		release, admitErr := s.admitCallMutation()
+		if admitErr != nil {
+			writeError(w, http.StatusConflict, "update_in_progress", admitErr.Error())
+			return true
+		}
+		defer release()
+	}
+
+	if s.dispatchBoundCallAction(w, r, config, physicalID, action, number, callID, duration) {
+		return true
+	}
 
 	transport := s.callTransport(config.ID)
 	if transport == "vowifi" {
@@ -149,6 +169,9 @@ func (s *Server) handleCallAction(w http.ResponseWriter, r *http.Request, config
 		s.recordAudit(r.Context(), "admin", "call."+action, "device", config.ID, "success", transport)
 		// Persist the lifecycle immediately so history is fresh even before the
 		// background watcher's next tick; the watcher later finalises the row.
+		if callID != "" {
+			s.rememberCall(callBinding{deviceID: config.ID, callID: callID, transport: "vowifi"})
+		}
 		if calls, listErr := controller.Calls(config.ID); listErr == nil {
 			for _, call := range calls {
 				s.upsertCallRecord(r.Context(), config.ID, call)
@@ -160,6 +183,11 @@ func (s *Server) handleCallAction(w http.ResponseWriter, r *http.Request, config
 		}})
 		return true
 	}
+	if binding, ok := s.bindingForAction(config.ID, callID); ok && binding.transport == "vowifi" {
+		writeError(w, http.StatusConflict, "call_unavailable", "原 IMS 通话不会改用蜂窝 AT")
+		return true
+	}
+	generation := s.usbGeneration(config.ID)
 	operationContext, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	response, err := s.devices.ExecuteAT(operationContext, physicalID, command)
 	cancel()
@@ -178,11 +206,22 @@ func (s *Server) handleCallAction(w http.ResponseWriter, r *http.Request, config
 	}
 	if action == "dial" {
 		if duration > 0 {
-			go s.hangupAfter(config.ID, physicalID, duration)
+			go s.hangupAfter(config.ID, physicalID, generation, duration)
 		}
 	}
+	switch action {
+	case "dial", "answer":
+		s.noteLegacyAccepted(generation, config.ID, physicalID)
+	case "hangup":
+		s.noteLegacyHangup(config.ID, physicalID)
+	}
 	s.recordAudit(r.Context(), "admin", "call."+action, "device", config.ID, "success", transport)
-	s.upsertCellularCallRecord(r.Context(), config.ID, number, action)
+	if recordID := s.upsertCellularCallRecord(r.Context(), config.ID, number, action); recordID != "" {
+		s.rememberCall(callBinding{
+			deviceID: config.ID, callID: recordID, transport: "legacy", physicalID: physicalID,
+			usbGeneration: generation,
+		})
+	}
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"data": map[string]any{
 			"accepted": true, "action": action, "number": number,
@@ -236,15 +275,20 @@ func (s *Server) callTransport(deviceID string) string {
 	return "cellular"
 }
 
-func (s *Server) hangupAfter(deviceID, physicalID string, duration time.Duration) {
+func (s *Server) hangupAfter(deviceID, physicalID, generation string, duration time.Duration) {
 	timer := time.NewTimer(duration)
 	defer timer.Stop()
 	<-timer.C
+	if !shouldSignalRuntime(generation, s.usbGeneration(deviceID)) {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if _, err := s.devices.ExecuteAT(ctx, physicalID, "ATH"); err != nil {
 		s.logger.Warn("automatic call hangup failed", "device_id", deviceID, "error", err)
+		return
 	}
+	s.noteLegacyHangup(deviceID, physicalID)
 }
 
 func validDialNumber(value string) bool {

@@ -12,12 +12,14 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 	"sync"
 	"time"
 
 	"vocat/internal/auth"
+	"vocat/internal/device"
 	"vocat/internal/exportproxy"
 	"vocat/internal/extensions"
 	"vocat/internal/httpsmode"
@@ -81,11 +83,21 @@ type Server struct {
 	developerEnabled          bool
 	updateRepository          string
 	updateToken               string
+	updateTarget              string
 	updateCheck               func(context.Context, string, string, string) (update.CheckResult, error)
+	upstreamCheck             func(context.Context, string, string, string) (update.CheckResult, error)
 	updateApply               func(context.Context, *slog.Logger, update.Options, bool) (update.CheckResult, error)
 	updateRestart             func(*slog.Logger) error
 	updateMu                  sync.Mutex
 	updateApplying            bool
+	updateCallOps             int
+	cellularCallsForUpdate    func() []vowifi.Call
+	imsCallsForUpdate         func() ([]vowifi.Call, error)
+	legacyCallMu              sync.Mutex
+	legacyRevision            uint64
+	legacySlots               map[string]legacySlot
+	legacyPeers               map[string]map[string]struct{}
+	legacyCallsForUpdate      func() bool
 	https                     *httpsmode.Manager
 	netTraffic                *liveNetTracker
 	hostStats                 *hostStatsSampler
@@ -94,6 +106,8 @@ type Server struct {
 	lookupPublicIP            func(context.Context, string) (exportproxy.PublicIPInfo, error)
 	automaticTasks            *automaticTaskScheduler
 	smsSyncMu                 sync.Mutex
+	smsStorageMu              sync.Mutex
+	smsStorage                map[string]device.SMSStorageUsage
 	cellularDataOnce          sync.Once
 	cellularDataMonitorOnce   sync.Once
 	cellularDataEventOnce     sync.Once
@@ -101,6 +115,20 @@ type Server struct {
 	cellularData              *cellularDataRuntime
 	wireguard                 *wireguard.Manager
 	recordingsDir             string
+	callMediaLeaseMu          sync.Mutex
+	callMediaLeases           map[callMediaLeaseKey]*callMediaLease
+
+	cellBridgeMu           sync.Mutex
+	cellBridgeWake         chan struct{}
+	cellBridgeDirty        bool
+	cellBridgeApplying     bool
+	cellBridgeStatus       cellBridgeStatus
+	cellBridgeCtrl         *cellBridgeLine
+	cellBridgeSIP          cellBridgeSIP
+	cellBridgeBindings     map[string]callBinding
+	cellBridgeAudioFactory func(cellBridgeAudioSpec) cellularAudio
+	cellBridgeALSACheck    func(capture, playback, usbPort string) error
+	cellBridgeALSARoot     string
 }
 
 func New(options Options) (*Server, error) {
@@ -148,12 +176,15 @@ func New(options Options) (*Server, error) {
 		developerEnabled:    options.DeveloperEnabled,
 		updateRepository:    strings.TrimSpace(options.UpdateRepository),
 		updateToken:         strings.TrimSpace(options.UpdateToken),
+		updateTarget:        strings.TrimSpace(os.Getenv("VOCAT_UPDATE_TARGET")),
 		https:               options.HTTPS,
 		netTraffic:          newLiveNetTracker(),
 		hostStats:           newHostStatsSampler(),
 		publicIPs:           make(map[string]cachedPublicIP),
+		smsStorage:          make(map[string]device.SMSStorageUsage),
 		lookupPublicIP:      exportproxy.LookupPublicIP,
 		updateCheck:         update.CheckLatest,
+		upstreamCheck:       update.CheckStable,
 		updateApply:         update.ApplyLatest,
 		updateRestart:       update.RestartService,
 		wireguard:           options.WireGuard,
@@ -190,6 +221,10 @@ type VoWiFiController interface {
 	State(string) (vowifi.State, error)
 	RequestEnabled(string, bool) (vowifi.State, error)
 	RequestReconnect(string) (vowifi.State, error)
+}
+
+type VoWiFiSMSSyncController interface {
+	ModemSMSSyncBlocked(string) bool
 }
 
 type VoWiFiMaintenanceController interface {

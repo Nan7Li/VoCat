@@ -405,6 +405,10 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	if result.Available {
 		message = result.ReleaseNotes
 	}
+	channel := result.Channel
+	if channel == "" {
+		channel = update.Channel()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
 			"available":       result.Available,
@@ -412,6 +416,7 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 			"version":         result.Latest,
 			"message":         message,
 			"repository":      s.updateRepository,
+			"channel":         channel,
 			"is_docker":       runningInDocker(),
 		},
 	})
@@ -441,27 +446,59 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "container_update_required", "pull the latest container image and recreate the container")
 		return
 	}
-	s.updateMu.Lock()
-	if s.updateApplying {
-		s.updateMu.Unlock()
+	if s.updateCheck != nil {
+		previewCtx, previewCancel := context.WithTimeout(r.Context(), 20*time.Second)
+		preview, previewErr := s.updateCheck(previewCtx, s.updateRepository, s.updateToken, buildinfo.Version)
+		previewCancel()
+		if previewErr != nil {
+			s.logger.Warn("check for updates failed", "repository", s.updateRepository, "error", previewErr)
+			writeError(w, http.StatusBadGateway, "update_check_failed", previewErr.Error())
+			return
+		}
+		if !preview.Available {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"data": map[string]any{
+					"applied": false,
+					"version": preview.Latest,
+					"message": "The installed version is already current.",
+				},
+			})
+			return
+		}
+	}
+	if err := s.beginUpdate(); err != nil {
+		if errors.Is(err, errCallActive) {
+			writeError(w, http.StatusConflict, "call_in_progress", err.Error())
+			return
+		}
 		writeError(w, http.StatusConflict, "update_busy", "another update is already in progress")
 		return
 	}
-	s.updateApplying = true
-	s.updateMu.Unlock()
+	guardTransferred := false
 	defer func() {
-		s.updateMu.Lock()
-		s.updateApplying = false
-		s.updateMu.Unlock()
+		if !guardTransferred {
+			s.finishUpdate()
+		}
 	}()
+	if err := s.backupDatabaseBeforeUpdate(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
 	result, err := s.updateApply(ctx, s.logger, update.Options{
-		Repo:  s.updateRepository,
-		Token: s.updateToken,
+		Repo:          s.updateRepository,
+		Token:         s.updateToken,
+		Target:        s.updateTarget,
+		BeforeInstall: s.rejectInstallIfCallActive,
 	}, false)
 	if err != nil {
+		if errors.Is(err, errCallActive) {
+			s.logger.Info("update postponed until the call ends", "repository", s.updateRepository)
+			writeError(w, http.StatusConflict, "call_in_progress", err.Error())
+			return
+		}
 		s.logger.Error("apply update failed", "repository", s.updateRepository, "error", err)
 		writeError(w, http.StatusBadGateway, "update_apply_failed", err.Error())
 		return
@@ -497,16 +534,7 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
-	if s.updateRestart != nil {
-		restart := s.updateRestart
-		logger := s.logger
-		go func() {
-			time.Sleep(time.Second)
-			if err := restart(logger); err != nil {
-				logger.Error("restart after update failed", "error", err)
-			}
-		}()
-	}
+	guardTransferred = s.scheduleUpdateRestart()
 }
 
 func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {

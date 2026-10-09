@@ -89,6 +89,23 @@ const (
 	PhoneSourceEFMSISDN  = "usim_ef_msisdn"
 )
 
+type servingMetrics struct {
+	PLMN       string
+	AccessTech string
+	Band       string
+	Channel    string
+	RSSI       *int
+	RSRP       *int
+	RSRQ       *int
+	SINR       *int
+}
+
+type servingRecord struct {
+	servingMetrics
+	PCI      string
+	Complete bool
+}
+
 type Snapshot struct {
 	DeviceID           string      `json:"deviceId"`
 	Port               string      `json:"port"`
@@ -162,8 +179,28 @@ const (
 	SMSEncodingGB18030  SMSEncoding = "gb18030_pdu"
 	SMSEncodingLatin1   SMSEncoding = "latin1_pdu"
 	SMSEncoding8BitPDU  SMSEncoding = "8bit_pdu"
+	SMSEncodingWAPPush  SMSEncoding = "wap_push"
 	SMSEncodingUnknown  SMSEncoding = "unknown"
 )
+
+type SMSStorageArea struct {
+	Used  int `json:"used"`
+	Total int `json:"total"`
+}
+
+type SMSStorageUsage struct {
+	SM SMSStorageArea `json:"sm"`
+	ME SMSStorageArea `json:"me"`
+}
+
+func (usage SMSStorageUsage) Known() bool {
+	return usage.SM.Total > 0 || usage.ME.Total > 0
+}
+
+type SMSListing struct {
+	Messages []SMSMessage
+	Storage  SMSStorageUsage
+}
 
 type SMSStorageStatus string
 
@@ -223,6 +260,7 @@ type SMSMessage struct {
 	ModemLength            int              `json:"modemLength"`
 	RawPDU                 string           `json:"rawPdu"`
 	RawUserData            string           `json:"rawUserData,omitempty"`
+	SIMDataDownload        bool             `json:"simDataDownload,omitempty"`
 	DecodeError            string           `json:"decodeError,omitempty"`
 }
 

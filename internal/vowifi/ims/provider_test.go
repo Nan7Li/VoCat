@@ -1,6 +1,7 @@
 package ims
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
@@ -9,6 +10,8 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,6 +19,47 @@ import (
 
 	"vocat/internal/vowifi"
 )
+
+func TestDeriveIdentitiesRewritesDITORoamingPrefix(t *testing.T) {
+	installDITONativeAliasProfile(t)
+	for _, test := range []struct {
+		iccid string
+		imsi  string
+		want  string
+	}{
+		{"89636626000000000001", "204047616000001", "515661015000001"},
+		{"89636626000000000002", "204047616000002", "515661015000002"},
+	} {
+		got, err := deriveIdentities(vowifi.SIMIdentity{
+			ICCID: test.iccid, IMSI: test.imsi, HomeMCC: "515", HomeMNC: "66",
+		}, Config{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.private != test.want+"@ims.mnc066.mcc515.3gppnetwork.org" ||
+			got.public != "sip:"+test.want+"@ims.mnc066.mcc515.3gppnetwork.org" {
+			t.Fatalf("DITO IMS identities = %#v", got)
+		}
+	}
+}
+
+func installDITONativeAliasProfile(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	emptyDir := t.TempDir()
+	t.Cleanup(func() {
+		if err := vowifi.LoadCarrierProfileDirectory(emptyDir); err != nil {
+			t.Errorf("clear carrier profiles: %v", err)
+		}
+	})
+	profile := `{"version":1,"profiles":[{"id":"test-dito-native-alias","match":{"home_plmns":["51566"],"imsi_prefixes":["204047616"],"iccid_prefixes":["89636626"]},"identity":{"subscriber_imsi_rewrite":{"from_prefix":"204047616","to_prefix":"515661015"}},"route":{"mcc":"515","mnc":"66"}}]}`
+	if err := os.WriteFile(filepath.Join(dir, "profile.json"), []byte(profile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := vowifi.LoadCarrierProfileDirectory(dir); err != nil {
+		t.Fatal(err)
+	}
+}
 
 type evidenceTunnel struct {
 	evidence vowifi.TunnelEvidence
@@ -360,6 +404,8 @@ func TestRefreshFailureRevokesRegistrationEvidence(t *testing.T) {
 	}
 }
 
+// serveRegistration exercises initial authentication, preauthenticated refresh,
+// and deregistration against one registrar transaction sequence.
 func serveRegistration(listener *net.UDPConn, nonce string, confirmSMS bool) error {
 	var callID string
 	var pani string
@@ -462,8 +508,14 @@ func serveRegistration(listener *net.UDPConn, nonce string, confirmSMS bool) err
 			if headers["expires"] == "0" {
 				return errors.New("refresh REGISTER used zero expiry")
 			}
-			if headers["authorization"] != "" {
-				return errors.New("refresh reused the one-time AKAv1 RES")
+			if headers["authorization"] == "" {
+				return errors.New("refresh REGISTER omitted cached digest credentials")
+			}
+			if err := verifyTestAuthorization(headers["authorization"], nonce); err != nil {
+				return err
+			}
+			if !strings.Contains(headers["authorization"], "nc=00000002") {
+				return fmt.Errorf("refresh REGISTER did not increment digest nonce count: %q", headers["authorization"])
 			}
 			contact := headers["contact"]
 			extraContacts := []string(nil)
@@ -599,6 +651,73 @@ func TestIMSProfileUserAgentUsesUnifiedHeaderValue(t *testing.T) {
 	}
 }
 
+func TestATTAndRedPocketDeriveIdentitiesAndBuildRegister(t *testing.T) {
+	redPocket := vowifi.SIMIdentity{
+		IMSI:    "310280000000001",
+		HomeMCC: "310",
+		HomeMNC: "280",
+		SPN:     "Red Pocket",
+		GID1:    "42FFFF",
+	}
+	identities, err := deriveIdentities(redPocket, Config{})
+	if err != nil {
+		t.Fatalf("deriveIdentities() error = %v", err)
+	}
+	if identities.domain != "one.att.net" ||
+		identities.private != "310280000000001@private.att.net" ||
+		identities.public != "sip:310280000000001@one.att.net" {
+		t.Fatalf("RedPocket identities = %#v", identities)
+	}
+
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	session := &Session{
+		provider:   &Provider{config: Config{SecurityMode: SecurityRequired, UserAgent: "vocat/1"}},
+		request:    vowifi.IMSRequest{Identity: redPocket},
+		identity:   identities,
+		endpoint:   pcscfEndpoint{host: "pcscf.example", port: 5060},
+		transport:  "tcp",
+		conn:       client,
+		callID:     "rp-test",
+		fromTag:    "tag",
+		instanceID: "urn:uuid:test",
+		securityProposal: securityProposal{
+			spiClient:                1546543,
+			spiServer:                1546542,
+			portClient:               32773,
+			portServer:               6000,
+			integrityAlgorithms:      []string{"hmac-sha-1-96"},
+			encryptionAlgorithmsList: []string{"aes-cbc"},
+		},
+	}
+	packet, err := session.buildRegister(1, 18400, "", "")
+	if err != nil {
+		t.Fatalf("buildRegister() error = %v", err)
+	}
+	request := string(packet)
+	for _, want := range []string{
+		"REGISTER sip:one.att.net SIP/2.0",
+		"Expires: 18400",
+		"Supported: path,sec-agree,gruu",
+		"User-Agent: SimAdmin VoWiFi",
+		`+g.3gpp.accesstype="wlan1";audio;+g.3gpp.smsip`,
+		"P-Preferred-Identity: <sip:310280000000001@one.att.net>",
+		`P-Visited-Network-ID: "one.att.net"`,
+		"P-Access-Network-Info: IEEE-802.11;i-wlan-node-id=000000000000",
+		"Cellular-Network-Info: 3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=3102800000000;cell-info-age=0",
+		"Security-Client: ipsec-3gpp; alg=hmac-sha-1-96; ealg=aes-cbc; prot=esp; mod=trans; spi-c=1546543; spi-s=1546542; port-c=32773; port-s=6000",
+		`username="310280000000001@private.att.net"`,
+		`realm="one.att.net"`,
+		`uri="sip:one.att.net"`,
+	} {
+		if !strings.Contains(request, want) {
+			t.Fatalf("RedPocket REGISTER omits %q:\n%s", want, request)
+		}
+	}
+}
+
 func TestSipInstanceIDUsesGSMAFormWhenIMEIIsAvailable(t *testing.T) {
 	identity := vowifi.SIMIdentity{IMEI: "353024112557010"}
 	if got := sipInstanceID(identity, "00000000-0000-4000-8000-000000000001"); got != "urn:gsma:imei:353024112557010-0" {
@@ -609,6 +728,7 @@ func TestSipInstanceIDUsesGSMAFormWhenIMEIIsAvailable(t *testing.T) {
 	}
 }
 
+// TestGSMAContactFormatUsesAddressAndDeviceInstance verifies the complete GSMA Contact shape.
 func TestGSMAContactFormatUsesAddressAndDeviceInstance(t *testing.T) {
 	session := &Session{
 		identity:   identitySet{user: "234105776448519"},
@@ -619,9 +739,25 @@ func TestGSMAContactFormatUsesAddressAndDeviceInstance(t *testing.T) {
 		ContactFormat:    vowifi.IMSContactFormatGSMA,
 		ContactExtraTags: []string{"+g.3gpp.mid-call", "+g.3gpp.smsip"},
 	})
-	want := `<sip:[2001:db8::1]:49686>;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.mid-call;+g.3gpp.smsip;+sip.instance="<urn:gsma:imei:353024112557010-0>"`
+	want := `<sip:[2001:db8::1]:49686>;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel,urn%3Aurn-7%3A3gpp-service.ims.icsi.sms";+g.3gpp.mid-call;+g.3gpp.smsip;+sip.instance="<urn:gsma:imei:353024112557010-0>"`
 	if got != want {
 		t.Fatalf("GSMA Contact = %q, want %q", got, want)
+	}
+}
+
+// TestRegisterContactAdvertisesSMSOverIPICSI guards the encoded SMS service identifier independently.
+func TestRegisterContactAdvertisesSMSOverIPICSI(t *testing.T) {
+	session := &Session{
+		identity:   identitySet{user: "310240000000001"},
+		transport:  "tcp",
+		instanceID: "urn:gsma:imei:353024112557010-0",
+	}
+
+	for _, format := range []string{"", vowifi.IMSContactFormatATT, vowifi.IMSContactFormatGSMA} {
+		contact := session.buildContact("[2001:db8::1]:5060", vowifi.IMSRegisterOptions{ContactFormat: format})
+		if !strings.Contains(contact, "urn%3Aurn-7%3A3gpp-service.ims.icsi.sms") {
+			t.Fatalf("Contact format %q does not advertise SMS-over-IP ICSI: %s", format, contact)
+		}
 	}
 }
 
@@ -665,6 +801,8 @@ func validateTestPANI(value string) error {
 	return nil
 }
 
+// serveRefreshFailure accepts initial AKA registration and then rejects a
+// preauthenticated refresh so the session's failure evidence can be tested.
 func serveRefreshFailure(listener *net.UDPConn, nonce string) error {
 	var callID string
 	for step := 0; step < 3; step++ {
@@ -717,8 +855,11 @@ func serveRefreshFailure(listener *net.UDPConn, nonce string) error {
 			}
 			continue
 		}
-		if headers["authorization"] != "" {
-			return errors.New("refresh reused the one-time AKAv1 RES")
+		if headers["authorization"] == "" {
+			return errors.New("refresh REGISTER omitted cached digest credentials")
+		}
+		if !strings.Contains(headers["authorization"], "nc=00000002") {
+			return fmt.Errorf("refresh REGISTER did not increment digest nonce count: %q", headers["authorization"])
 		}
 		if _, err := listener.WriteToUDP(
 			testResponse(503, "Service Unavailable", callID, headers["cseq"], nil),
@@ -823,4 +964,391 @@ func testResponse(
 	lines = append(lines, extraHeaders...)
 	lines = append(lines, "Content-Length: 0", "", "")
 	return []byte(strings.Join(lines, "\r\n"))
+}
+
+// Exercise the real session constructor with fresh providers and connections,
+// rather than testing a helper or relying on provider-local cached state.
+func newStableInstanceTestSession(t *testing.T, request vowifi.IMSRequest) *Session {
+	t.Helper()
+	provider, err := NewProvider(&recordingAKA{}, Config{SecurityMode: SecurityDisabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection := &fakeConn{}
+	identity, err := deriveIdentities(request.Identity, provider.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := newSession(provider, request, identity, pcscfEndpoint{host: "192.0.2.1", port: 5060}, "tcp", connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(session.abort)
+	return session
+}
+
+func TestNewSessionStableInstanceFallback(t *testing.T) {
+	base := vowifi.IMSRequest{DeviceID: " modem0 ", Identity: vowifi.SIMIdentity{
+		IMSI: "001010123456789", HomeMCC: "001", HomeMNC: "01",
+	}}
+	first := newStableInstanceTestSession(t, base)
+	for _, imei := range []string{"", "bad-imei", "35302411255701", "3530241125570100", "35302411255701x", "３５３０２４１１２５５７０１０"} {
+		request := base
+		request.DeviceID = "modem0"
+		request.Identity.IMEI = imei
+		request.Identity.IMSI = "001010987654321"
+		if next := newStableInstanceTestSession(t, request); next.instanceID != first.instanceID {
+			t.Errorf("unavailable IMEI %q: DeviceID fallback changed: %q != %q", imei, next.instanceID, first.instanceID)
+		}
+	}
+	base.DeviceID = "modem1"
+	if next := newStableInstanceTestSession(t, base); next.instanceID == first.instanceID {
+		t.Error("different DeviceIDs share an instance")
+	}
+	base.DeviceID = " "
+	legacy := newStableInstanceTestSession(t, base)
+	if next := newStableInstanceTestSession(t, base); next.instanceID != legacy.instanceID {
+		t.Error("legacy IMSI-only caller is not stable")
+	}
+	base.Identity.IMSI = "001010987654321"
+	if next := newStableInstanceTestSession(t, base); next.instanceID == legacy.instanceID {
+		t.Error("different IMSI-only callers share an instance")
+	}
+}
+
+func TestNewSessionStableInstanceGSMA(t *testing.T) {
+	request := vowifi.IMSRequest{DeviceID: "modem0", Identity: vowifi.SIMIdentity{
+		IMEI: "353024112557010", IMSI: "234100000000001", HomeMCC: "234", HomeMNC: "10", GID1: "508FFFFF",
+	}}
+	for range 2 {
+		session := newStableInstanceTestSession(t, request)
+		if session.instanceID != "urn:gsma:imei:353024112557010-0" {
+			t.Fatalf("GSMA representation changed: %q", session.instanceID)
+		}
+	}
+	request.Identity.IMEI = "invalid"
+	first := newStableInstanceTestSession(t, request)
+	if next := newStableInstanceTestSession(t, request); first.instanceID != next.instanceID || !strings.HasPrefix(next.instanceID, "urn:uuid:") {
+		t.Fatal("GSMA invalid-IMEI fallback must use stable UUID")
+	}
+}
+
+func TestStableInstanceMissingIdentity(t *testing.T) {
+	connection := &fakeConn{}
+	session, err := newSession(&Provider{config: Config{SecurityMode: SecurityDisabled}}, vowifi.IMSRequest{}, identitySet{}, pcscfEndpoint{}, "tcp", connection)
+	if session != nil {
+		session.abort()
+	}
+	if err == nil || !strings.Contains(err.Error(), "stable SIP instance") {
+		t.Fatalf("missing all identities: session=%v, error=%v", session, err)
+	}
+}
+
+func TestNewSessionStableInstance(t *testing.T) {
+	base := vowifi.IMSRequest{DeviceID: "usb-1", Identity: vowifi.SIMIdentity{
+		IMEI: "353024112557010", IMSI: "001010123456789", HomeMCC: "001", HomeMNC: "01",
+	}}
+	first := newStableInstanceTestSession(t, base)
+	// Independent Python uuid.uuid5(NAMESPACE_URL, name) vector locks down
+	// the namespace/name and RFC version/variant across process restarts.
+	if first.instanceID != "urn:uuid:eddf02e1-07af-5305-bad0-a7ce44dd536d" {
+		t.Fatalf("UUIDv5 compatibility vector: got %q", first.instanceID)
+	}
+	for _, test := range []struct {
+		name     string
+		change   func(*vowifi.IMSRequest)
+		wantSame bool
+	}{
+		{"new_provider_and_connection", func(r *vowifi.IMSRequest) {}, true},
+		{"different_hardware", func(r *vowifi.IMSRequest) { r.Identity.IMEI = "490154203237518" }, false},
+		{"changed_USB_device_ID", func(r *vowifi.IMSRequest) { r.DeviceID = "usb-2" }, true},
+		{"changed_IMSI", func(r *vowifi.IMSRequest) { r.Identity.IMSI = "001010987654321" }, true},
+		{"changed_SIM_profile", func(r *vowifi.IMSRequest) {
+			r.Identity.ICCID = "8901000000000000002"
+			r.Identity.HomeMCC = "999"
+			r.Identity.HomeMNC = "99"
+		}, true},
+		{"IMEI_without_device_ID", func(r *vowifi.IMSRequest) { r.DeviceID = "" }, true},
+		{"trimmed_IMEI", func(r *vowifi.IMSRequest) { r.Identity.IMEI = " 353024112557010\n" }, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := base
+			test.change(&request)
+			next := newStableInstanceTestSession(t, request)
+			if same := first.instanceID == next.instanceID; same != test.wantSame {
+				t.Errorf("instance IDs %q and %q: same=%v, want %v", first.instanceID, next.instanceID, same, test.wantSame)
+			}
+			if first.callID == next.callID || first.fromTag == next.fromTag {
+				t.Error("Call-ID and From tag must remain fresh per session")
+			}
+			if !strings.Contains(next.buildContact("192.0.2.10:5060", next.imsRegisterOptions()), `+sip.instance="<`+next.instanceID+`>"`) {
+				t.Error("Contact does not carry the session instance ID")
+			}
+		})
+	}
+}
+
+func TestRegistrationExpiryUsesMatchingContact(t *testing.T) {
+	s := &Session{provider: &Provider{config: Config{SecurityMode: SecurityDisabled, RegistrationExpiry: time.Hour}}, conn: &fakeConn{}, transport: "tcp", identity: identitySet{user: "001010123456789"}, instanceID: "urn:uuid:current", request: vowifi.IMSRequest{Identity: vowifi.SIMIdentity{HomeMCC: "001", HomeMNC: "01"}}}
+	r := &sipResponse{StatusCode: 200, Headers: map[string][]string{"contact": {`<sip:old@10.0.0.1:5060>;expires=7200;+g.3gpp.smsip;+sip.instance="<urn:uuid:old>",<sip:current@192.0.2.10:5060>;expires=3590;+g.3gpp.smsip;+sip.instance="<urn:uuid:current>"`}}}
+	before := time.Now()
+	if err := s.applyRegistrationEvidence(r); err != nil {
+		t.Fatal(err)
+	}
+	got := s.expiresAt.Sub(before)
+	if got < 3590*time.Second || got > 3591*time.Second {
+		t.Fatalf("current Contact grants 3590 seconds but session expiry is %s", got)
+	}
+}
+
+func TestRegistrationRetries423UsingMinExpires(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	session := &Session{
+		provider:     &Provider{config: Config{SecurityMode: SecurityDisabled, TransactionTimeout: 2 * time.Second}},
+		request:      vowifi.IMSRequest{Identity: vowifi.SIMIdentity{HomeMCC: "454", HomeMNC: "03"}},
+		identity:     identitySet{user: "sub", domain: "ims.mnc003.mcc454.3gppnetwork.org", private: "sub@ims.mnc003.mcc454.3gppnetwork.org", public: "sip:sub@ims.mnc003.mcc454.3gppnetwork.org"},
+		endpoint:     pcscfEndpoint{host: "pcscf.example", port: 5060},
+		transport:    "tcp",
+		conn:         client,
+		reader:       bufio.NewReader(client),
+		callID:       "test-423",
+		fromTag:      "tag423",
+		instanceID:   "urn:uuid:test",
+		cseq:         1,
+		transactions: make(map[sipTransactionKey]chan *sipResponse),
+	}
+
+	serverDone := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(server)
+		packet1, err := readSIPPacket(reader)
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		if packet1.Request.value("Expires") != "3600" {
+			serverDone <- fmt.Errorf("initial expires = %q, want 3600", packet1.Request.value("Expires"))
+			return
+		}
+		resp423 := strings.Join([]string{
+			"SIP/2.0 423 Interval Too Brief",
+			"Via: " + packet1.Request.value("Via"),
+			"From: " + packet1.Request.value("From"),
+			"To: " + packet1.Request.value("To"),
+			"Call-ID: " + packet1.Request.value("Call-ID"),
+			"CSeq: " + packet1.Request.value("CSeq"),
+			"Min-Expires: 7200",
+			"Content-Length: 0",
+			"", "",
+		}, "\r\n")
+		if _, err := server.Write([]byte(resp423)); err != nil {
+			serverDone <- err
+			return
+		}
+
+		packet2, err := readSIPPacket(reader)
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		if packet2.Request.value("Expires") != "7200" {
+			serverDone <- fmt.Errorf("retried expires = %q, want 7200", packet2.Request.value("Expires"))
+			return
+		}
+		if packet2.Request.value("CSeq") != "2 REGISTER" {
+			serverDone <- fmt.Errorf("retried CSeq = %q, want 2 REGISTER", packet2.Request.value("CSeq"))
+			return
+		}
+		resp200 := strings.Join([]string{
+			"SIP/2.0 200 OK",
+			"Via: " + packet2.Request.value("Via"),
+			"From: " + packet2.Request.value("From"),
+			"To: " + packet2.Request.value("To"),
+			"Call-ID: " + packet2.Request.value("Call-ID"),
+			"CSeq: " + packet2.Request.value("CSeq"),
+			"Contact: <sip:sub@pipe;transport=tcp>;expires=7200",
+			"Content-Length: 0",
+			"", "",
+		}, "\r\n")
+		_, err = server.Write([]byte(resp200))
+		serverDone <- err
+	}()
+
+	response, err := session.register(context.Background(), 3600)
+	if err != nil {
+		t.Fatalf("session.register() error = %v", err)
+	}
+	if response.StatusCode != 200 {
+		t.Fatalf("session.register() status = %d, want 200", response.StatusCode)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestUnchallengedRegisterRetryRetainsEmptyAuthorization(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	session := &Session{
+		provider:     &Provider{config: Config{SecurityMode: SecurityRequired, TransactionTimeout: 2 * time.Second}},
+		securityMode: SecurityRequired,
+		request:      vowifi.IMSRequest{Identity: vowifi.SIMIdentity{HomeMCC: "454", HomeMNC: "03"}},
+		identity:     identitySet{user: "sub", domain: "ims.mnc003.mcc454.3gppnetwork.org", private: "sub@ims.mnc003.mcc454.3gppnetwork.org", public: "sip:sub@ims.mnc003.mcc454.3gppnetwork.org"},
+		endpoint:     pcscfEndpoint{host: "pcscf.example", port: 5060},
+		transport:    "tcp",
+		conn:         client,
+		reader:       bufio.NewReader(client),
+		callID:       "test-auth-retained",
+		fromTag:      "tag-auth",
+		instanceID:   "urn:uuid:test",
+		transactions: make(map[sipTransactionKey]chan *sipResponse),
+	}
+
+	serverDone := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(server)
+		packet1, err := readSIPPacket(reader)
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		auth1 := packet1.Request.value("Authorization")
+		if !strings.Contains(auth1, "algorithm=AKAv1-MD5") || !strings.Contains(auth1, "integrity-protected=no") {
+			serverDone <- fmt.Errorf("initial Authorization = %q", auth1)
+			return
+		}
+		resp423 := strings.Join([]string{
+			"SIP/2.0 423 Interval Too Brief",
+			"Via: " + packet1.Request.value("Via"),
+			"From: " + packet1.Request.value("From"),
+			"To: " + packet1.Request.value("To"),
+			"Call-ID: " + packet1.Request.value("Call-ID"),
+			"CSeq: " + packet1.Request.value("CSeq"),
+			"Min-Expires: 7200",
+			"Content-Length: 0",
+			"", "",
+		}, "\r\n")
+		if _, err := server.Write([]byte(resp423)); err != nil {
+			serverDone <- err
+			return
+		}
+
+		packet2, err := readSIPPacket(reader)
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		auth2 := packet2.Request.value("Authorization")
+		if !strings.Contains(auth2, "algorithm=AKAv1-MD5") || !strings.Contains(auth2, "integrity-protected=no") {
+			serverDone <- fmt.Errorf("retried Authorization omitted empty digest: %q", auth2)
+			return
+		}
+		resp200 := strings.Join([]string{
+			"SIP/2.0 200 OK",
+			"Via: " + packet2.Request.value("Via"),
+			"From: " + packet2.Request.value("From"),
+			"To: " + packet2.Request.value("To"),
+			"Call-ID: " + packet2.Request.value("Call-ID"),
+			"CSeq: " + packet2.Request.value("CSeq"),
+			"Contact: <sip:sub@pipe;transport=tcp>;expires=7200",
+			"Content-Length: 0",
+			"", "",
+		}, "\r\n")
+		_, err = server.Write([]byte(resp200))
+		serverDone <- err
+	}()
+
+	response, err := session.register(context.Background(), 3600)
+	if err != nil {
+		t.Fatalf("session.register() error = %v", err)
+	}
+	if response.StatusCode != 200 {
+		t.Fatalf("session.register() status = %d, want 200", response.StatusCode)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestPCSIPResponseStopsAlternatePCSCFFailover(t *testing.T) {
+	listener1, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener1.Close()
+
+	listener2, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener2.Close()
+
+	listener2Received := make(chan bool, 1)
+	go func() {
+		buf := make([]byte, 1024)
+		_ = listener2.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		_, _, err := listener2.ReadFrom(buf)
+		if err == nil {
+			listener2Received <- true
+		} else {
+			listener2Received <- false
+		}
+	}()
+
+	go func() {
+		buf := make([]byte, 2048)
+		n, remote, err := listener1.ReadFrom(buf)
+		if err != nil {
+			return
+		}
+		packet, err := parseSIPPacket(buf[:n])
+		if err != nil || packet.Request == nil {
+			return
+		}
+		resp := strings.Join([]string{
+			"SIP/2.0 486 Busy Here",
+			"Via: " + packet.Request.value("Via"),
+			"From: " + packet.Request.value("From"),
+			"To: " + packet.Request.value("To"),
+			"Call-ID: " + packet.Request.value("Call-ID"),
+			"CSeq: " + packet.Request.value("CSeq"),
+			"Content-Length: 0",
+			"", "",
+		}, "\r\n")
+		_, _ = listener1.WriteTo([]byte(resp), remote)
+	}()
+
+	addr1 := listener1.LocalAddr().String()
+	addr2 := listener2.LocalAddr().String()
+
+	provider, err := NewProvider(&recordingAKA{}, Config{
+		LocalAddress:       "127.0.0.1",
+		Transport:          "udp",
+		TransactionTimeout: 1 * time.Second,
+		SecurityMode:       SecurityDisabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = provider.Start(context.Background(), vowifi.IMSRequest{
+		Identity: vowifi.SIMIdentity{IMSI: "001010123456789", HomeMCC: "001", HomeMNC: "01"},
+		Tunnel: evidenceTunnel{evidence: vowifi.TunnelEvidence{
+			Established: true,
+			LocalIPv4:   "127.0.0.1",
+			PCSCF:       []string{addr1, addr2},
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected error from 486 response, got nil")
+	}
+
+	if received := <-listener2Received; received {
+		t.Fatal("failover reached alternate P-CSCF after authoritative SIP response")
+	}
 }

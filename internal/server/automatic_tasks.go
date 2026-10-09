@@ -230,6 +230,8 @@ func (s *Server) executeAutomaticTask(ctx context.Context, task store.AutomaticT
 	case "call":
 		progress("正在发起通话")
 		output, err = s.executeAutomaticCall(ctx, task, payload)
+	case "cellular_attach":
+		output = "已注册蜂窝网络，未启用数据连接"
 	case "public_ip":
 		progress("蜂窝数据已连接，正在查询漫游公网 IP")
 		output, err = s.executeAutomaticPublicIP(ctx, config, task.ProfileICCID)
@@ -255,6 +257,20 @@ func (s *Server) ensureAutomaticTaskProfile(ctx context.Context, task store.Auto
 	if strings.EqualFold(strings.TrimSpace(entry.Snapshot.ICCID), strings.TrimSpace(task.ProfileICCID)) {
 		return config, entry, physicalID, nil
 	}
+	originalNetworkEnabled := config.NetworkEnabled
+	if task.TaskType == "cellular_attach" {
+		// Persist the disabled intent before switching: device reappearance can
+		// otherwise make the lifecycle reconciler restore the previous data state.
+		config.NetworkEnabled = false
+		if err := s.store.UpsertDevice(ctx, config); err != nil {
+			return store.Device{}, device.Device{}, "", err
+		}
+		request := s.cellularNetworkRequest(ctx, config, entry.Snapshot)
+		request.Enabled = false
+		if _, err := s.applyCellularData(ctx, config.ID, physicalID, request); err != nil {
+			return store.Device{}, device.Device{}, "", fmt.Errorf("stop cellular data before profile switch: %w", err)
+		}
+	}
 	progress("正在切换到任务指定的 eSIM Profile")
 	desiredData := config.NetworkEnabled && !config.VoWiFiEnabled
 	dataRuntime := s.cellularDataRuntime()
@@ -267,6 +283,18 @@ func (s *Server) ensureAutomaticTaskProfile(ctx context.Context, task store.Auto
 		}
 	}()
 	if _, err := s.devices.SetFlight(ctx, physicalID, true); err != nil {
+		// Data stopped successfully, and ESIMSwitchProfile has not been called.
+		// Restore intent only here; after a switch attempt the active SIM is uncertain.
+		if task.TaskType == "cellular_attach" {
+			cleanupContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			config.NetworkEnabled = originalNetworkEnabled
+			if restoreErr := s.store.UpsertDevice(cleanupContext, config); restoreErr != nil {
+				err = errors.Join(err, fmt.Errorf("restore device intent before profile switch: %w", restoreErr))
+			} else {
+				desiredData = config.NetworkEnabled && !config.VoWiFiEnabled
+			}
+		}
 		return store.Device{}, device.Device{}, "", fmt.Errorf("enter airplane mode before profile switch: %w", err)
 	}
 	if err := s.devices.ESIMSwitchProfile(ctx, physicalID, task.ProfileICCID, task.ProfileAID); err != nil {
@@ -373,6 +401,9 @@ func (s *Server) prepareAutomaticTaskEnvironment(ctx context.Context, config *st
 	}
 	if task.TaskType != "public_ip" {
 		if _, err := s.applyCellularData(ctx, config.ID, physicalID, s.cardNetworkRequest(ctx, physicalID, *config, policy, false)); err != nil {
+			if task.TaskType == "cellular_attach" {
+				return fmt.Errorf("stop cellular data before registration: %w", err)
+			}
 			s.logger.Warn("automatic task could not stop unused cellular data", "device_id", config.ID)
 		}
 	}
@@ -831,7 +862,7 @@ func (s *Server) decodeAutomaticTask(r *http.Request, id int64) (store.Automatic
 	if request.Environment != "vowifi" && request.Environment != "cellular" {
 		return store.AutomaticTask{}, errors.New("environment must be vowifi or cellular")
 	}
-	if request.TaskType != "sms" && request.TaskType != "call" && request.TaskType != "public_ip" {
+	if request.TaskType != "sms" && request.TaskType != "call" && request.TaskType != "public_ip" && request.TaskType != "cellular_attach" {
 		return store.AutomaticTask{}, errors.New("unsupported task type")
 	}
 	if request.TaskType == "public_ip" && request.Environment != "cellular" {
@@ -883,7 +914,10 @@ func (s *Server) decodeAutomaticTask(r *http.Request, id int64) (store.Automatic
 }
 
 func validateAutomaticTaskAvailability(available bool, taskType, environment string) error {
-	if !available && (taskType == "public_ip" || environment == "cellular") {
+	if taskType == "cellular_attach" && environment != "cellular" {
+		return errors.New("cellular registration tasks must use cellular direct mode")
+	}
+	if !available && taskType == "public_ip" {
 		return errors.New("unsupported task type or environment")
 	}
 	return nil

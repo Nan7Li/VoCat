@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -166,6 +167,9 @@ func TestSupportsUSSIContentType(t *testing.T) {
 	}{
 		{ussiContentType, true},
 		{"Application/Vnd.3gpp.Ussd; charset=binary", true},
+		{ussiXMLContentType, true},
+		{"application/vnd.3gpp.ussd+xml; charset=utf-8", true},
+		{"multipart/mixed; boundary=test-boundary", true},
 		{smsContentType, false},
 		{"text/plain", false},
 	} {
@@ -499,6 +503,7 @@ func serveOutboundSMS(listener *net.UDPConn, nonce string, readyForClose chan<- 
 	}
 	if _, err = listener.WriteToUDP(testResponse(200, "OK", registerCallID, headers["cseq"], []string{
 		"Contact: " + headers["contact"] + ";expires=600",
+		"P-Associated-URI: <sip:12025550100@msg.example.test>",
 	}), remote); err != nil {
 		return err
 	}
@@ -794,6 +799,134 @@ func TestSessionReceivesMalformedSMSBestEffort(t *testing.T) {
 	}
 }
 
+func TestSessionSuppressesSIMDataDownloadFromSMSInbox(t *testing.T) {
+	tpdu, err := hex.DecodeString("440C919471071610007FF6629041718111403D02700000381516001212B201000D5F284696D1470A06A44E649D62B3BC7B6A11D49874DBE86C379BD4A87805BDA5ED2FF2DE9416A43640832306C159E1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte{0x01, 0x62, 0x00, 0x00, byte(len(tpdu))}
+	body = append(body, tpdu...)
+	called := false
+	uiccCalled := false
+	var reportBody []byte
+	var session *Session
+	conn := &fakeConn{}
+	conn.onWrite = func(source []byte) {
+		packet, parseErr := parseSIPPacket(source)
+		if parseErr != nil || packet.Request == nil {
+			return
+		}
+		cseq, method, parseErr := cseqNumber(packet.Request.value("CSeq"))
+		if parseErr != nil || method != "MESSAGE" {
+			return
+		}
+		reportBody = append([]byte(nil), packet.Request.Body...)
+		session.dispatchPacket(sipPacket{Response: &sipResponse{StatusCode: 200, Headers: map[string][]string{
+			"call-id": {packet.Request.value("Call-ID")},
+			"cseq":    {fmt.Sprintf("%d MESSAGE", cseq)},
+		}}}, nil)
+	}
+	session = &Session{
+		provider: &Provider{config: Config{
+			Logger:             slog.Default(),
+			TransactionTimeout: time.Second,
+			OnSIMDataDownload: func(_ context.Context, download SIMDataDownload) error {
+				uiccCalled = true
+				if download.DeviceID != "ec20" || download.PID != 0x7f || download.DCS != 0xf6 ||
+					!bytes.Equal(download.TPDU, tpdu) {
+					t.Fatalf("SIM data download = %#v", download)
+				}
+				return nil
+			},
+			OnSMS: func(context.Context, ReceivedSMS) error {
+				called = true
+				return nil
+			},
+		}},
+		request:      vowifi.IMSRequest{DeviceID: "ec20"},
+		conn:         conn,
+		transactions: make(map[sipTransactionKey]chan *sipResponse),
+	}
+	// The write hook above feeds a synthetic SIP 200 response into this session.
+	_ = session
+	session.processSMSMessage(&sipRequest{
+		Headers: map[string][]string{
+			"content-type":              {smsContentType},
+			"content-transfer-encoding": {"binary"},
+			"call-id":                   {"sim-download-test"},
+			"from":                      {"<sip:network@example.com>"},
+		},
+		Body: body,
+	})
+	if called {
+		t.Fatal("SIM data download was delivered to the SMS inbox callback")
+	}
+	if !uiccCalled {
+		t.Fatal("SIM data download was not delivered to the UICC callback")
+	}
+	if !bytes.Equal(reportBody, []byte{0x02, 0x62}) {
+		t.Fatalf("SIM data download RP-ACK body = %X, want 0262", reportBody)
+	}
+}
+
+func TestSessionAcknowledgesSIMDataDownloadWhenCallbackNil(t *testing.T) {
+	tpdu, err := hex.DecodeString("440C919471071610007FF6629041718111403D02700000381516001212B201000D5F284696D1470A06A44E649D62B3BC7B6A11D49874DBE86C379BD4A87805BDA5ED2FF2DE9416A43640832306C159E1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte{0x01, 0x62, 0x00, 0x00, byte(len(tpdu))}
+	body = append(body, tpdu...)
+	called := false
+	var reportBody []byte
+	var session *Session
+	conn := &fakeConn{}
+	conn.onWrite = func(source []byte) {
+		packet, parseErr := parseSIPPacket(source)
+		if parseErr != nil || packet.Request == nil {
+			return
+		}
+		cseq, method, parseErr := cseqNumber(packet.Request.value("CSeq"))
+		if parseErr != nil || method != "MESSAGE" {
+			return
+		}
+		reportBody = append([]byte(nil), packet.Request.Body...)
+		session.dispatchPacket(sipPacket{Response: &sipResponse{StatusCode: 200, Headers: map[string][]string{
+			"call-id": {packet.Request.value("Call-ID")},
+			"cseq":    {fmt.Sprintf("%d MESSAGE", cseq)},
+		}}}, nil)
+	}
+	session = &Session{
+		provider: &Provider{config: Config{
+			Logger:             slog.Default(),
+			TransactionTimeout: time.Second,
+			OnSIMDataDownload:  nil, // 模拟未注册 UICC 回调的场景
+			OnSMS: func(context.Context, ReceivedSMS) error {
+				called = true
+				return nil
+			},
+		}},
+		request:      vowifi.IMSRequest{DeviceID: "ec20"},
+		conn:         conn,
+		transactions: make(map[sipTransactionKey]chan *sipResponse),
+	}
+	session.processSMSMessage(&sipRequest{
+		Headers: map[string][]string{
+			"content-type":              {smsContentType},
+			"content-transfer-encoding": {"binary"},
+			"call-id":                   {"sim-download-nil-test"},
+			"from":                      {"<sip:network@example.com>"},
+		},
+		Body: body,
+	})
+	if called {
+		t.Fatal("SIM data download was delivered to the SMS inbox callback")
+	}
+	// 校验必须回执 RP-ACK (0x02 = RP-ACK, 0x62 = RP-Message Reference)
+	if !bytes.Equal(reportBody, []byte{0x02, 0x62}) {
+		t.Fatalf("SIM data download RP-ACK body = %X, want 0262", reportBody)
+	}
+}
+
 func TestSessionAllowsSMSWhenContactConfirmed(t *testing.T) {
 	session := &Session{
 		provider: &Provider{config: Config{Logger: slog.Default()}},
@@ -922,38 +1055,91 @@ func serveOutboundUSSI(listener *net.UDPConn, nonce string, readyForClose chan<-
 		return err
 	}
 
+	// 1. Expect outbound INVITE for USSI dialog initiation (3GPP TS 24.390)
 	count, remote, err = listener.ReadFromUDP(packet)
 	if err != nil {
 		return err
 	}
 	message, err := parseSIPPacket(packet[:count])
 	if err != nil || message.Request == nil {
-		return fmt.Errorf("outbound MESSAGE parse: %v", err)
+		return fmt.Errorf("outbound INVITE parse: %v", err)
 	}
-	if message.Request.Method != "MESSAGE" ||
+	if message.Request.Method != "INVITE" ||
 		!strings.HasPrefix(message.Request.URI, "sip:") ||
-		strings.ToLower(message.Request.value("Content-Type")) != ussiContentType ||
-		message.Request.value("Request-Disposition") != "no-fork" ||
-		message.Request.value("Allow") != "MESSAGE" {
-		return fmt.Errorf("unexpected outbound MESSAGE %#v", message.Request)
+		!strings.Contains(message.Request.URI, "user=dialstring") ||
+		message.Request.value("Recv-Info") != ussiInfoPackage {
+		return fmt.Errorf("unexpected outbound INVITE %#v", message.Request)
 	}
-	_, _, text := extractUSSDString(message.Request.Body)
-	if text != "*100#" {
-		return fmt.Errorf("USSI text = %q, want *100#", text)
+	text, _, _, _, err := extractUSSDPayloadFromSIP(message.Request.Body, message.Request.value("Content-Type"))
+	if err != nil || text != "*100#" {
+		return fmt.Errorf("extracted USSI text = %q (err=%v), want *100#", text, err)
 	}
-	replyBody := buildUSSDBody("Reply")
-	reply := []byte(strings.Join([]string{
+
+	// 2. Network responds 200 OK to INVITE with SDP port 0
+	inviteCallID := message.Request.value("Call-ID")
+	inviteCSeq := message.Request.value("CSeq")
+	from := message.Request.value("From")
+	to := message.Request.value("To") + ";tag=server-tag-1"
+	contact := "<sip:as@127.0.0.1:5060>"
+	sdp := "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 0 RTP/AVP 96\r\n"
+	invite200 := []byte(strings.Join([]string{
 		"SIP/2.0 200 OK",
-		"Call-ID: " + message.Request.value("Call-ID"),
-		"CSeq: " + message.Request.value("CSeq"),
-		"Content-Type: application/vnd.3gpp.ussd",
-		"Content-Transfer-Encoding: binary",
-		fmt.Sprintf("Content-Length: %d", len(replyBody)), "", "",
-	}, "\r\n"))
-	reply = append(reply, replyBody...)
-	if _, err = listener.WriteToUDP(reply, remote); err != nil {
+		"Via: " + message.Request.value("Via"),
+		"From: " + from,
+		"To: " + to,
+		"Call-ID: " + inviteCallID,
+		"CSeq: " + inviteCSeq,
+		"Contact: " + contact,
+		"Content-Type: application/sdp",
+		fmt.Sprintf("Content-Length: %d", len(sdp)),
+		"", "",
+	}, "\r\n") + sdp)
+	if _, err = listener.WriteToUDP(invite200, remote); err != nil {
 		return err
 	}
+
+	// 3. UE sends ACK for 200 OK
+	count, remote, err = listener.ReadFromUDP(packet)
+	if err != nil {
+		return err
+	}
+	ackMsg, err := parseSIPPacket(packet[:count])
+	if err != nil || ackMsg.Request == nil || ackMsg.Request.Method != "ACK" {
+		return fmt.Errorf("expected ACK, got %#v", ackMsg)
+	}
+
+	// 4. Network sends BYE with application/vnd.3gpp.ussd+xml containing result
+	byeXML := `<?xml version="1.0" encoding="UTF-8"?><ussd-data xmlns="urn:oma:xml:ussd:ussd-data"><language>en</language><ussd-string>Reply</ussd-string></ussd-data>`
+	clientContact := headerURI(message.Request.value("Contact"))
+	if clientContact == "" {
+		clientContact = "sip:ec20@127.0.0.1:5060"
+	}
+	byeReq := []byte(strings.Join([]string{
+		"BYE " + clientContact + " SIP/2.0",
+		"Via: SIP/2.0/UDP 127.0.0.1:5060;branch=z9hG4bKbyesrv1",
+		"Max-Forwards: 70",
+		"From: " + to,
+		"To: " + from,
+		"Call-ID: " + inviteCallID,
+		"CSeq: 1 BYE",
+		"Content-Type: application/vnd.3gpp.ussd+xml",
+		fmt.Sprintf("Content-Length: %d", len(byeXML)),
+		"", "",
+	}, "\r\n") + byeXML)
+	if _, err = listener.WriteToUDP(byeReq, remote); err != nil {
+		return err
+	}
+
+	// 5. UE responds 200 OK to BYE
+	count, remote, err = listener.ReadFromUDP(packet)
+	if err != nil {
+		return err
+	}
+	byeResp, err := parseSIPPacket(packet[:count])
+	if err != nil || byeResp.Response == nil || byeResp.Response.StatusCode != 200 {
+		return fmt.Errorf("expected 200 OK for BYE, got %#v", byeResp)
+	}
+
 	close(readyForClose)
 
 	count, remote, err = listener.ReadFromUDP(packet)
@@ -973,11 +1159,18 @@ func serveOutboundUSSI(listener *net.UDPConn, nonce string, readyForClose chan<-
 
 // fakeConn is a minimal net.Conn useful for tests that only need LocalAddr
 // to succeed and do not care about the actual SIP MESSAGE delivery report.
-type fakeConn struct{}
+type fakeConn struct {
+	onWrite func([]byte)
+}
 
-func (*fakeConn) Read([]byte) (int, error)         { return 0, errors.New("fakeConn: closed") }
-func (*fakeConn) Write(source []byte) (int, error) { return len(source), nil }
-func (*fakeConn) Close() error                     { return nil }
+func (*fakeConn) Read([]byte) (int, error) { return 0, errors.New("fakeConn: closed") }
+func (conn *fakeConn) Write(source []byte) (int, error) {
+	if conn.onWrite != nil {
+		conn.onWrite(source)
+	}
+	return len(source), nil
+}
+func (*fakeConn) Close() error { return nil }
 func (*fakeConn) LocalAddr() net.Addr {
 	return &net.UDPAddr{IP: net.IPv4(192, 0, 2, 10), Port: 5060}
 }

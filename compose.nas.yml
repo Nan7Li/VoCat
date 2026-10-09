@@ -1,0 +1,27 @@
+# Halo + CellBridge on Intel J3160 / Debian 13 (Linux amd64).
+# Build the integration source; do not pull the upstream VoCat image.
+name: halo-cellbridge
+services:
+  halo:
+    image: halo-cellbridge:local
+    pull_policy: never
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: 1.1.14-cellbridge
+    container_name: halo-cellbridge
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    user: "0:0"
+    environment:
+      VOCAT_CONTAINER: docker
+      VOCAT_ADDR: "${HALO_ADDR:-0.0.0.0:7575}"
+      VOCAT_DATABASE_PATH: /opt/vocat/data/vocat.db
+    volumes:
+      - ./nas-data:/opt/vocat/data
+      - ./qdc507-runtime:/opt/halo/qdc507:ro
+      - /dev:/dev
+      - /sys:/sys:ro

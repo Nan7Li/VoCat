@@ -83,6 +83,7 @@ export const DEFAULT_LARK_PAYLOAD_TEMPLATE = `{
 }`;
 
 export interface NotifyForms {
+  meow: NotificationSettings["meow"];
   telegram: TelegramForm;
   webhook: WebhookForm;
   bark: BarkForm;
@@ -159,6 +160,7 @@ export function defaultNotifyForms(): NotifyForms {
 }
 
 export function formsFromNotifications(data: Partial<NotificationSettings>): NotifyForms {
+  const meow = asRecord(data.meow);
   const telegram = asRecord(data.telegram);
   const webhook = asRecord(data.webhook);
   const bark = asRecord(data.bark);
@@ -167,6 +169,7 @@ export function formsFromNotifications(data: Partial<NotificationSettings>): Not
 	const wecom = asRecord(data.wecom);
 	const lark = asRecord(data.lark);
   return {
+    meow: { enabled: !!meow.enabled, nickname: str(meow.nickname), url: str(meow.url), imgUrl: str(meow.imgUrl) },
     telegram: {
       enabled: !!telegram.enabled,
       botToken: str(telegram.botToken),
@@ -299,10 +302,23 @@ export function buildLarkPayload(form: LarkForm, forTest = false) {
 	return payload;
 }
 
-export function buildNotificationsPayload(forms: NotifyForms) {
+export function buildMeowPayload(form: NotifyForms["meow"]) {
   return {
+    enabled: form.enabled,
+    nickname: form.nickname.trim(),
+    url: form.url.trim(),
+    imgUrl: form.imgUrl.trim(),
+  };
+}
+
+export type ClearableNotificationChannel = "telegram" | "email";
+
+export function buildNotificationsPayload(forms: NotifyForms, clearedChannels: readonly ClearableNotificationChannel[] = []) {
+  return {
+    meow: buildMeowPayload(forms.meow),
     telegram: {
       enabled: !!forms.telegram.enabled,
+      ...(clearedChannels.includes("telegram") ? { clearSecrets: true } : {}),
       botToken: forms.telegram.botToken || "",
       // vocat 后端将 chat_id/admin_id 存为字符串（参考实现是数字）
       chatId: forms.telegram.chatId.trim(),
@@ -311,7 +327,10 @@ export function buildNotificationsPayload(forms: NotifyForms) {
       proxy: forms.telegram.proxy || "",
       viaInterface: forms.telegram.viaInterface || "",
     },
-    email: buildEmailPayload(forms.email),
+    email: {
+      ...buildEmailPayload(forms.email),
+      ...(clearedChannels.includes("email") ? { clearSecrets: true } : {}),
+    },
     pushplus: {
       enabled: !!forms.pushplus.enabled,
       token: forms.pushplus.token || "",

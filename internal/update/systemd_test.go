@@ -6,6 +6,20 @@ import (
 	"testing"
 )
 
+func TestRestartPlanPrefersExplicitCellbridgeUnit(t *testing.T) {
+	plan := restartPlan("halo-cellbridge.service", true, nil)
+	if plan.openwrt || plan.unit != "halo-cellbridge.service" {
+		t.Fatalf("plan = %+v", plan)
+	}
+	openwrt := restartPlan("", true, nil)
+	if !openwrt.openwrt {
+		t.Fatal("OpenWrt restart was not preserved when no unit is configured")
+	}
+	if restartPlan("not a unit", true, nil).openwrt != true {
+		t.Fatal("invalid unit overrode OpenWrt")
+	}
+}
+
 func TestDetectSystemdUnitUsesExplicitOverride(t *testing.T) {
 	t.Setenv("VOCAT_SYSTEMD_UNIT", "vocat-test.service")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

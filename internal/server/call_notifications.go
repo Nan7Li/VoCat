@@ -127,7 +127,7 @@ func (s *Server) NotifyIncomingCall(ctx context.Context, notification IncomingCa
 	}
 
 	destCtx := s.notificationDestinationContext(ctx)
-	for _, channel := range []string{"telegram", "bark", "email", "pushplus", "webhook", "wecom", "lark"} {
+	for _, channel := range notificationChannels {
 		setting, err := s.store.NotificationSetting(destCtx, channel)
 		if errors.Is(err, store.ErrNotFound) || (err == nil && !setting.Enabled) {
 			continue
@@ -153,7 +153,11 @@ func (s *Server) NotifyIncomingCall(ctx context.Context, notification IncomingCa
 	}
 }
 
+// sendCallNotification 按渠道发送来电信息，MeoW 与其他独立标题渠道复用 DetailText。
 func sendCallNotification(ctx context.Context, channel string, config map[string]any, message IncomingCallNotification) error {
+	if channel == "meow" {
+		return meowNotificationSender(ctx, config, message.Title(), message.DetailText())
+	}
 	switch channel {
 	case "telegram":
 		return sendTelegramTextNotification(ctx, config, message.Text())
@@ -305,25 +309,34 @@ func (s *Server) pollCellularCalls(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	tracked := s.legacyTrackedIDs()
 	for _, config := range devices {
-		if !config.NetworkEnabled {
-			continue
-		}
-		// If VoWiFi is active, incoming calls are handled directly by SIP INVITE in real time.
-		if s.callTransport(config.ID) == "vowifi" {
+		// Readers and a module owned by the cellbridge controller are never
+		// asked for CLCC here. A VoWiFi or disabled line is skipped too, unless
+		// a legacy call was already accepted and still needs an end confirmation.
+		if isReaderDevice(config) || s.cellularControllerFor(config.ID) != nil {
 			continue
 		}
 		entry, physicalID, present := s.physicalForConfig(config)
 		if !present {
 			continue
 		}
+		stillLegacy := tracked[config.ID] || tracked[physicalID]
+		if !stillLegacy && (!config.NetworkEnabled || config.VoWiFiEnabled || s.callTransport(config.ID) == "vowifi") {
+			continue
+		}
 		pollCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		revision := s.captureLegacyRevision()
 		response, err := s.devices.ExecuteAT(pollCtx, physicalID, "AT+CLCC")
 		cancel()
-		if err != nil || !response.OK() {
+		if err != nil || !response.OK() || !s.legacyPhysicalUnchanged(physicalID, entry.Candidate.USBGeneration, present) {
+			// Keep a previously noted voice call. A failed or disconnected CLCC
+			// read is not evidence that the call has ended, and it does not
+			// make an unknown modem known.
 			continue
 		}
 		calls := parseCLCC(response)
+		s.commitLegacyCLCC([]string{config.ID, physicalID}, calls, revision, entry.Candidate.USBGeneration)
 		for _, call := range calls {
 			if isIncomingVoiceCLCC(call) {
 				caller, _ := call["number"].(string)

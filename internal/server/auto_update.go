@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -14,31 +15,42 @@ import (
 )
 
 const (
-	autoUpdateSettingKey     = "system.auto_update"
-	autoUpdateMinInterval    = 1
-	autoUpdateMaxInterval    = 168
-	autoUpdateDefaultHours   = 6
-	autoUpdateStartupDelay   = 90 * time.Second
-	autoUpdatePollInterval   = time.Minute
+	autoUpdateSettingKey   = "system.auto_update"
+	autoUpdateMinInterval  = 1
+	autoUpdateMaxInterval  = 168
+	autoUpdateDefaultHours = 6
+	autoUpdateStartupDelay = 90 * time.Second
+	autoUpdatePollInterval = time.Minute
 )
 
 type autoUpdateSettings struct {
-	Enabled       bool   `json:"enabled"`
-	Apply         bool   `json:"apply"`
-	IntervalHours int    `json:"interval_hours"`
-	LastCheckAt   string `json:"last_check_at,omitempty"`
-	LastAvailable bool   `json:"last_available"`
-	LastVersion   string `json:"last_version,omitempty"`
-	LastError     string `json:"last_error,omitempty"`
-	Repository    string `json:"repository,omitempty"`
-	IsDocker      bool   `json:"is_docker"`
+	Enabled        bool   `json:"enabled"`
+	Apply          bool   `json:"apply"`
+	IntervalHours  int    `json:"interval_hours"`
+	LastCheckAt    string `json:"last_check_at,omitempty"`
+	LastAvailable  bool   `json:"last_available"`
+	LastVersion    string `json:"last_version,omitempty"`
+	LastError      string `json:"last_error,omitempty"`
+	Repository     string `json:"repository,omitempty"`
+	Channel        string `json:"channel,omitempty"`
+	CurrentVersion string `json:"current_version,omitempty"`
+	IsDocker       bool   `json:"is_docker"`
 }
 
 func defaultAutoUpdateSettings() autoUpdateSettings {
 	return autoUpdateSettings{
 		Enabled:       true,
-		Apply:         false,
+		Apply:         autoUpdateApplyDefault(),
 		IntervalHours: autoUpdateDefaultHours,
+	}
+}
+
+func autoUpdateApplyDefault() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("VOCAT_AUTO_UPDATE_APPLY_DEFAULT"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -81,7 +93,10 @@ func (s *Server) maybeAutoUpdate(ctx context.Context, force bool) {
 	if !settings.Enabled && !force {
 		return
 	}
-	if !force && settings.LastCheckAt != "" {
+	if !force && autoUpdateWaitingForCall(settings.LastError) && (s.callOpsBusy() || s.callActivity()) {
+		return
+	}
+	if !force && settings.LastCheckAt != "" && !autoUpdateWaitingForCall(settings.LastError) {
 		checkedAt, parseErr := time.Parse(time.RFC3339, settings.LastCheckAt)
 		if parseErr == nil && time.Since(checkedAt) < time.Duration(settings.IntervalHours)*time.Hour {
 			return
@@ -123,33 +138,49 @@ func (s *Server) maybeAutoUpdate(ctx context.Context, force bool) {
 		_ = s.saveAutoUpdateSettings(ctx, settings)
 		return
 	}
+	if s.callOpsBusy() || s.callActivity() {
+		settings.LastError = errCallActiveNow().Error()
+		_ = s.saveAutoUpdateSettings(ctx, settings)
+		s.logger.Info("automatic update postponed until the call ends", "latest", result.Latest)
+		return
+	}
+	if err := s.saveAutoUpdateSettings(ctx, settings); err != nil {
+		s.logger.Error("persist automatic update status before install failed", "error", err)
+		return
+	}
 	if err := s.applyAutoUpdate(ctx, result.Latest); err != nil {
 		settings.LastError = err.Error()
-		s.logger.Error("automatic update apply failed", "error", err)
+		if !errors.Is(err, errCallActive) {
+			s.logger.Error("automatic update apply failed", "error", err)
+		} else {
+			s.logger.Info("automatic update postponed until the call ends", "latest", result.Latest)
+		}
 		_ = s.saveAutoUpdateSettings(ctx, settings)
 	}
 }
 
 func (s *Server) applyAutoUpdate(ctx context.Context, latest string) error {
-	s.updateMu.Lock()
-	if s.updateApplying {
-		s.updateMu.Unlock()
-		return errors.New("another update is already in progress")
+	if err := s.beginUpdate(); err != nil {
+		return err
 	}
-	s.updateApplying = true
-	s.updateMu.Unlock()
+	guardTransferred := false
 	defer func() {
-		s.updateMu.Lock()
-		s.updateApplying = false
-		s.updateMu.Unlock()
+		if !guardTransferred {
+			s.finishUpdate()
+		}
 	}()
+	if err := s.backupDatabaseBeforeUpdate(ctx); err != nil {
+		return err
+	}
 	if s.updateApply == nil {
 		return errors.New("update apply is not configured")
 	}
 	applyCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	result, err := s.updateApply(applyCtx, s.logger, update.Options{
-		Repo:  s.updateRepository,
-		Token: s.updateToken,
+		Repo:          s.updateRepository,
+		Token:         s.updateToken,
+		Target:        s.updateTarget,
+		BeforeInstall: s.rejectInstallIfCallActive,
 	}, false)
 	cancel()
 	if err != nil {
@@ -162,16 +193,7 @@ func (s *Server) applyAutoUpdate(ctx context.Context, latest string) error {
 	if err := s.store.DeleteAllSessions(ctx); err != nil {
 		s.logger.Error("revoke sessions after automatic update failed", "error", err)
 	}
-	if s.updateRestart != nil {
-		restart := s.updateRestart
-		logger := s.logger
-		go func() {
-			time.Sleep(time.Second)
-			if err := restart(logger); err != nil {
-				logger.Error("restart after automatic update failed", "error", err)
-			}
-		}()
-	}
+	guardTransferred = s.scheduleUpdateRestart()
 	return nil
 }
 
@@ -183,9 +205,7 @@ func (s *Server) handleAutoUpdateSettings(w http.ResponseWriter, r *http.Request
 			s.writeStoreError(w, err)
 			return
 		}
-		settings.Repository = s.updateRepository
-		settings.IsDocker = runningInDocker()
-		writeJSON(w, http.StatusOK, map[string]any{"data": settings})
+		writeJSON(w, http.StatusOK, map[string]any{"data": s.presentAutoUpdateSettings(settings)})
 	case http.MethodPut:
 		var request struct {
 			Enabled       *bool `json:"enabled"`
@@ -218,13 +238,19 @@ func (s *Server) handleAutoUpdateSettings(w http.ResponseWriter, r *http.Request
 			s.writeStoreError(w, err)
 			return
 		}
-		settings.Repository = s.updateRepository
-		settings.IsDocker = runningInDocker()
-		writeJSON(w, http.StatusOK, map[string]any{"data": settings})
+		writeJSON(w, http.StatusOK, map[string]any{"data": s.presentAutoUpdateSettings(settings)})
 	default:
 		w.Header().Set("Allow", "GET, PUT")
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 	}
+}
+
+func (s *Server) presentAutoUpdateSettings(settings autoUpdateSettings) autoUpdateSettings {
+	settings.Repository = s.updateRepository
+	settings.IsDocker = runningInDocker()
+	settings.Channel = update.Channel()
+	settings.CurrentVersion = buildinfo.Version
+	return settings
 }
 
 func (s *Server) loadAutoUpdateSettings(ctx context.Context) (autoUpdateSettings, error) {
@@ -249,6 +275,11 @@ func (s *Server) saveAutoUpdateSettings(ctx context.Context, settings autoUpdate
 	if settings.IntervalHours < autoUpdateMinInterval || settings.IntervalHours > autoUpdateMaxInterval {
 		settings.IntervalHours = autoUpdateDefaultHours
 	}
+	// Channel, the running version, and the container flag are derived when
+	// the settings are read. They are not an update source.
+	settings.Channel = ""
+	settings.CurrentVersion = ""
+	settings.IsDocker = false
 	raw, err := json.Marshal(settings)
 	if err != nil {
 		return err

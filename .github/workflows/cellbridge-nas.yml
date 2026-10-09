@@ -1,0 +1,84 @@
+name: Halo CellBridge NAS
+
+on:
+  push:
+    branches: [halo]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cellbridge-nas-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    if: github.ref == 'refs/heads/halo'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build and verify application
+        run: |
+          npm ci --prefix web --no-audit --no-fund
+          npm test --prefix web
+          npm run build --prefix web
+          go test ./...
+          go vet ./...
+      - name: Build NAS package and update assets
+        id: package
+        run: |
+          base=$(sed -n 's/^var Version = "\([0-9]*\.[0-9]*\.[0-9]*\)"/\1/p' internal/buildinfo/buildinfo.go)
+          test -n "$base"
+          version="${base}-cellbridge-preview.$(date -u +%Y%m%d%H%M%S)"
+          tag="halo-${version}"
+          package_dir="$RUNNER_TEMP/cellbridge/halo-cellbridge-nas-amd64"
+          bash scripts/package-cellbridge-nas.sh --output-dir "$package_dir" --version "$version"
+          update_dir="$RUNNER_TEMP/cellbridge/update"
+          mkdir -p "$update_dir"
+          cp "$package_dir/halo-linux-amd64" "$update_dir/halo-linux-amd64"
+          cp "$package_dir/SHA256SUMS" "$update_dir/SHA256SUMS"
+          "$update_dir/halo-linux-amd64" version
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Publish verified fusion release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.package.outputs.tag }}
+        run: |
+          # A cancelled or superseded push must not publish stale code as newer.
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$GITHUB_REF_NAME" --jq .object.sha)
+          test "$current" = "$GITHUB_SHA"
+          cat > "$RUNNER_TEMP/cellbridge-notes.md" <<'EOF'
+          Halo + VoCat + CellBridge NAS 融合版。Debian 13 / amd64，适用 J3160、N5105。
+
+          推送代码后，GitHub 自动测试、构建并发布；已安装的 NAS 通过 CellBridge 更新通道检查与安装。
+          新安装：解压 NAS 包并执行 `sudo ./install --fetch-runtime`。
+          账号、数据库、配置、录音及大疆运行文件在程序更新时保留。
+          大疆音频需要匹配的模块运行环境和真实双向通话验证，构建成功不等于硬件已就绪。
+          EOF
+          gh release create "$RELEASE_TAG" \
+            "$RUNNER_TEMP/cellbridge/halo-cellbridge-nas-amd64.tar.gz" \
+            "$RUNNER_TEMP/cellbridge/halo-cellbridge-nas-amd64.tar.gz.sha256" \
+            "$RUNNER_TEMP/cellbridge/update/halo-linux-amd64" \
+            "$RUNNER_TEMP/cellbridge/update/SHA256SUMS" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/cellbridge-notes.md" \
+            --draft --prerelease --latest=false
+          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"$RELEASE_TAG\") | .id")
+          test -n "$release_id"
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$GITHUB_REF_NAME" --jq .object.sha)
+          test "$current" = "$GITHUB_SHA"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false -F prerelease=true -f make_latest=false >/dev/null

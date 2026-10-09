@@ -14,7 +14,7 @@ import (
 
 const (
 	upstreamVocatSettingKey     = "system.upstream_vocat"
-	defaultUpstreamVocatVersion = "0.2.23"
+	defaultUpstreamVocatVersion = "0.3.15"
 )
 
 type upstreamVocatStatus struct {
@@ -95,10 +95,14 @@ func (s *Server) checkUpstreamVocat(ctx context.Context) (upstreamVocatStatus, e
 	if err != nil {
 		return upstreamVocatStatus{}, err
 	}
-	if s.updateCheck == nil {
+	checker := s.upstreamCheck
+	if checker == nil {
+		checker = s.updateCheck
+	}
+	if checker == nil {
 		return status, errors.New("update check is not configured")
 	}
-	result, err := s.updateCheck(ctx, update.UpstreamRepository, s.updateToken, status.SyncedVersion)
+	result, err := checker(ctx, update.UpstreamRepository, s.updateToken, status.SyncedVersion)
 	status.LastCheckAt = time.Now().UTC().Format(time.RFC3339)
 	status.Repository = update.UpstreamRepository
 	if err != nil {
@@ -152,6 +156,15 @@ func (s *Server) loadUpstreamVocat(ctx context.Context) (upstreamVocatStatus, er
 	}
 	if strings.TrimSpace(status.SyncedVersion) == "" {
 		status.SyncedVersion = defaultUpstreamVocatVersion
+	} else if newer, err := update.IsNewerVersion(status.SyncedVersion, defaultUpstreamVocatVersion); err == nil && newer {
+		// A database restored from an older Halo build cannot override the
+		// upstream baseline already included in this binary.
+		status.SyncedVersion = defaultUpstreamVocatVersion
+		status.Available = false
+		if status.LatestVersion != "" {
+			status.Available, _ = update.IsNewerVersion(status.SyncedVersion, status.LatestVersion)
+		}
+		status.LastCheckAt = ""
 	}
 	return status, nil
 }

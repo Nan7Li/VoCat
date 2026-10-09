@@ -783,7 +783,23 @@ func zeroBytes(value []byte) {
 }
 
 func (session *Session) securityOffered() bool {
-	return session.provider != nil && session.provider.config.SecurityMode != SecurityDisabled && !session.securityDeclined
+	if session == nil || session.securityDeclined {
+		return false
+	}
+	if session.securityMode != "" {
+		return session.securityMode != SecurityDisabled
+	}
+	return session.provider != nil && session.provider.config.SecurityMode != SecurityDisabled
+}
+
+func (session *Session) shouldSendEmptyDigestAuthorization() bool {
+	if session == nil || session.provider == nil || session.auth != nil {
+		return false
+	}
+	if session.securityActive || session.securityOffered() {
+		return true
+	}
+	return session.configuredSecurityMode() == SecurityOptional && session.securityDeclined
 }
 
 func (session *Session) securityFromResponse(response *sipResponse) (securityAgreement, bool, error) {
@@ -792,7 +808,7 @@ func (session *Session) securityFromResponse(response *sipResponse) (securityAgr
 	}
 	values := response.values("Security-Server")
 	if len(splitHeaderValues(values)) == 0 {
-		if session.provider.config.SecurityMode == SecurityRequired {
+		if session.configuredSecurityMode() == SecurityRequired {
 			return securityAgreement{}, false, ErrIPSecAgreementRequired
 		}
 		session.declineSecurity()
@@ -868,6 +884,8 @@ func (session *Session) activateIPSec(
 		return fmt.Errorf("%w: installer returned no handle", ErrIPSecInstall)
 	}
 
+	mtuCompatibility := session.provider.config.MTUCompatibility != nil &&
+		session.provider.config.MTUCompatibility(ctx)
 	remoteAddress := net.JoinHostPort(remoteIP.String(), strconv.Itoa(selected.portServer))
 	_ = session.conn.Close()
 	connection, dialErr := dialSIP(
@@ -876,6 +894,7 @@ func (session *Session) activateIPSec(
 		localIP.String(),
 		session.securityProposal.portClient,
 		remoteAddress,
+		mtuCompatibility,
 	)
 	if dialErr != nil {
 		cleanupErr := handle.Close(context.Background())

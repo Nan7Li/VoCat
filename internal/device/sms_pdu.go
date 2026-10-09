@@ -15,6 +15,8 @@ import (
 	"github.com/warthog618/sms/encoding/gsm7"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
+
+	"vocat/internal/smsdecode"
 )
 
 var gsm7DefaultAlphabet = [128]rune{
@@ -655,6 +657,7 @@ func decodeDeliverPDU(
 	}
 	message.ProtocolID = int(pid)
 	message.DataCodingScheme = int(dcs)
+	message.SIMDataDownload = isSIMDataDownload(pid, dcs)
 	timestamp, err := cursor.bytes(7)
 	if err != nil {
 		return err
@@ -667,6 +670,19 @@ func decodeDeliverPDU(
 		return err
 	}
 	return decodeUserData(cursor.data[cursor.index:], firstOctet, dcs, int(udl), message)
+}
+
+// TS 23.040 identifies an SMS-PP data download by the SIM data download PID
+// together with a class-2 data coding scheme. These messages target the UICC,
+// not the user's SMS inbox.
+func isSIMDataDownload(pid, dcs byte) bool {
+	if pid != 0x7f {
+		return false
+	}
+	if dcs&0xf0 == 0xf0 {
+		return dcs&0x03 == 0x02
+	}
+	return dcs&0xc0 == 0 && dcs&0x10 != 0 && dcs&0x03 == 0x02
 }
 
 func decodeSubmitPDU(
@@ -924,13 +940,24 @@ func decodeUserData(
 		return errors.New("UCS2 SMS has invalid UTF-16 data")
 	default:
 		payload := data[headerBytes:]
+		multipart := message.Concat != nil && message.Concat.Total > 1
+		// Multipart 8-bit segments stay hexadecimal so concat reassembly can
+		// join the raw payload. A complete WAP Push is decoded after merge.
+		if !multipart {
+			if text, ok := smsdecode.DecodeDisplayText(payload); ok {
+				message.Text = text
+				message.Encoding = SMSEncodingWAPPush
+				return nil
+			}
+		}
 		if text, encoding, detected := decodeTextBytes(payload, header); detected {
 			message.Text = text
 			message.Encoding = encoding
 			return nil
 		}
 		// Port-addressed or non-text 8-bit data remains hexadecimal, preserving
-		// binary SMS (WAP push, provisioning, SIM data) without lossy guessing.
+		// binary SMS (provisioning, SIM data, incomplete WAP push) without
+		// lossy guessing.
 		message.Encoding = SMSEncoding8BitPDU
 		message.Text = strings.ToUpper(hex.EncodeToString(payload))
 		return nil
