@@ -33,7 +33,7 @@ const defaults: CellBridgeConfig = {
   sipEnabled: false, sipDeviceId: "", listenAddr: "0.0.0.0:5060", advertisedIp: "",
   rtpListenAddr: "0.0.0.0:40000", username: "halo", hasPassword: false,
   cellularEnabled: false, cellularDeviceId: "", captureDevice: "plughw:1,0",
-  playbackDevice: "plughw:1,0", runtimeDir: "", adbPath: "adb",
+  playbackDevice: "plughw:1,0", runtimeDir: "/opt/halo/qdc507", adbPath: "adb",
   adbSocket: "tcp:127.0.0.1:5038", bootstrap: false,
 };
 
@@ -153,7 +153,9 @@ export function CellBridgeSettings({ devices }: { devices: DeviceListItem[] }) {
             <summary className="cursor-pointer text-xs font-medium">大疆音频高级设置</summary>
             {field("captureDevice", "ALSA 录音设备")}
             {field("playbackDevice", "ALSA 播放设备")}
-            {field("runtimeDir", "模块运行文件目录", "Halo 主机上的绝对路径")}
+            <p className="text-xs text-gray-500">按 NAS 检查工具列出的模块声卡填写录音和播放设备，声卡编号可能变化。</p>
+            {field("runtimeDir", "模块运行文件目录", "/opt/halo/qdc507")}
+            <p className="text-xs text-gray-500">NAS 安装器将通过校验的三个运行文件放在此目录。文件齐全后仍需确认模块 UAC、ADB 和双向通话。</p>
             {field("adbPath", "ADB 程序", "adb")}
             {field("adbSocket", "ADB 服务地址")}
             <div className="flex items-center justify-between gap-2 text-xs"><span>允许初始化匹配的 QDC507 音频</span>

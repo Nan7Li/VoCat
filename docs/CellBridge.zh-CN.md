@@ -2,14 +2,14 @@
 
 Halo 可以把一部手机或 SIP 软电话接到已经接入的大疆 4G 模块，或接到 SIM 读卡器的 IMS 线路。默认关闭。没有保存并启用之前，不会监听端口，也不会启动 ADB。
 
-J3160 / Debian 13 部署步骤见 [NAS-J3160.zh-CN.md](NAS-J3160.zh-CN.md)。
+J3160、N5105 / Debian 13 部署步骤见 [NAS-J3160.zh-CN.md](NAS-J3160.zh-CN.md)。
 
 本文是部署说明。当前没有在真实大疆模块、读卡器或 OpenWrt 上验证过。
 
 ## 验证范围
 
 - 实机未验。下面的行为来自接线、模拟设备和单元测试，没有在真实 QDC507 模块、SIM 读卡器或 OpenWrt 路由器上拨通过电话。
-- QDC507 语音 payload 是外部厂商文件。Halo 不内置、不下载该文件。运行时目录里的文件必须和预期哈希一致，并且页面上的启动引导是单独的 opt-in。未启用引导时，只能使用模块上已经运行并通过校验的语音路由。
+- QDC507 语音文件不在 Halo 仓库里。发布包用 `scripts/fetch-qdc507-runtime.sh` 从 MaVo 固定提交 `0443dfdaf8aec086fd76ba2ee9152fd908114524` 的 `Resources/ModuleVoice` 下载并校验这三个文件。运行时目录里的文件必须和下面的哈希一致，页面上的启动引导是单独的 opt-in。未启用引导时，只能使用模块上已经运行并通过校验的语音路由。程序装好、模块 UAC/ADB 就绪、音频验证通过，要分开看。
 - 手机、Halo 和模块要能互通。可选路径是局域网、WireGuard 或 Tailscale。SIP 信令是 UDP，RTP 媒体也是 UDP，地址和端口按实际网络填写，没有 TCP 回落。
 - OpenWrt 需要 `alsa-utils`（`arecord`、`aplay`）和可用的 `adb`。缺少其中任何一个都不会被显示成就绪。
 
@@ -58,7 +58,16 @@ OpenWrt 需要安装 `alsa-utils`（提供 `arecord` 和 `aplay`）以及可用�
 | `qdc507_aprv3.ko` | `3d82d3dec4f1e323201bba87156df9d41438e08314097353f2607f9117211d4a` |
 | `qdc507_voice.ko` | `ed3821682d5309969a01c764192c83feff9669c61ef237c69475cd1619cf296c` |
 
-当前模块检测要求内核 `3.18.44`、模块侧声卡 `mdm9607-tomtom-i2s-snd-card`，同时核对真实 USB 与 ADB 设备。仅“大疆 4G”这个名称不能证明兼容。
+在发布包目录取得并安装这些文件：
+
+```sh
+./source/scripts/fetch-qdc507-runtime.sh
+sudo ./install --runtime-dir ./qdc507-runtime
+```
+
+下载脚本只访问这一处固定提交，校验失败会丢掉文件。Halo 安装器再做一次私有快照和哈希核对，放到 `/opt/halo/qdc507`。电话页的模块运行文件目录填同一路径。不要把缺少这三个文件说成接上就能打电话。
+
+当前模块检测要求内核 `3.18.44`、模块侧声卡 `mdm9607-tomtom-i2s-snd-card`，同时核对真实 USB 与 ADB 设备。仅“大疆 4G”这个名称不能证明兼容。NAS 上的 `check-cellbridge-nas.sh` 会列出实际声卡；`plughw:1,0` 只是页面初始占位，不能当作这块模块。
 
 ## 录音与短信
 

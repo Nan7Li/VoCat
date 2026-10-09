@@ -82,6 +82,7 @@ func defaultCellBridgeConfig() cellBridgeConfig {
 		Username:       "halo",
 		CaptureDevice:  "plughw:1,0",
 		PlaybackDevice: "plughw:1,0",
+		RuntimeDir:     "/opt/halo/qdc507",
 		ADBPath:        "adb",
 		ADBSocket:      "tcp:127.0.0.1:5038",
 	}
@@ -119,6 +120,9 @@ func (config cellBridgeConfig) normalized() cellBridgeConfig {
 	config.RuntimeDir = strings.TrimSpace(config.RuntimeDir)
 	config.ADBPath = strings.TrimSpace(config.ADBPath)
 	config.ADBSocket = strings.TrimSpace(config.ADBSocket)
+	if config.RuntimeDir == "" {
+		config.RuntimeDir = "/opt/halo/qdc507"
+	}
 	if config.ListenAddr == "" {
 		config.ListenAddr = "0.0.0.0:5060"
 	}
