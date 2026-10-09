@@ -39,10 +39,15 @@ func (s *Server) handleCalls(w http.ResponseWriter, r *http.Request, config stor
 		}})
 		return true
 	}
+	generation, present := s.legacyPhysicalGeneration(physicalID)
+	revision := s.captureLegacyRevision()
 	response, err := s.devices.ExecuteAT(r.Context(), physicalID, "AT+CLCC")
 	if err != nil {
 		s.writeDeviceError(w, err)
 		return true
+	}
+	if response.OK() && s.legacyPhysicalUnchanged(physicalID, generation, present) {
+		s.commitLegacyCLCC([]string{config.ID, physicalID}, parseCLCC(response), revision, generation)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
@@ -107,6 +112,14 @@ func (s *Server) handleCallAction(w http.ResponseWriter, r *http.Request, config
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "call action not found")
 		return true
+	}
+	if action == "dial" || action == "answer" {
+		release, admitErr := s.admitCallMutation()
+		if admitErr != nil {
+			writeError(w, http.StatusConflict, "update_in_progress", admitErr.Error())
+			return true
+		}
+		defer release()
 	}
 
 	if s.dispatchBoundCallAction(w, r, config, physicalID, action, number, callID, duration) {
@@ -196,6 +209,12 @@ func (s *Server) handleCallAction(w http.ResponseWriter, r *http.Request, config
 			go s.hangupAfter(config.ID, physicalID, generation, duration)
 		}
 	}
+	switch action {
+	case "dial", "answer":
+		s.noteLegacyAccepted(generation, config.ID, physicalID)
+	case "hangup":
+		s.noteLegacyHangup(config.ID, physicalID)
+	}
 	s.recordAudit(r.Context(), "admin", "call."+action, "device", config.ID, "success", transport)
 	if recordID := s.upsertCellularCallRecord(r.Context(), config.ID, number, action); recordID != "" {
 		s.rememberCall(callBinding{
@@ -267,7 +286,9 @@ func (s *Server) hangupAfter(deviceID, physicalID, generation string, duration t
 	defer cancel()
 	if _, err := s.devices.ExecuteAT(ctx, physicalID, "ATH"); err != nil {
 		s.logger.Warn("automatic call hangup failed", "device_id", deviceID, "error", err)
+		return
 	}
+	s.noteLegacyHangup(deviceID, physicalID)
 }
 
 func validDialNumber(value string) bool {

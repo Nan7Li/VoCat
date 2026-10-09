@@ -309,30 +309,34 @@ func (s *Server) pollCellularCalls(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	tracked := s.legacyTrackedIDs()
 	for _, config := range devices {
-		// Readers and VoWiFi lines never fall through to modem CLCC. A module
-		// owned by the cellbridge controller is polled there instead.
-		if isReaderDevice(config) || config.VoWiFiEnabled || s.cellularControllerFor(config.ID) != nil {
-			continue
-		}
-		if !config.NetworkEnabled {
-			continue
-		}
-		// If VoWiFi is active, incoming calls are handled directly by SIP INVITE in real time.
-		if s.callTransport(config.ID) == "vowifi" {
+		// Readers and a module owned by the cellbridge controller are never
+		// asked for CLCC here. A VoWiFi or disabled line is skipped too, unless
+		// a legacy call was already accepted and still needs an end confirmation.
+		if isReaderDevice(config) || s.cellularControllerFor(config.ID) != nil {
 			continue
 		}
 		entry, physicalID, present := s.physicalForConfig(config)
 		if !present {
 			continue
 		}
+		stillLegacy := tracked[config.ID] || tracked[physicalID]
+		if !stillLegacy && (!config.NetworkEnabled || config.VoWiFiEnabled || s.callTransport(config.ID) == "vowifi") {
+			continue
+		}
 		pollCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		revision := s.captureLegacyRevision()
 		response, err := s.devices.ExecuteAT(pollCtx, physicalID, "AT+CLCC")
 		cancel()
-		if err != nil || !response.OK() {
+		if err != nil || !response.OK() || !s.legacyPhysicalUnchanged(physicalID, entry.Candidate.USBGeneration, present) {
+			// Keep a previously noted voice call. A failed or disconnected CLCC
+			// read is not evidence that the call has ended, and it does not
+			// make an unknown modem known.
 			continue
 		}
 		calls := parseCLCC(response)
+		s.commitLegacyCLCC([]string{config.ID, physicalID}, calls, revision, entry.Candidate.USBGeneration)
 		for _, call := range calls {
 			if isIncomingVoiceCLCC(call) {
 				caller, _ := call["number"].(string)

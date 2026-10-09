@@ -47,6 +47,18 @@ func IsNewerVersion(current, latest string) (bool, error) {
 	return comparePrerelease(currentVersion.prerelease, latestVersion.prerelease) < 0, nil
 }
 
+func sameVersion(current, latest string) (bool, error) {
+	newer, err := IsNewerVersion(current, latest)
+	if err != nil {
+		return false, err
+	}
+	older, err := IsNewerVersion(latest, current)
+	if err != nil {
+		return false, err
+	}
+	return !newer && !older, nil
+}
+
 func parseSemanticVersion(raw string) (semanticVersion, error) {
 	value := strings.TrimPrefix(strings.TrimSpace(raw), "v")
 	if build := strings.IndexByte(value, '+'); build >= 0 {

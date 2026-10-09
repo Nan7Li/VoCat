@@ -95,10 +95,14 @@ func (s *Server) checkUpstreamVocat(ctx context.Context) (upstreamVocatStatus, e
 	if err != nil {
 		return upstreamVocatStatus{}, err
 	}
-	if s.updateCheck == nil {
+	checker := s.upstreamCheck
+	if checker == nil {
+		checker = s.updateCheck
+	}
+	if checker == nil {
 		return status, errors.New("update check is not configured")
 	}
-	result, err := s.updateCheck(ctx, update.UpstreamRepository, s.updateToken, status.SyncedVersion)
+	result, err := checker(ctx, update.UpstreamRepository, s.updateToken, status.SyncedVersion)
 	status.LastCheckAt = time.Now().UTC().Format(time.RFC3339)
 	status.Repository = update.UpstreamRepository
 	if err != nil {

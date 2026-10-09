@@ -14,6 +14,11 @@ func TestIsNewerVersion(t *testing.T) {
 		{"0.1.0-dev", "v0.1.0", true},
 		{"1.2.3-rc.1", "v1.2.3-rc.2", true},
 		{"1.2.3", "v1.2.3-rc.2", false},
+		{"1.1.14-cellbridge", "1.1.14-cellbridge-preview.2", true},
+		{"1.1.14-cellbridge-preview.2", "1.1.14-cellbridge-preview.10", true},
+		{"1.1.14-cellbridge-preview.10", "1.1.14-cellbridge-preview.2", false},
+		{"1.1.14", "1.1.14-cellbridge-preview.10", false},
+		{"1.1.14-cellbridge-preview.10", "1.1.14", true},
 	}
 	for _, item := range tests {
 		got, err := IsNewerVersion(item.current, item.latest)

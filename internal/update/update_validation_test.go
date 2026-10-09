@@ -13,7 +13,7 @@ func TestValidateExecutableRejectsNonExecutableFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not an executable"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateExecutable(context.Background(), path); err == nil {
+	if err := validateExecutable(context.Background(), path, "1.0.0", ChannelStable); err == nil {
 		t.Fatal("validateExecutable accepted invalid file")
 	}
 }

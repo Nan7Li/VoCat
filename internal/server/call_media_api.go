@@ -28,6 +28,12 @@ func (s *Server) handleCallMedia(w http.ResponseWriter, r *http.Request, config 
 		writeError(w, http.StatusBadRequest, "invalid_call_id", "call_id is required")
 		return true
 	}
+	releaseUpdate, admitErr := s.admitCallMutation()
+	if admitErr != nil {
+		writeError(w, http.StatusConflict, "update_in_progress", admitErr.Error())
+		return true
+	}
+	defer releaseUpdate()
 	if binding, ok := s.bindingForAction(config.ID, callID); ok {
 		switch binding.transport {
 		case "cellular":

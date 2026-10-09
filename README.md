@@ -26,6 +26,16 @@
 
 > **Halo 1.1.14** is a personal interface and release based on [VoCat](https://github.com/MengMengCode/VoCat) v0.3.15 (`41b6ac6`), by the Vocat Project Authors. The modem, IMS, WiFi Calling, eSIM, and proxy stack is their work. This branch keeps Halo's UI, branding, accent color, phone page, call history, recordings, and WireGuard tunnels, and includes the upstream fixes through that commit. The [Vocat Research & Evaluation License](LICENSE) still applies. See [ATTRIBUTION.md](ATTRIBUTION.md). CellBridge call audio is optional and documented in [docs/CellBridge.zh-CN.md](docs/CellBridge.zh-CN.md).
 
+### Halo + CellBridge：NAS 一套安装
+
+Debian 13 / amd64（J3160、N5105）可使用统一安装入口，自动准备依赖和经过校验的大疆运行文件：
+
+```bash
+sudo bash -o pipefail -c 'apt-get update && apt-get install -y curl ca-certificates && curl -fsSL https://raw.githubusercontent.com/Nan7Li/VoCat/halo/scripts/deploy-cellbridge-nas.sh | bash'
+```
+
+安装后访问 `http://NAS的IP:7575`。新安装默认每 6 小时检查融合版并在无通话时自动安装，已有更新偏好会保留；也可在系统设置里手动检查、安装或关闭自动更新。向本仓库 `halo` 分支推送后，GitHub 自动测试、构建并发布融合版，NAS 更新保留账号、设置和数据。详见 [NAS 部署与内部更新](docs/NAS-J3160.zh-CN.md)。真实模块的 UAC / ADB 和双向通话仍需验证。
+
 Vocat is an open-source web control panel and engineering toolkit for Quectel EC20/EC25-class and China Mobile ML307 series cellular modems. It combines modem discovery, live radio status, AT and USSD terminals, SMS, WiFi Calling, eSIM management, network selection, proxy routing, notifications, audit logs, and release automation in one self-contained service.
 
 The backend is written in Go, the interface is built with React and TypeScript, and the production frontend is embedded into the Go binary. A single executable contains the web application and uses SQLite for persistent state.

@@ -581,6 +581,8 @@ export interface AutoUpdateSettings {
   lastVersion?: string;
   lastError?: string;
   repository?: string;
+  channel?: string;
+  currentVersion?: string;
   isDocker?: boolean;
 }
 

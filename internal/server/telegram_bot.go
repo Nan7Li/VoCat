@@ -1548,12 +1548,18 @@ func (bot *telegramBot) executeTimedVoWiFiCall(
 	action telegramPendingAction,
 	controller VoWiFiCallController,
 ) (string, error) {
+	release, admitErr := bot.server.admitCallMutation()
+	if admitErr != nil {
+		return "", admitErr
+	}
+	defer release()
 	dialContext, cancelDial := context.WithTimeout(ctx, 20*time.Second)
 	call, err := controller.DialCall(dialContext, action.DeviceID, action.Argument)
 	cancelDial()
 	if err != nil {
 		return "", fmt.Errorf("VoWiFi IMS 拨号失败: %w", err)
 	}
+	release()
 	hangupAt := time.Now().Add(action.Duration)
 	_ = bot.sendText(ctx, config, action.ChatID, fmt.Sprintf(
 		"📞 已通过 VoWiFi IMS 提交 %s，Call-ID：%s\n将在 %d 秒后自动挂断，并持续检查 SIP 结果。",
@@ -1702,6 +1708,11 @@ func (bot *telegramBot) executeTimedCellularCall(
 	action telegramPendingAction,
 	physicalID string,
 ) (string, error) {
+	release, admitErr := bot.server.admitCallMutation()
+	if admitErr != nil {
+		return "", admitErr
+	}
+	defer release()
 	dialContext, cancelDial := context.WithTimeout(ctx, 20*time.Second)
 	response, err := bot.server.devices.ExecuteAT(dialContext, physicalID, "ATD"+action.Argument+";")
 	cancelDial()
@@ -1711,6 +1722,8 @@ func (bot *telegramBot) executeTimedCellularCall(
 	if !response.OK() {
 		return "", fmt.Errorf("基站未接受拨号: %s", formatTelegramAT(response))
 	}
+	bot.server.noteLegacyAccepted(bot.server.usbGeneration(action.DeviceID), action.DeviceID, physicalID)
+	release()
 	hangupAt := time.Now().Add(action.Duration)
 	_ = bot.sendText(ctx, config, action.ChatID, fmt.Sprintf(
 		"📞 已通过基站提交 %s，将在 %d 秒后自动挂断，并持续检查 CLCC 状态。",
@@ -1774,11 +1787,17 @@ func (bot *telegramBot) executeTimedCellularCall(
 func (bot *telegramBot) telegramCellularCalls(ctx context.Context, physicalID string) ([]map[string]any, error) {
 	queryContext, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
+	generation, present := bot.server.legacyPhysicalGeneration(physicalID)
+	revision := bot.server.captureLegacyRevision()
 	response, err := bot.server.devices.ExecuteAT(queryContext, physicalID, "AT+CLCC")
 	if err != nil {
 		return nil, err
 	}
-	return parseCLCC(response), nil
+	calls := parseCLCC(response)
+	if response.OK() && bot.server.legacyPhysicalUnchanged(physicalID, generation, present) {
+		bot.server.commitLegacyCLCC([]string{physicalID}, calls, revision, generation)
+	}
+	return calls, nil
 }
 
 func telegramFindOutgoingCellularCall(calls []map[string]any, number string) (map[string]any, bool) {
@@ -1856,6 +1875,7 @@ func (bot *telegramBot) hangupCellularCall(physicalID string) error {
 	response, err := bot.server.devices.ExecuteAT(hangContext, physicalID, "ATH")
 	if err != nil {
 		if final, ok := telegramCallFinalError(err); ok && final == "NO CARRIER" {
+			bot.server.noteLegacyHangup(physicalID)
 			return nil
 		}
 		return err
@@ -1863,6 +1883,7 @@ func (bot *telegramBot) hangupCellularCall(physicalID string) error {
 	if !response.OK() {
 		return fmt.Errorf("模块未确认 ATH: %s", formatTelegramAT(response))
 	}
+	bot.server.noteLegacyHangup(physicalID)
 	return nil
 }
 
@@ -1871,6 +1892,13 @@ func (bot *telegramBot) bestEffortCellularHangup(physicalID string) {
 }
 
 func (bot *telegramBot) executeSimpleVoWiFiCallAction(ctx context.Context, deviceID, action string, controller VoWiFiCallController) (string, error) {
+	if action == "answer" {
+		release, admitErr := bot.server.admitCallMutation()
+		if admitErr != nil {
+			return "", admitErr
+		}
+		defer release()
+	}
 	calls, err := controller.Calls(deviceID)
 	if err != nil {
 		return "", err
@@ -1928,6 +1956,13 @@ func formatTelegramIMSCalls(calls []vowifi.Call) string {
 }
 
 func (bot *telegramBot) executeSimpleCellularCallAction(ctx context.Context, physicalID, action string) (string, error) {
+	if action == "answer" {
+		release, admitErr := bot.server.admitCallMutation()
+		if admitErr != nil {
+			return "", admitErr
+		}
+		defer release()
+	}
 	switch action {
 	case "status":
 		calls, err := bot.telegramCellularCalls(ctx, physicalID)
@@ -1948,6 +1983,7 @@ func (bot *telegramBot) executeSimpleCellularCallAction(ctx context.Context, phy
 		if !response.OK() {
 			return "", fmt.Errorf("模块未确认 ATA: %s", formatTelegramAT(response))
 		}
+		bot.server.noteLegacyAccepted("", physicalID)
 		deadline := time.Now().Add(8 * time.Second)
 		for time.Now().Before(deadline) {
 			calls, queryErr := bot.telegramCellularCalls(ctx, physicalID)

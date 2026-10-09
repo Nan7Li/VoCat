@@ -461,8 +461,11 @@ func (s *Server) serveLegacyBoundAction(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if action == "hangup" {
+		s.noteLegacyHangup(config.ID, target)
 		binding.ended = true
 		s.rememberCall(binding)
+	} else if action == "answer" {
+		s.noteLegacyAccepted(binding.usbGeneration, config.ID, target)
 	}
 	s.upsertCellularCallRecord(r.Context(), config.ID, number, action)
 	writeJSON(w, http.StatusAccepted, map[string]any{"data": map[string]any{
@@ -518,6 +521,11 @@ func (backend *cellularSIPBackend) Dial(ctx context.Context, number string) (vow
 	if backend.server == nil || backend.controller == nil {
 		return vowifi.Call{}, errors.New("大疆通话音频未就绪")
 	}
+	release, admitErr := backend.server.admitCallMutation()
+	if admitErr != nil {
+		return vowifi.Call{}, admitErr
+	}
+	defer release()
 	// The saved switches are checked here so a listener that has not yet been
 	// restarted still refuses a new call after SIP or cellular was disabled.
 	// Hangup keeps using this controller and does not consult the new switches.
@@ -539,6 +547,13 @@ func (backend *cellularSIPBackend) Answer(ctx context.Context, callID string) (v
 	if backend.controller == nil {
 		return vowifi.Call{}, errors.New("原蜂窝通话已经结束")
 	}
+	if backend.server != nil {
+		release, admitErr := backend.server.admitCallMutation()
+		if admitErr != nil {
+			return vowifi.Call{}, admitErr
+		}
+		defer release()
+	}
 	call, err := backend.controller.Answer(ctx, callID)
 	if err == nil {
 		backend.server.rememberCellular(backend.deviceID, call.ID, false)
@@ -554,9 +569,19 @@ func (backend *cellularSIPBackend) Hangup(ctx context.Context, callID string) er
 }
 
 func (backend *cellularSIPBackend) OpenMedia(ctx context.Context, callID, owner string) (vowifi.CallMedia, func(), error) {
-	if backend.controller == nil {
+	if backend.controller == nil || backend.server == nil {
 		return nil, nil, errors.New("原蜂窝通话已经结束")
 	}
+	releaseOp, admitErr := backend.server.admitCallMutation()
+	if admitErr != nil {
+		return nil, nil, admitErr
+	}
+	finished := false
+	defer func() {
+		if !finished {
+			releaseOp()
+		}
+	}()
 	releaseLease, err := backend.server.acquireCallMediaLease(backend.deviceID, callID, "sip:"+owner)
 	if err != nil {
 		return nil, nil, err
@@ -572,9 +597,11 @@ func (backend *cellularSIPBackend) OpenMedia(ctx context.Context, callID, owner 
 		}
 		return nil, nil, errors.New("当前通话编码无法转换为 PCM")
 	}
+	finished = true
 	return media, func() {
 		release()
 		releaseLease()
+		releaseOp()
 	}, nil
 }
 
@@ -638,6 +665,11 @@ func (backend *vowifiSIPBackend) Dial(ctx context.Context, number string) (vowif
 	if backend.server == nil || !backend.server.sipDialAllowed(backend.deviceID) {
 		return vowifi.Call{}, errors.New("SIP 线路已关闭")
 	}
+	release, admitErr := backend.server.admitCallMutation()
+	if admitErr != nil {
+		return vowifi.Call{}, admitErr
+	}
+	defer release()
 	controller, err := backend.requireIMS()
 	if err != nil {
 		return vowifi.Call{}, err
@@ -652,6 +684,13 @@ func (backend *vowifiSIPBackend) Dial(ctx context.Context, number string) (vowif
 }
 
 func (backend *vowifiSIPBackend) Answer(ctx context.Context, callID string) (vowifi.Call, error) {
+	if backend.server != nil {
+		release, admitErr := backend.server.admitCallMutation()
+		if admitErr != nil {
+			return vowifi.Call{}, admitErr
+		}
+		defer release()
+	}
 	controller, err := backend.requireIMS()
 	if err != nil {
 		return vowifi.Call{}, err
@@ -672,6 +711,19 @@ func (backend *vowifiSIPBackend) Hangup(ctx context.Context, callID string) erro
 }
 
 func (backend *vowifiSIPBackend) OpenMedia(ctx context.Context, callID, owner string) (vowifi.CallMedia, func(), error) {
+	if backend.server == nil {
+		return nil, nil, errors.New("IMS 未就绪，SIP 线路不可用")
+	}
+	releaseOp, admitErr := backend.server.admitCallMutation()
+	if admitErr != nil {
+		return nil, nil, admitErr
+	}
+	finished := false
+	defer func() {
+		if !finished {
+			releaseOp()
+		}
+	}()
 	if _, err := backend.requireIMS(); err != nil {
 		return nil, nil, err
 	}
@@ -691,7 +743,11 @@ func (backend *vowifiSIPBackend) OpenMedia(ctx context.Context, callID, owner st
 		}
 		return nil, nil, errors.New("当前通话编码无法转换为 PCM")
 	}
-	return media, releaseLease, nil
+	finished = true
+	return media, func() {
+		releaseLease()
+		releaseOp()
+	}, nil
 }
 
 // cellBridgeSaver writes one cellular snapshot into the existing call history.

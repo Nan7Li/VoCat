@@ -29,6 +29,16 @@ function CardDecor() {
   return null;
 }
 
+function updateChannelLabel(channel: string | undefined, t: (value: string) => string) {
+  if (channel === "cellbridge") return `${t("融合版")} · cellbridge`;
+  if (channel === "stable") return `${t("稳定版")} · stable`;
+  return channel || "";
+}
+
+function waitingForCall(message: string) {
+  return message.includes("已推迟安装") || message.toLowerCase().includes("postponed until the call ends");
+}
+
 function CardIcon({ children, small }: { children: ReactNode; small?: boolean }) {
   return (
     <div
@@ -182,6 +192,9 @@ export function SystemInfoCard({
           <p className="text-[12px] text-black/45 dark:text-white/50">{t("当前已是最新版本")}</p>
         ) : null}
         <div className="space-y-3 rounded-lg bg-gray-50 p-3 dark:bg-white/5">
+          <FieldRow label={t("更新通道")} value={updateChannelLabel(autoUpdate?.channel, t)} monospace />
+          <FieldRow label={t("当前版本")} value={autoUpdate?.currentVersion || info.version} monospace />
+          <FieldRow label={t("可用版本")} value={autoUpdate?.lastVersion || updateInfo?.latestVersion} monospace />
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-[13px] font-semibold text-black/80 dark:text-white/80">{t("自动检查更新")}</div>
@@ -224,10 +237,15 @@ export function SystemInfoCard({
             <p className="text-[12px] text-black/40 dark:text-white/45">
               {t("上次检查")} {autoUpdate.lastCheckAt.replace("T", " ").replace("Z", " UTC")}
               {autoUpdate.lastError
-                ? ` · ${autoUpdate.lastError}`
+                ? ` · ${waitingForCall(autoUpdate.lastError) ? `${t("等待通话结束")} · ` : ""}${autoUpdate.lastError}`
                 : autoUpdate.lastAvailable
                   ? ` · ${t("发现新版本:")} ${autoUpdate.lastVersion || ""}`
                   : ` · ${t("当前已是最新版本")}`}
+            </p>
+          ) : autoUpdate?.lastError ? (
+            <p className="text-[12px] text-amber-700 dark:text-amber-300">
+              {waitingForCall(autoUpdate.lastError) ? `${t("等待通话结束")} · ` : ""}
+              {autoUpdate.lastError}
             </p>
           ) : null}
           {autoUpdate?.repository ? (

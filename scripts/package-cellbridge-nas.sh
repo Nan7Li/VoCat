@@ -154,6 +154,10 @@ sudo ./install --fetch-runtime
 
 如已准备好文件，可用 `sudo ./install --runtime-dir ./qdc507-runtime`。单独获取文件可运行 `./source/scripts/fetch-qdc507-runtime.sh`（需 curl 和 CA 证书）。没有运行文件时仍可安装 Halo 和读卡器 IMS，但大疆语音文件未配齐。
 
+Halo、VoCat 与 CellBridge 共用一个原生服务，不需要分开部署。安装后访问 `http://NAS的IP:7575`。新安装默认每 6 小时检查融合版并在无通话时自动安装，已有自动更新偏好会保留。Web 系统设置中可以手动检查、安装或关闭自动更新；更新前备份数据库并保留旧程序，账号、设置、数据、录音和大疆运行文件不随程序替换。
+
+向 `Nan7Li/VoCat` 的 `halo` 分支推送后，GitHub 工作流自动测试、构建并发布融合版。原生服务使用 `cellbridge` 更新通道从发布产物更新；Docker 部署仍通过更新镜像升级。
+
 程序安装成功、模块 UAC/ADB 就绪、大疆音频验证成功，是三件事。诊断：
 
 ```sh

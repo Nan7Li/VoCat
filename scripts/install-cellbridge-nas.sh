@@ -177,7 +177,7 @@ verify_binary() {
     printf '错误：无法执行二进制的 version\n' >&2
     return 1
   fi
-  if [[ ! "$ver" =~ ^vocat[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+-cellbridge([[:space:]]|$) ]]; then
+  if [[ ! "$ver" =~ ^vocat[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+-cellbridge(-preview\.[0-9]+)?([[:space:]]|$) ]]; then
     printf '错误：不是 Halo CellBridge 集成版，version 输出不匹配\n' >&2
     return 1
   fi
@@ -512,6 +512,7 @@ if [[ -z "$TEST_ROOT" ]] && command -v ip >/dev/null 2>&1; then
   done < <(ip -4 -o addr show scope global 2>/dev/null | awk '{ print $4 }' | cut -d/ -f1)
 fi
 printf '程序安装成功，健康检查已通过。\n'
+printf '系统设置 → 自动更新：新安装默认每 6 小时检查融合版并在空闲时安装；已有更新偏好保留。账号、数据库、录音和大疆运行文件保留。\n'
 printf '这只表示 Halo 服务在响应，不等于模块 UAC/ADB 已就绪，也不等于大疆音频已经验证。\n'
 if [[ -n "$RUNTIME_DIR" ]]; then
   printf '三个 QDC507 运行文件已安装到 /opt/halo/qdc507，SHA-256 与允许列表一致。\n'

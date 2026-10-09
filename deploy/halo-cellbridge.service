@@ -9,6 +9,11 @@ User=root
 WorkingDirectory=/opt/halo
 Environment=VOCAT_ADDR=0.0.0.0:7575
 Environment=VOCAT_DATABASE_PATH=/opt/halo/data/halo.db
+Environment=VOCAT_REPO=Nan7Li/VoCat
+Environment=VOCAT_UPDATE_CHANNEL=cellbridge
+Environment=VOCAT_UPDATE_TARGET=/opt/halo/bin/halo
+Environment=VOCAT_SYSTEMD_UNIT=halo-cellbridge.service
+Environment=VOCAT_AUTO_UPDATE_APPLY_DEFAULT=true
 ExecStart=/opt/halo/bin/halo serve
 Restart=on-failure
 RestartSec=5

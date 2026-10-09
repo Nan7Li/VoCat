@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 	"sync"
@@ -82,11 +83,21 @@ type Server struct {
 	developerEnabled          bool
 	updateRepository          string
 	updateToken               string
+	updateTarget              string
 	updateCheck               func(context.Context, string, string, string) (update.CheckResult, error)
+	upstreamCheck             func(context.Context, string, string, string) (update.CheckResult, error)
 	updateApply               func(context.Context, *slog.Logger, update.Options, bool) (update.CheckResult, error)
 	updateRestart             func(*slog.Logger) error
 	updateMu                  sync.Mutex
 	updateApplying            bool
+	updateCallOps             int
+	cellularCallsForUpdate    func() []vowifi.Call
+	imsCallsForUpdate         func() ([]vowifi.Call, error)
+	legacyCallMu              sync.Mutex
+	legacyRevision            uint64
+	legacySlots               map[string]legacySlot
+	legacyPeers               map[string]map[string]struct{}
+	legacyCallsForUpdate      func() bool
 	https                     *httpsmode.Manager
 	netTraffic                *liveNetTracker
 	hostStats                 *hostStatsSampler
@@ -165,6 +176,7 @@ func New(options Options) (*Server, error) {
 		developerEnabled:    options.DeveloperEnabled,
 		updateRepository:    strings.TrimSpace(options.UpdateRepository),
 		updateToken:         strings.TrimSpace(options.UpdateToken),
+		updateTarget:        strings.TrimSpace(os.Getenv("VOCAT_UPDATE_TARGET")),
 		https:               options.HTTPS,
 		netTraffic:          newLiveNetTracker(),
 		hostStats:           newHostStatsSampler(),
@@ -172,6 +184,7 @@ func New(options Options) (*Server, error) {
 		smsStorage:          make(map[string]device.SMSStorageUsage),
 		lookupPublicIP:      exportproxy.LookupPublicIP,
 		updateCheck:         update.CheckLatest,
+		upstreamCheck:       update.CheckStable,
 		updateApply:         update.ApplyLatest,
 		updateRestart:       update.RestartService,
 		wireguard:           options.WireGuard,

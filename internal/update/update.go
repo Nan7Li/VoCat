@@ -30,14 +30,19 @@ import (
 	"vocat/internal/buildinfo"
 )
 
+// currentBuildVersion is production's buildinfo.Version. Tests do not replace it.
+func runningVersion() string { return buildinfo.Version }
+
 // Options captures the resolved flags for an update invocation.
 type Options struct {
-	Check  bool   // report-only
-	Repo   string // owner/name
-	Target string // binary path to replace
-	Force  bool   // reinstall even at equal version
-	Token  string // optional GitHub bearer token
-	Help   bool   // print usage, do nothing
+	Check         bool   // report-only
+	Repo          string // owner/name
+	Target        string // binary path to replace
+	Force         bool   // reinstall even at equal version
+	Token         string // optional GitHub bearer token
+	Help          bool   // print usage, do nothing
+	Channel       string // optional channel override; empty resolves env and version
+	BeforeInstall func() error
 }
 
 // Run executes the update subcommand. It returns nil on success or when an
@@ -68,25 +73,42 @@ func Run(logger *slog.Logger, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	logger.Info("checking for updates", "repo", opts.Repo, "current", buildinfo.Version)
-	result, err := CheckLatest(ctx, opts.Repo, opts.Token, buildinfo.Version)
+	channel, err := resolveChannel(ctx, opts.Channel)
+	if err != nil {
+		return err
+	}
+	if opts.Channel != "" {
+		ctx = WithChannel(ctx, opts.Channel)
+	}
+	current := runningVersion()
+	logger.Info("checking for updates", "repo", opts.Repo, "current", current, "channel", channel)
+	result, err := CheckLatest(ctx, opts.Repo, opts.Token, current)
 	if err != nil {
 		return err
 	}
 	if !result.Available && !opts.Force {
-		logger.Info("already up to date", "version", buildinfo.Version)
-		fmt.Printf("vocat %s is already the latest release.\n", buildinfo.Version)
+		logger.Info("already up to date", "version", current, "channel", channel)
+		fmt.Printf("vocat %s is already the latest release.\n", current)
 		return nil
 	}
+	if !result.Available && opts.Force {
+		equal, equalErr := sameVersion(current, result.Latest)
+		if equalErr != nil {
+			return equalErr
+		}
+		if !equal {
+			return fmt.Errorf("update: refusing downgrade from %s to %s", current, result.Latest)
+		}
+	}
 	if opts.Check {
-		fmt.Printf("update available: %s -> %s\n", buildinfo.Version, result.Latest)
+		fmt.Printf("update available: %s -> %s\n", current, result.Latest)
 		if result.ReleaseNotes != "" {
 			fmt.Println(result.ReleaseNotes)
 		}
 		return nil
 	}
 
-	logger.Info("update available", "current", buildinfo.Version, "latest", result.Latest)
+	logger.Info("update available", "current", current, "latest", result.Latest, "channel", result.Channel)
 	return applyUpdate(ctx, logger, opts, result.Release, result.Latest, true)
 }
 
@@ -103,12 +125,25 @@ func ApplyLatest(ctx context.Context, logger *slog.Logger, opts Options, restart
 	if strings.TrimSpace(opts.Target) == "" {
 		opts.Target = resolveDefaultTarget()
 	}
-	result, err := CheckLatest(ctx, opts.Repo, opts.Token, buildinfo.Version)
+	if strings.TrimSpace(opts.Channel) != "" {
+		ctx = WithChannel(ctx, opts.Channel)
+	}
+	current := runningVersion()
+	result, err := CheckLatest(ctx, opts.Repo, opts.Token, current)
 	if err != nil {
 		return CheckResult{}, err
 	}
 	if !result.Available && !opts.Force {
 		return result, nil
+	}
+	if !result.Available && opts.Force {
+		equal, equalErr := sameVersion(current, result.Latest)
+		if equalErr != nil {
+			return CheckResult{}, equalErr
+		}
+		if !equal {
+			return CheckResult{}, fmt.Errorf("update: refusing downgrade from %s to %s", current, result.Latest)
+		}
 	}
 	if err := applyUpdate(ctx, logger, opts, result.Release, result.Latest, restart); err != nil {
 		return CheckResult{}, err
@@ -118,6 +153,16 @@ func ApplyLatest(ctx context.Context, logger *slog.Logger, opts Options, restart
 }
 
 func applyUpdate(ctx context.Context, logger *slog.Logger, opts Options, release *Release, latest string, restart bool) error {
+	if release == nil {
+		return fmt.Errorf("update: release metadata is missing")
+	}
+	channel, err := resolveChannel(ctx, opts.Channel)
+	if err != nil {
+		return err
+	}
+	if err := versionMatchesChannel(latest, channel); err != nil {
+		return err
+	}
 	assetNames := assetNamesFor(runtime.GOOS, runtime.GOARCH)
 	var asset *Asset
 	for _, name := range assetNames {
@@ -134,18 +179,27 @@ func applyUpdate(ctx context.Context, logger *slog.Logger, opts Options, release
 		return fmt.Errorf("update: release %s missing SHA256SUMS — refusing to install unverified", release.TagName)
 	}
 
-	// The temp file MUST live in the same directory as the target so os.Rename
-	// stays on one filesystem; a cross-device rename fails with EXDEV.
+	// The download lives in a private directory on the target's filesystem.
+	// os.Rename then stays atomic, and another local user cannot replace the
+	// verified file before it is installed.
 	targetDir := filepath.Dir(opts.Target)
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return fmt.Errorf("update: ensure target dir %s: %w", targetDir, err)
 	}
-	tmp, err := os.CreateTemp(targetDir, ".vocat-update-*")
+	tmpDir, err := os.MkdirTemp(targetDir, ".vocat-update-")
+	if err != nil {
+		return fmt.Errorf("update: create private temp dir: %w", err)
+	}
+	if err := os.Chmod(tmpDir, 0o700); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return fmt.Errorf("update: protect temp dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpPath := filepath.Join(tmpDir, "binary")
+	tmp, err := os.OpenFile(tmpPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("update: create temp file: %w", err)
 	}
-	tmpPath := tmp.Name()
-	cleanup := func() { _ = os.Remove(tmpPath) }
 	defer func() {
 		if tmp != nil {
 			_ = tmp.Close()
@@ -154,47 +208,48 @@ func applyUpdate(ctx context.Context, logger *slog.Logger, opts Options, release
 
 	logger.Info("downloading binary", "asset", asset.Name, "size", asset.Size, "url", asset.BrowserDownloadURL)
 	if err := downloadAssetWithProgress(ctx, logger, asset, opts.Token, tmp); err != nil {
-		cleanup()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		cleanup()
 		return fmt.Errorf("update: finalize temp file: %w", err)
 	}
 	tmp = nil
 
 	var sums bytes.Buffer
 	if err := downloadAsset(ctx, sumsAsset.BrowserDownloadURL, opts.Token, &sums); err != nil {
-		cleanup()
 		return err
 	}
 	expectedHash, err := ParseSHA256SUMS(sums.String(), asset.Name)
 	if err != nil {
-		cleanup()
 		return err
 	}
 	ok, err := VerifyFileSHA256(tmpPath, expectedHash)
 	if err != nil {
-		cleanup()
 		return err
 	}
 	if !ok {
-		cleanup()
 		return fmt.Errorf("update: sha256 mismatch for %s — refusing to install", asset.Name)
 	}
 	logger.Info("verified binary", "sha256", expectedHash)
 
 	if err := os.Chmod(tmpPath, 0o755); err != nil {
-		cleanup()
 		return fmt.Errorf("update: chmod temp binary: %w", err)
 	}
-	if err := validateExecutable(ctx, tmpPath); err != nil {
-		cleanup()
+	if err := validateExecutable(ctx, tmpPath, latest, channel); err != nil {
 		return err
 	}
-	if err := backupAndReplace(opts.Target, tmpPath); err != nil {
-		cleanup()
-		return err
+	if opts.BeforeInstall != nil {
+		if err := opts.BeforeInstall(); err != nil {
+			return err
+		}
+	}
+	// If a verified installation already succeeded but its restart failed,
+	// retry the restart without replacing .previous with the new binary itself.
+	alreadyInstalled, _ := VerifyFileSHA256(opts.Target, expectedHash)
+	if !alreadyInstalled {
+		if err := backupAndReplace(opts.Target, tmpPath); err != nil {
+			return err
+		}
 	}
 	logger.Info("installed new binary", "target", opts.Target, "version", latest)
 	fmt.Printf("vocat updated to %s.\n", latest)
@@ -275,18 +330,45 @@ func downloadAssetWithProgress(
 // validateExecutable catches incompatible architectures and missing dynamic
 // loaders before the working installation is touched. A valid checksum alone
 // cannot detect those packaging errors.
-func validateExecutable(ctx context.Context, path string) error {
+func validateExecutable(ctx context.Context, path, expectedVersion, channel string) error {
 	checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	output, err := exec.CommandContext(checkCtx, path, "version").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("update: downloaded binary cannot run on this host: %w (%s)", err, strings.TrimSpace(string(output)))
 	}
-	versionText := strings.ToLower(string(output))
-	if !strings.Contains(versionText, "vocat") && !strings.Contains(versionText, "halo") {
-		return fmt.Errorf("update: downloaded binary returned an unexpected version response: %q", strings.TrimSpace(string(output)))
+	got, err := parseReportedVersion(string(output))
+	if err != nil {
+		return err
+	}
+	if got != expectedVersion {
+		return fmt.Errorf("update: downloaded binary version %s does not match release %s", got, expectedVersion)
+	}
+	if err := versionMatchesChannel(got, channel); err != nil {
+		return err
 	}
 	return nil
+}
+
+func parseReportedVersion(output string) (string, error) {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		for index, field := range fields {
+			name := strings.ToLower(strings.Trim(field, ":"))
+			if name != "vocat" && name != "halo" {
+				continue
+			}
+			if index+1 >= len(fields) {
+				continue
+			}
+			version := strings.TrimPrefix(fields[index+1], "v")
+			if _, err := parseSemanticVersion(version); err != nil {
+				return "", fmt.Errorf("update: downloaded binary returned an unexpected version response: %q", strings.TrimSpace(output))
+			}
+			return version, nil
+		}
+	}
+	return "", fmt.Errorf("update: downloaded binary returned an unexpected version response: %q", strings.TrimSpace(output))
 }
 
 // backupAndReplace renames the current binary aside, then moves the verified
@@ -310,26 +392,60 @@ func backupAndReplace(target, tmp string) error {
 	return nil
 }
 
+type serviceRestartPlan struct {
+	openwrt bool
+	unit    string
+}
+
+func openWrtInitExists() bool {
+	_, err := os.Stat("/etc/init.d/vocat")
+	return err == nil
+}
+
+func restartPlan(unitEnv string, openwrt bool, logger *slog.Logger) serviceRestartPlan {
+	if unit := strings.TrimSpace(unitEnv); validSystemdUnit.MatchString(unit) {
+		return serviceRestartPlan{unit: unit}
+	}
+	if openwrt {
+		return serviceRestartPlan{openwrt: true}
+	}
+	return serviceRestartPlan{unit: detectSystemdUnit(logger)}
+}
+
+func planServiceRestart(logger *slog.Logger) serviceRestartPlan {
+	return restartPlan(os.Getenv("VOCAT_SYSTEMD_UNIT"), openWrtInitExists(), logger)
+}
+
 // RestartService supports both systemd hosts and OpenWrt/procd routers.
+// VOCAT_SYSTEMD_UNIT selects the NAS unit and is not replaced by an old
+// OpenWrt init script. Without that variable, OpenWrt behavior is unchanged.
 func RestartService(logger *slog.Logger) error {
-	if _, err := os.Stat("/etc/init.d/vocat"); err == nil {
+	plan := planServiceRestart(logger)
+	if plan.openwrt {
 		cmd := exec.Command("/etc/init.d/vocat", "restart")
 		if out, err := cmd.CombinedOutput(); err != nil {
-			logger.Warn("OpenWrt service restart failed", "error", err, "output", string(out))
+			if logger != nil {
+				logger.Warn("OpenWrt service restart failed", "error", err, "output", string(out))
+			}
 			return fmt.Errorf("restart OpenWrt vocat service: %w", err)
 		}
 		return nil
 	}
+	if plan.unit == "" {
+		return fmt.Errorf("neither /etc/init.d/vocat nor systemctl is available")
+	}
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		return fmt.Errorf("neither /etc/init.d/vocat nor systemctl is available")
 	}
-	unit := detectSystemdUnit(logger)
+	unit := plan.unit
 	// Queue the restart and let systemctl exit before systemd stops this unit.
 	// A blocking restart command becomes part of vocat.service's own cgroup and
 	// waits for that same cgroup to terminate, creating a stop-timeout cycle.
 	cmd := exec.Command("systemctl", "restart", "--no-block", unit)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		logger.Warn("systemctl restart failed", "error", err, "output", string(out))
+		if logger != nil {
+			logger.Warn("systemctl restart failed", "error", err, "output", string(out))
+		}
 		return fmt.Errorf("systemctl restart %s: %w", unit, err)
 	}
 	return nil
@@ -380,23 +496,29 @@ func systemdUnitFromCgroup(data string) string {
 	return ""
 }
 
-// resolveDefaultTarget returns the conventional install path when present,
-// falling back to the running executable. This lets `vocat update` "just work"
-// on the standard systemd host without flags.
+// resolveDefaultTarget prefers VOCAT_UPDATE_TARGET, then the running
+// executable. An old /opt/vocat/bin/vocat install is not selected merely
+// because that file exists beside a Halo binary.
 func resolveDefaultTarget() string {
-	const defaultPath = "/opt/vocat/bin/vocat"
-	if _, err := os.Stat(defaultPath); err == nil {
-		return defaultPath
+	executable := ""
+	if exe, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			executable = resolved
+		} else {
+			executable = exe
+		}
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return defaultPath
+	return resolveInstallTarget(os.Getenv("VOCAT_UPDATE_TARGET"), executable)
+}
+
+func resolveInstallTarget(explicit, executable string) string {
+	if target := strings.TrimSpace(explicit); target != "" {
+		return target
 	}
-	resolved, err := filepath.EvalSymlinks(exe)
-	if err != nil {
-		return exe
+	if executable != "" {
+		return executable
 	}
-	return resolved
+	return "/opt/vocat/bin/vocat"
 }
 
 func findAsset(release *Release, name string) *Asset {
@@ -434,15 +556,19 @@ Flags:
   --check            Report whether an update is available, then exit.
   --force            Reinstall even when already at the latest version.
   --repo owner/name  GitHub repository (default: $VOCAT_REPO or Nan7Li/VoCat).
-  --target path      Binary to replace (default: /opt/vocat/bin/vocat if
-                     present, otherwise the running executable).
+  --target path      Binary to replace (default: $VOCAT_UPDATE_TARGET, otherwise
+                     the running executable).
   --token token      GitHub bearer token (default: $GITHUB_TOKEN).
   -h, --help         Show this help.
 
 Environment:
-  VOCAT_REPO         Fallback for --repo.
-  GITHUB_TOKEN       Fallback for --token. Required for private repos and
-                     recommended to avoid unauthenticated rate limits.`)
+  VOCAT_REPO            Fallback for --repo.
+  VOCAT_UPDATE_CHANNEL  stable or cellbridge. Unset uses cellbridge when this
+                        build's version contains -cellbridge, otherwise stable.
+  VOCAT_UPDATE_TARGET   Fallback for --target.
+  VOCAT_SYSTEMD_UNIT    systemd unit to restart after install.
+  GITHUB_TOKEN          Fallback for --token. Required for private repos and
+                        recommended to avoid unauthenticated rate limits.`)
 }
 
 func parseFlags(args []string) (Options, error) {
