@@ -208,6 +208,7 @@ export interface DeviceListItem {
   smsEnabled: boolean;
   smsStorage?: SMSStorageUsage;
 	  networkEnabled: boolean;
+  nativeCellularData?: boolean;
   vowifiEnabled: boolean;
   callAudioReady?: boolean;
   callAudioReason?: string;
@@ -349,7 +350,7 @@ export interface DeviceConfig {
   dataBits: number;
   stopBits: number;
   parity: string;
-  deviceBackend: "at" | "qmi" | "pcsc";
+  deviceBackend: "at" | "qmi" | "mbn" | "pcsc";
   esimTransport: "at" | "qmi" | "pcsc" | "none";
   qmiUseProxy: boolean;
   qmiProxyPath?: string;

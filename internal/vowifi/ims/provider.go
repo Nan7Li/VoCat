@@ -73,7 +73,7 @@ type Config struct {
 	// OnSMSStatus is invoked for an SMS-STATUS-REPORT received after a
 	// submission that requested a delivery report.
 	OnSMSStatus func(context.Context, ReceivedSMSStatus) error
-  // OnSIMDataDownload receives a decoded SMS-PP download for delivery to the
+	// OnSIMDataDownload receives a decoded SMS-PP download for delivery to the
 	// UICC. The callback must return only after the UICC has processed the
 	// ENVELOPE command; a nil callback causes an RP-ACK delivery report to
 	// acknowledge transport receipt.
@@ -632,6 +632,7 @@ type Session struct {
 	ipsecHandle        IPSecSAHandle
 	protectedTCP       *net.TCPListener
 	protectedUDP       *net.UDPConn
+	protectedUDPClient *net.UDPConn
 	failures           chan error
 	failureOnce        sync.Once
 	writeMu            sync.Mutex
@@ -798,6 +799,9 @@ func (session *Session) abort() {
 	}
 	if session.protectedUDP != nil {
 		_ = session.protectedUDP.Close()
+	}
+	if session.protectedUDPClient != nil {
+		_ = session.protectedUDPClient.Close()
 	}
 	if session.ipsecHandle != nil {
 		_ = session.ipsecHandle.Close(context.Background())
@@ -1031,7 +1035,6 @@ func minExpiresFromResponse(response *sipResponse) (int, error) {
 	}
 	return 0, errors.New("ims: missing or invalid Min-Expires header in SIP 423 response")
 }
-
 
 func (session *Session) buildRegister(
 	cseq uint32,
@@ -1782,6 +1785,11 @@ func (session *Session) Close(ctx context.Context) error {
 	}
 	if session.protectedUDP != nil {
 		if err := session.protectedUDP.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			cleanupErrors = append(cleanupErrors, err)
+		}
+	}
+	if session.protectedUDPClient != nil {
+		if err := session.protectedUDPClient.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			cleanupErrors = append(cleanupErrors, err)
 		}
 	}

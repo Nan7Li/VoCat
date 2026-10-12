@@ -34,7 +34,7 @@ export function DeviceOverviewTab(props: DeviceOverviewTabProps) {
   const supportsCellLock = device.supportsCellLock === true;
   const cellLock = useDeviceCellLock(device.id, supportsCellLock);
   const cellLocked = !!cellLock.status?.target;
-	const showNetworkDetails = !!device.developerEnabled && !wifiCallingOnly;
+	const showNetworkDetails = !!(device.developerEnabled || device.nativeCellularData) && !wifiCallingOnly;
   return (
     <div className="space-y-4">
       <div className={`grid grid-cols-1 gap-4 ${showNetworkDetails ? "lg:grid-cols-3" : "lg:grid-cols-2"}`}>
@@ -68,7 +68,7 @@ export function DeviceOverviewTab(props: DeviceOverviewTabProps) {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <EpdgStatusCard device={device} onRefreshed={props.onRefresh} />
       </div>
-      {device.developerEnabled && device.networkEnabled && device.id ? <OverviewTrafficChart deviceId={device.id} /> : null}
+      {(device.developerEnabled || device.nativeCellularData) && device.networkEnabled && device.id ? <OverviewTrafficChart deviceId={device.id} /> : null}
 	  {device?.id && !wifiCallingOnly ? (
         <OperatorSelectionDialog
           open={operatorOpen}

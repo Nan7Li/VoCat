@@ -1682,7 +1682,8 @@ func (s *Server) handleCellularData(
 	config store.Device,
 	physicalID string,
 ) bool {
-	if !s.developerActive(r.Context()) {
+	nativeData := store.NativeCellularData(config)
+	if !s.developerActive(r.Context()) && !nativeData {
 		writeError(w, http.StatusForbidden, "developer_mode_required", "roaming data is available only in developer mode")
 		return true
 	}
@@ -1708,7 +1709,7 @@ func (s *Server) handleCellularData(
 			"last_error":        runtime.LastError,
 			"interface":         config.Interface,
 			"apn":               config.APN,
-			"export_proxy_only": true,
+			"export_proxy_only": !nativeData,
 		}})
 	case http.MethodPatch, http.MethodPut:
 		var request struct {
@@ -1735,17 +1736,36 @@ func (s *Server) handleCellularData(
 		isRoaming := false
 		var activePolicy store.CardPolicy
 		var activeAPNProfile store.CardAPNProfile
+		if nativeData && request.Enabled {
+			reader, ok := s.devices.(interface {
+				CellularSIMICCID(context.Context, string) (string, error)
+			})
+			if !ok {
+				writeError(w, http.StatusConflict, "sim_identity_unavailable", "current Windows modem SIM identity cannot be verified")
+				return true
+			}
+			probe, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			current, err := reader.CellularSIMICCID(probe, physicalID)
+			cancel()
+			if err != nil || !validICCID(current) {
+				writeError(w, http.StatusConflict, "sim_identity_unavailable", "refresh the Windows modem before enabling cellular data")
+				return true
+			}
+			activeICCID = current
+		}
 		if entry, getErr := s.devices.Get(physicalID); getErr == nil && entry.Snapshot != nil {
-			activeICCID = strings.TrimSpace(entry.Snapshot.ICCID)
+			if activeICCID == "" {
+				activeICCID = strings.TrimSpace(entry.Snapshot.ICCID)
+			}
 			isRoaming = entry.Snapshot.RegistrationStatus == 5
-			if stored, policyErr := s.store.CardPolicy(r.Context(), activeICCID); policyErr == nil {
-				activePolicy = stored
-				if apn == "" {
-					apn = strings.TrimSpace(stored.APN)
-				}
-				if stored.IPVersion != "" {
-					policyIPVersion = stored.IPVersion
-				}
+		}
+		if stored, policyErr := s.store.CardPolicy(r.Context(), activeICCID); policyErr == nil {
+			activePolicy = stored
+			if apn == "" {
+				apn = strings.TrimSpace(stored.APN)
+			}
+			if stored.IPVersion != "" {
+				policyIPVersion = stored.IPVersion
 			}
 		}
 		if apn == "" && activePolicy.ICCID == "" {
@@ -1773,6 +1793,12 @@ func (s *Server) handleCellularData(
 		previousConfig := config
 		config.NetworkEnabled = request.Enabled
 		config.APN = apn
+		if nativeData && request.Enabled {
+			if err := store.SetNativeCellularICCID(&config, activeICCID); err != nil {
+				s.writeStoreError(w, err)
+				return true
+			}
+		}
 		if err := s.store.UpsertDevice(r.Context(), config); err != nil {
 			s.writeStoreError(w, err)
 			return true
@@ -1784,6 +1810,10 @@ func (s *Server) handleCellularData(
 			activePolicy.APN = apn
 			activePolicy.IPVersion = policyIPVersion
 			activePolicy.NetworkEnabled = request.Enabled
+			if nativeData && request.Enabled {
+				activePolicy.AirplaneEnabled = false
+				activePolicy.VoWiFiEnabled = false
+			}
 			if strings.TrimSpace(request.APN) != "" {
 				activePolicy.Source = "manual"
 			}
@@ -1807,7 +1837,7 @@ func (s *Server) handleCellularData(
 			"modem_phase":       runtime.ModemPhase,
 			"maintenance_phase": runtime.MaintenancePhase,
 			"revision":          runtime.Revision, "interface": config.Interface,
-			"backend": config.DeviceBackend, "export_proxy_only": true,
+			"backend": config.DeviceBackend, "export_proxy_only": !nativeData,
 		}})
 	default:
 		w.Header().Set("Allow", "GET, PATCH, PUT")
@@ -1995,6 +2025,7 @@ func (s *Server) configuredDeviceSummary(
 	}
 	result["network_enabled"] = config.NetworkEnabled
 	result["developer_enabled"] = s.developerActive(context.Background())
+	result["native_cellular_data"] = store.NativeCellularData(config)
 	dataRuntime := s.cellularDataRuntime().status(config.ID, config.NetworkEnabled)
 	result["network_connected"] = dataRuntime.Connected
 	result["data_connected"] = dataRuntime.Connected
@@ -2081,7 +2112,7 @@ func (s *Server) configuredDeviceOverview(
 	entry device.Device,
 	present bool,
 ) map[string]any {
-	developerActive := s.developerActive(context.Background())
+	developerActive := s.developerActive(context.Background()) || store.NativeCellularData(config)
 	var physical *device.Device
 	if present {
 		physical = &entry
@@ -2446,7 +2477,11 @@ func fillConfigFromPhysical(config *store.Device, entry device.Device) {
 		config.DeviceBackend = backendMode(candidate)
 	}
 	if config.ESIMTransport == "" {
-		config.ESIMTransport = config.DeviceBackend
+		if config.DeviceBackend == "mbn" {
+			config.ESIMTransport = "at"
+		} else {
+			config.ESIMTransport = config.DeviceBackend
+		}
 	}
 }
 
@@ -2604,6 +2639,9 @@ func deviceName(entry device.Device) string {
 }
 
 func backendMode(candidate modem.Candidate) string {
+	if candidate.HardwareKind == "windows-com" && candidate.NetworkInterface != "" {
+		return "mbn"
+	}
 	if candidate.HardwareKind == "pcsc" {
 		return "pcsc"
 	}

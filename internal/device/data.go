@@ -168,6 +168,36 @@ func ValidAPN(value string) bool {
 	return value == "" || apnPattern.MatchString(value)
 }
 
+// CellularSIMICCID reads the current Windows modem SIM without changing RF or
+// packet-data state. It lets the server persist the correct card policy before
+// starting a data operation, even when the radio-only snapshot has no ICCID.
+func (manager *Manager) CellularSIMICCID(ctx context.Context, id string) (string, error) {
+	state, err := manager.lookup(id)
+	if err != nil {
+		return "", err
+	}
+	state.opMu.Lock()
+	defer state.opMu.Unlock()
+	if err := manager.validateActive(id, state); err != nil {
+		return "", err
+	}
+	candidate := manager.candidateFor(state)
+	if !isWindowsMBNCandidate(candidate) {
+		return "", ErrDataBackendUnavailable
+	}
+	iccid := manager.readWindowsMBNICCID(ctx, state, candidate)
+	if iccid == "" {
+		return "", fmt.Errorf("%w: current Windows modem SIM identity is unavailable", ErrDataBackendUnavailable)
+	}
+	manager.mu.Lock()
+	state.lastICCID = iccid
+	if state.snapshot != nil {
+		state.snapshot.ICCID = iccid
+	}
+	manager.mu.Unlock()
+	return iccid, nil
+}
+
 func validNetworkCredential(value string) bool {
 	if len(value) > 128 || strings.ContainsAny(value, "\r\n\x00\"") {
 		return false
@@ -223,14 +253,77 @@ func (manager *Manager) SetNetwork(
 	candidate := manager.candidateFor(state)
 	backend := strings.ToLower(strings.TrimSpace(request.Backend))
 	if backend == "" {
-		if candidate.QMIControl != "" && candidate.NetworkInterface != "" {
+		if isWindowsMBNCandidate(candidate) {
+			backend = "mbn"
+		} else if candidate.QMIControl != "" && candidate.NetworkInterface != "" {
 			backend = "qmi"
 		} else {
 			backend = "at"
 		}
 	}
-	if backend != "at" && backend != "qmi" {
+	if backend != "at" && backend != "qmi" && backend != "mbn" {
 		return NetworkResult{}, fmt.Errorf("unsupported cellular data backend %q", request.Backend)
+	}
+	if backend == "mbn" {
+		state.opMu.Lock()
+		defer state.opMu.Unlock()
+		if err := manager.validateActive(id, state); err != nil {
+			return NetworkResult{}, err
+		}
+		candidate = manager.candidateFor(state)
+		if request.Enabled {
+			if err := manager.regionBlockError(state); err != nil {
+				manager.setResult(id, state, nil, err)
+				return NetworkResult{}, err
+			}
+		}
+		if !isWindowsMBNCandidate(candidate) {
+			return NetworkResult{}, fmt.Errorf("%w: Windows MBN requires a discovered Windows cellular interface", ErrDataBackendUnavailable)
+		}
+		manager.mu.RLock()
+		simICCID := ""
+		if state.snapshot != nil {
+			simICCID = strings.TrimSpace(state.snapshot.ICCID)
+		}
+		if simICCID == "" {
+			simICCID = strings.TrimSpace(state.lastICCID)
+		}
+		manager.mu.RUnlock()
+		if request.Enabled && simICCID == "" {
+			// MBNProfileExt v4 identifies the SIM explicitly. A device can be
+			// discovered before its first dashboard refresh, so do one read-only
+			// AT probe instead of emitting a profile that Windows cannot associate
+			// with a subscription.
+			simICCID = manager.readWindowsMBNICCID(ctx, state, candidate)
+		}
+		if request.Enabled && simICCID == "" {
+			err := fmt.Errorf("%w: Windows WWAN could not read the SIM ICCID; refresh the device and try again", ErrDataBackendUnavailable)
+			manager.setResult(id, state, nil, err)
+			return NetworkResult{}, err
+		}
+		if request.Enabled {
+			if err := manager.prepareWindowsCellularRegistration(ctx, state, candidate); err != nil {
+				manager.setResult(id, state, nil, err)
+				return NetworkResult{}, err
+			}
+		}
+		result, err := setWindowsCellularNetwork(
+			ctx,
+			candidate,
+			request.Enabled,
+			apn,
+			ipVersion,
+			request.Username,
+			request.Password,
+			authentication,
+			simICCID,
+		)
+		if err != nil {
+			manager.setResult(id, state, nil, err)
+			return NetworkResult{}, err
+		}
+		manager.setResult(id, state, nil, nil)
+		return result, nil
 	}
 	if backend == "qmi" {
 		// QMI WDS owns a different control surface from the serial AT actor. Do

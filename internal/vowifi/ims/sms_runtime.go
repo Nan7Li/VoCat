@@ -139,6 +139,9 @@ func (session *Session) startRuntimeReceivers() error {
 		session.receiveDone.Add(1)
 		go session.readProtectedUDP()
 	}
+	session.imsLogger().Debug("IMS receive loops started", "category", "vowifi",
+		"transport", session.transport, "protected_tcp", session.securityActive && session.protectedTCP != nil,
+		"protected_udp", session.securityActive && session.protectedUDP != nil)
 	return nil
 }
 
@@ -177,6 +180,9 @@ func (session *Session) acceptProtectedTCP() {
 	for {
 		connection, err := session.protectedTCP.AcceptTCP()
 		if err != nil {
+			if !session.isClosed() && !errors.Is(err, net.ErrClosed) {
+				session.publishFailure(fmt.Errorf("ims: protected TCP accept: %w", err))
+			}
 			return
 		}
 		if !session.validProtectedTCPSource(connection.RemoteAddr()) {
@@ -225,6 +231,9 @@ func (session *Session) readProtectedUDP() {
 	for {
 		count, remote, err := session.protectedUDP.ReadFromUDP(buffer)
 		if err != nil {
+			if !session.isClosed() && !errors.Is(err, net.ErrClosed) {
+				session.publishFailure(fmt.Errorf("ims: protected UDP receive: %w", err))
+			}
 			return
 		}
 		if !session.validProtectedUDPSource(remote) {
@@ -240,10 +249,29 @@ func (session *Session) readProtectedUDP() {
 			continue
 		}
 		session.dispatchPacket(packet, func(response []byte) error {
-			_, err := session.protectedUDP.WriteToUDP(response, remote)
-			return err
+			return session.sendProtectedUDPResponse(response)
 		})
 	}
+}
+
+func (session *Session) sendProtectedUDPResponse(response []byte) error {
+	session.writeMu.Lock()
+	defer session.writeMu.Unlock()
+	if session.transport == "udp" {
+		_, err := session.conn.Write(response)
+		return err
+	}
+	if session.protectedUDPClient == nil {
+		return errors.New("ims: protected UDP client socket is unavailable")
+	}
+	ip := addressIP(session.conn.RemoteAddr())
+	if ip == nil {
+		return errors.New("ims: protected P-CSCF IP is unavailable")
+	}
+	_, err := session.protectedUDPClient.WriteToUDP(response, &net.UDPAddr{
+		IP: ip, Port: session.securityAgreement.selected.portServer,
+	})
+	return err
 }
 
 func (session *Session) validProtectedTCPSource(address net.Addr) bool {
@@ -376,6 +404,7 @@ func (session *Session) exchangeRuntime(
 }
 
 func (session *Session) handleSIPRequest(request *sipRequest, respond func([]byte) error) {
+	session.imsLogger().Debug("IMS inbound SIP method", "category", "vowifi", "method", request.Method)
 	if session.handleUSSIRequest(request, respond) {
 		return
 	}
@@ -531,7 +560,7 @@ func (session *Session) processSMSMessage(request *sipRequest) {
 		if session.provider.config.OnSIMDataDownload == nil {
 			session.logInboundSMS(slog.LevelWarn, "IMS SIM data download has no UICC handler", request,
 				"stage", "uicc", "rp_reference", int(rpdu.reference))
-      session.sendLoggedDeliveryReport(request, []byte{0x02, rpdu.reference}, "rp_ack")
+			session.sendLoggedDeliveryReport(request, []byte{0x02, rpdu.reference}, "rp_ack")
 			return
 		}
 		if err := session.provider.config.OnSIMDataDownload(context.Background(), SIMDataDownload{

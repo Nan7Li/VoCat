@@ -17,7 +17,7 @@ export interface OverviewNetworkPanelProps {
 
 export function OverviewNetworkPanel({ device, trafficMinuteRx, trafficMinuteTx, trafficSpeedRx, trafficSpeedTx }: OverviewNetworkPanelProps) {
   const { t, lang } = useI18n();
-  const developerActive = !!device.developerEnabled;
+  const developerActive = !!device.developerEnabled || !!device.nativeCellularData;
   const [publicIP, setPublicIP] = useState<PublicIPInfo | null>(null);
   const [detectingIP, setDetectingIP] = useState(false);
   const [liveSession, setLiveSession] = useState<{ phase?: string; modemPhase?: string; lastError?: string } | null>(null);

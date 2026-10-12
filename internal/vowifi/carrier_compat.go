@@ -34,6 +34,8 @@ type CarrierProfile struct {
 	RouteMCC                           string
 	RouteMNC                           string
 	EPDG                               string
+	IKEAddressFamily                   string
+	IKERequestProfile                  string
 	IKEProposal                        string
 	AdvertiseEAPOnly                   bool
 	AllowSMSWithoutContactConfirmation bool
@@ -129,6 +131,8 @@ type carrierProfileEPDG struct {
 
 type carrierProfileIKE struct {
 	Proposal         string `json:"proposal,omitempty"`
+	AddressFamily    string `json:"address_family,omitempty"`
+	RequestProfile   string `json:"request_profile,omitempty"`
 	AdvertiseEAPOnly *bool  `json:"advertise_eap_only,omitempty"`
 }
 
@@ -344,6 +348,12 @@ func validCarrierProfileRule(rule carrierProfileRule) bool {
 		proposal != IKEProposalModern && proposal != IKEProposalLegacy {
 		return false
 	}
+	if family := strings.ToLower(strings.TrimSpace(rule.IKE.AddressFamily)); family != "" && family != "ipv4" && family != "ipv6" && family != "dual" {
+		return false
+	}
+	if profile := strings.TrimSpace(rule.IKE.RequestProfile); profile != "" && profile != "standard" && profile != "minimal" {
+		return false
+	}
 	if transport := strings.ToLower(strings.TrimSpace(rule.IMS.Transport)); transport != "" &&
 		transport != "tcp" && transport != "udp" {
 		return false
@@ -437,6 +447,8 @@ func defaultCarrierProfile() CarrierProfile {
 		ID:                 CarrierProfileStandard,
 		MatchSource:        "standard",
 		IKEProposal:        IKEProposalModern,
+		IKEAddressFamily:   "dual",
+		IKERequestProfile:  "standard",
 		AdvertiseEAPOnly:   true,
 		IMSIdentityProfile: IMSProfileStandard,
 		IMSRegisterProfile: IMSProfileStandard,
@@ -614,6 +626,12 @@ func applyCarrierProfileRule(base CarrierProfile, rule carrierProfileRule, sourc
 	}
 	if rule.IKE.AdvertiseEAPOnly != nil {
 		base.AdvertiseEAPOnly = *rule.IKE.AdvertiseEAPOnly
+	}
+	if value := strings.ToLower(strings.TrimSpace(rule.IKE.AddressFamily)); value != "" {
+		base.IKEAddressFamily = value
+	}
+	if value := strings.TrimSpace(rule.IKE.RequestProfile); value != "" {
+		base.IKERequestProfile = value
 	}
 	if value := strings.ToLower(strings.TrimSpace(rule.IMS.Transport)); value != "" {
 		base.IMSTransport = value

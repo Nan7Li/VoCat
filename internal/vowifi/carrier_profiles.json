@@ -10968,6 +10968,8 @@
         "hostname": "epdg.epc.mnc015.mcc234.pub.3gppnetwork.org"
       },
       "ike": {
+        "address_family": "ipv4",
+        "request_profile": "minimal",
         "proposal": "modern"
       },
       "ims": {
