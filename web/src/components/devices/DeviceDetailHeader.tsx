@@ -120,7 +120,7 @@ export function DeviceDetailHeader(props: DeviceDetailHeaderProps) {
                 onClick={() => void props.onToggleRoamingData(!networkEnabled)}
                 icon={<Cellular4GRegular className="h-4 w-4" />}
                 label={cellularLabel}
-                title={t("蜂窝数据开关（漫游数据，仅供受保护路由使用）")}
+                title={device.nativeCellularData ? t("Windows 蜂窝数据开关") : t("蜂窝数据开关（漫游数据，仅供受保护路由使用）")}
                 activeClass="bg-[var(--color-success)] text-white hover:bg-[#23b57c]"
               />
               <RadioTriadButton

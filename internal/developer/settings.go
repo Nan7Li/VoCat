@@ -143,11 +143,23 @@ func ResetExperimental(ctx context.Context, database *store.Store) error {
 	if err := database.DeleteAppSetting(ctx, exportproxy.SettingKey); err != nil && !errors.Is(err, store.ErrNotFound) {
 		resetErrors = append(resetErrors, fmt.Errorf("delete export proxy configurations: %w", err))
 	}
+	nativeCards := make(map[string]bool)
 	devices, err := database.ListDevices(ctx)
 	if err != nil {
 		resetErrors = append(resetErrors, fmt.Errorf("list devices while disabling roaming data: %w", err))
 	} else {
 		for _, device := range devices {
+			if store.NativeCellularData(device) {
+				if iccid := store.NativeCellularICCID(device); iccid != "" {
+					nativeCards[iccid] = true
+				}
+				if snapshot, err := database.DeviceRuntime(ctx, device.ID); err == nil && snapshot.ICCID != "" {
+					nativeCards[snapshot.ICCID] = true
+				} else if snapshot, err := database.VoWiFiRuntime(ctx, device.ID); err == nil && snapshot.ICCID != "" {
+					nativeCards[snapshot.ICCID] = true
+				}
+				continue
+			}
 			if !device.NetworkEnabled {
 				continue
 			}
@@ -162,7 +174,7 @@ func ResetExperimental(ctx context.Context, database *store.Store) error {
 		resetErrors = append(resetErrors, fmt.Errorf("list card policies while disabling roaming data: %w", err))
 	} else {
 		for _, policy := range policies {
-			if !policy.NetworkEnabled {
+			if !policy.NetworkEnabled || nativeCards[policy.ICCID] {
 				continue
 			}
 			policy.NetworkEnabled = false

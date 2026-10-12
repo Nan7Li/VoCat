@@ -260,6 +260,8 @@ func (provider *Provider) start(ctx context.Context, request vowifi.TunnelReques
 	if ikeSuite.DHID != group {
 		return nil, fmt.Errorf("ike: responder selected DH group %d but KE used group %d", ikeSuite.DHID, group)
 	}
+	provider.config.Logger.Debug("IKE selected cryptographic suite", "category", "vowifi", "event", "ike.selected_suite",
+		"encryption_bits", ikeSuite.EncryptionBits, "prf_id", ikeSuite.PRFID, "integrity_id", ikeSuite.IntegrityID, "dh_group", ikeSuite.DHID)
 	responderKE, err := onePayload(initResponsePayloads, payloadKE)
 	if err != nil {
 		return nil, err
@@ -337,9 +339,11 @@ func (provider *Provider) start(ctx context.Context, request vowifi.TunnelReques
 	}
 	idi := payload{Type: payloadIDi, Body: append([]byte{provider.config.IdentityType, 0, 0, 0}, aka.identity...)}
 	requestedIDr := payload{Type: payloadIDr, Body: append([]byte{2, 0, 0, 0}, []byte(provider.config.APN)...)}
-	tsi := dualStackTrafficSelectors(payloadTSi)
-	tsr := dualStackTrafficSelectors(payloadTSr)
-	firstAuthPayloads := buildInitialEAPAuth(idi, requestedIDr, childOfferBody, tsi, tsr, advertiseEAPOnly)
+	tsi := trafficSelectorsForFamily(payloadTSi, carrierProfile.IKEAddressFamily)
+	tsr := trafficSelectorsForFamily(payloadTSr, carrierProfile.IKEAddressFamily)
+	firstAuthPayloads := buildInitialEAPAuthForProfile(idi, requestedIDr, childOfferBody, tsi, tsr, advertiseEAPOnly, carrierProfile.IKEAddressFamily, carrierProfile.IKERequestProfile)
+	provider.config.Logger.Debug("IKE requested inner address family", "category", "vowifi",
+		"event", "ike.address_family", "address_family", carrierProfile.IKEAddressFamily, "request_profile", carrierProfile.IKERequestProfile)
 	authHeader := ikeHeader{
 		InitiatorSPI: initiatorSPI,
 		ResponderSPI: responseHeader.ResponderSPI,
@@ -361,6 +365,10 @@ func (provider *Provider) start(ctx context.Context, request vowifi.TunnelReques
 		return nil, err
 	}
 	serverName := strings.TrimSpace(provider.config.ServerName)
+	provider.logAuthResponse(authResponsePayloads, 1, aka)
+	if err := rejectFatalNotifications(authResponsePayloads); err != nil {
+		return nil, fmt.Errorf("ike: initial IKE_AUTH: %w", err)
+	}
 	if serverName == "" {
 		serverName = epdg
 	}
@@ -386,11 +394,11 @@ func (provider *Provider) start(ctx context.Context, request vowifi.TunnelReques
 	messageID := uint32(1)
 	currentPayloads := authResponsePayloads
 	for round := 0; round < 10; round++ {
-		// A responder may terminate EAP with an IKEv2 error Notify instead of
-		// another EAP payload. Preserve that protocol result rather than masking
-		// it as a missing payload type 48 parse error.
+		if round > 0 {
+			provider.logAuthResponse(currentPayloads, round+1, aka)
+		}
 		if err := rejectFatalNotifications(currentPayloads); err != nil {
-			return nil, fmt.Errorf("ike: IKE_AUTH EAP round %d: %w", round+1, err)
+			return nil, fmt.Errorf("ike: IKE_AUTH EAP round %d %s: %w", round+1, aka.lastResponseStage, err)
 		}
 		eapPayload, err := onePayload(currentPayloads, payloadEAP)
 		if err != nil {
@@ -408,12 +416,18 @@ func (provider *Provider) start(ctx context.Context, request vowifi.TunnelReques
 		}
 		messageID++
 		cleanupMessageID = messageID + 1
-		requestPayloads := []payload{{Type: payloadEAP, Body: action.Response}}
-		if deviceIdentityPending && responderAUTH == vowifi.ResponderAUTHVerified {
-			deviceIdentity, identityErr := deviceIdentityNotify(request.Identity.IMEI)
-			if identityErr == nil {
-				requestPayloads = append(requestPayloads, deviceIdentity)
-			}
+		if requested, notifyErr := deviceIdentityRequested(currentPayloads); notifyErr != nil {
+			return nil, notifyErr
+		} else if requested {
+			deviceIdentityPending = true
+		}
+		requestPayloads, identitySent, err := buildEAPResponsePayloads(action.Response, deviceIdentityPending,
+			responderAUTH == vowifi.ResponderAUTHVerified || aka.challengeComplete, request.Identity.IMEI)
+		if err != nil {
+			return nil, err
+		}
+		if identitySent {
+			deviceIdentityPending = false
 		}
 		eapHeader := ikeHeader{
 			InitiatorSPI: initiatorSPI,
@@ -421,11 +435,6 @@ func (provider *Provider) start(ctx context.Context, request vowifi.TunnelReques
 			Exchange:     exchangeIKEAuth,
 			Flags:        flagInitiator,
 			MessageID:    messageID,
-		}
-		if requested, notifyErr := deviceIdentityRequested(currentPayloads); notifyErr != nil {
-			return nil, notifyErr
-		} else if requested {
-			deviceIdentityPending = true
 		}
 		_, currentPayloads, err = sendAndReceiveIKEPayloads(
 			ctx,
@@ -481,7 +490,8 @@ func (provider *Provider) start(ctx context.Context, request vowifi.TunnelReques
 		return nil, err
 	}
 	if err := rejectFatalNotifications(finalPayloads); err != nil {
-		return nil, err
+		provider.logAuthResponse(finalPayloads, int(messageID), aka)
+		return nil, fmt.Errorf("ike: final IKE_AUTH after EAP-Success: %w", err)
 	}
 	finalAUTHs := payloadsOfType(finalPayloads, payloadAuth)
 	if len(finalAUTHs) != 1 {
@@ -679,6 +689,25 @@ func buildInitialEAPAuth(
 	tsr payload,
 	eapOnly bool,
 ) []payload {
+	return buildInitialEAPAuthForFamily(idi, requestedIDr, childOfferBody, tsi, tsr, eapOnly, "dual")
+}
+
+func buildInitialEAPAuthForFamily(idi, requestedIDr payload, childOfferBody []byte, tsi, tsr payload, eapOnly bool, family string) []payload {
+	return buildInitialEAPAuthForProfile(idi, requestedIDr, childOfferBody, tsi, tsr, eapOnly, family, "standard")
+}
+
+func buildInitialEAPAuthForProfile(idi, requestedIDr payload, childOfferBody []byte, tsi, tsr payload, eapOnly bool, family, profile string) []payload {
+	if profile == "minimal" {
+		// A minimal SWu request avoids optional CFG attributes and capability
+		// notifies rejected by some ePDGs. Authentication checks are identical.
+		payloads := []payload{idi, requestedIDr, configurationRequestForProfile(family, true),
+			{Type: payloadSA, Body: append([]byte(nil), childOfferBody...)}, tsi, tsr,
+			makeNotify(notifyInitialContact, nil)}
+		if eapOnly {
+			payloads = append(payloads, makeNotify(notifyEAPOnlyAuth, nil))
+		}
+		return payloads
+	}
 	// Match Android's IkeSessionStateMachine.buildIkeAuthReq ordering. Some
 	// carrier ePDGs inspect this first encrypted exchange before starting EAP.
 	payloads := []payload{idi, requestedIDr}
@@ -693,7 +722,7 @@ func buildInitialEAPAuth(
 		payload{Type: payloadSA, Body: append([]byte(nil), childOfferBody...)},
 		tsi,
 		tsr,
-		configurationRequest(),
+		configurationRequestForFamily(family),
 	)
 }
 
@@ -891,16 +920,40 @@ func rejectFatalNotifications(payloads []payload) error {
 			}
 			return &invalidKEPayloadError{}
 		case notifyAuthenticationFailed:
-			return fmt.Errorf(
-				"%w: responder reported AUTHENTICATION_FAILED (Notify 24)",
-				vowifi.ErrEAPAuthenticationRejected,
-			)
+			return fmt.Errorf("%w: responder reported AUTHENTICATION_FAILED (Notify 24)", vowifi.ErrEAPAuthenticationRejected)
 		}
 		if kind < 16384 {
 			return fmt.Errorf("ike: responder reported fatal notification %d", kind)
 		}
 	}
 	return nil
+}
+
+// Log protocol structure only. Identities, certificates, EAP attributes and
+// challenge/response/key bytes must never be included in diagnostics.
+func (provider *Provider) logAuthResponse(payloads []payload, round int, aka *akaClient) {
+	types := make([]int, 0, len(payloads))
+	var notifications []uint16
+	attrs := []any{"category", "vowifi", "event", "ike.auth_response", "round", round,
+		"previous_eap_stage", aka.lastResponseStage, "aka_server_authenticated", aka.challengeComplete}
+	for _, item := range payloads {
+		types = append(types, int(item.Type))
+		if item.Type == payloadNotify {
+			if kind, _, err := parseNotify(item); err == nil {
+				notifications = append(notifications, kind)
+			}
+		}
+		if item.Type == payloadEAP {
+			if packet, err := parseEAPPacket(item.Body); err == nil {
+				attrs = append(attrs, "eap_code", packet.Code, "eap_type", packet.Type)
+				if packet.Type == eapTypeAKA && len(packet.Data) >= 3 {
+					attrs = append(attrs, "aka_subtype", packet.Data[0])
+				}
+			}
+		}
+	}
+	attrs = append(attrs, "payload_types", types, "notify_types", notifications)
+	provider.config.Logger.Debug("IKE_AUTH response structure", attrs...)
 }
 
 func detectNAT(

@@ -47,6 +47,21 @@ func deviceIdentityNotify(identity string) (payload, error) {
 	return makeNotify(notifyDeviceIdentity, data), nil
 }
 
+// With EAP-only authentication, the AKA challenge MAC authenticates the server
+// before a certificate AUTH exists. This matches Android's server-authenticated
+// EAP response flag; an identity is never disclosed before either check passes.
+func buildEAPResponsePayloads(response []byte, identityRequested, serverAuthenticated bool, identity string) ([]payload, bool, error) {
+	payloads := []payload{{Type: payloadEAP, Body: response}}
+	if !identityRequested || !serverAuthenticated {
+		return payloads, false, nil
+	}
+	item, err := deviceIdentityNotify(identity)
+	if err != nil {
+		return nil, false, err
+	}
+	return append(payloads, item), true, nil
+}
+
 func decimalDigits(value string) bool {
 	for _, digit := range value {
 		if digit < '0' || digit > '9' {

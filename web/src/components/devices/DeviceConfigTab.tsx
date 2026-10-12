@@ -34,6 +34,7 @@ export function DeviceConfigTab({ editConfig, deviceStatus, saving, deleting, on
   const atPort = deviceStatus?.atPort || editConfig?.atPort;
   const usbPath = deviceStatus?.usbPath || editConfig?.usbPath;
   const isQmi = isQmiControl(controlDevice);
+  const isMbn = String(editConfig?.deviceBackend || "").toLowerCase() === "mbn" || (/^COM[0-9]+$/i.test(atPort || "") && !!interfaceName);
   const isMbim = String(editConfig?.deviceBackend || "").toLowerCase() === "mbim";
 	const isReader = editConfig?.deviceType === "usb_sim_reader";
 	const supportsCellularIMS = !isReader && editConfig?.deviceType !== "wifi_410" && editConfig?.deviceType !== "ml307";
@@ -52,6 +53,7 @@ export function DeviceConfigTab({ editConfig, deviceStatus, saving, deleting, on
           { value: "qmi", label: "QMI", disabled: !controlDevice && editConfig?.deviceBackend !== "qmi" },
         ]),
     ...(isMbim ? [{ value: "mbim", label: "MBIM" }] : []),
+    ...(isMbn ? [{ value: "mbn", label: t("Windows 移动宽带") }] : []),
   ];
 
   return (

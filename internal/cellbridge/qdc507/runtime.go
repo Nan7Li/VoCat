@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -486,7 +485,7 @@ func readPrivateFile(path string) ([]byte, error) {
 	if info.Mode().Perm()&0o022 != 0 {
 		return nil, errRuntimePerm
 	}
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	file, err := openRuntimeNoFollow(path)
 	if err != nil {
 		return nil, err
 	}

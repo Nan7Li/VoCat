@@ -94,9 +94,11 @@ func newESPTunnel(config ChildSAConfig, randomSource io.Reader) (*espTunnel, err
 		randomSource,
 	)
 	if err != nil {
+		(&espTunnel{outbound: outbound}).zero()
 		return nil, fmt.Errorf("ike: inbound ESP: %w", err)
 	}
 	if len(config.InitiatorSelectors) == 0 || len(config.ResponderSelectors) == 0 {
+		(&espTunnel{outbound: outbound, inbound: inbound}).zero()
 		return nil, errors.New("ike: ESP traffic selectors are required")
 	}
 	return &espTunnel{
@@ -158,6 +160,33 @@ func newESPDirection(
 		icvLength: icvLength,
 		random:    randomSource,
 	}, nil
+}
+
+// zero releases the mutable key material retained by the user-space ESP
+// directions. The cipher implementation is held behind cipher.Block and is
+// dropped as well, making its key schedule eligible for garbage collection
+// once no other reference remains.
+func (tunnel *espTunnel) zero() {
+	if tunnel == nil {
+		return
+	}
+	for _, direction := range []*espDirection{tunnel.outbound, tunnel.inbound} {
+		if direction == nil {
+			continue
+		}
+		direction.mu.Lock()
+		zeroESPBytes(direction.authKey)
+		direction.authKey = nil
+		direction.block = nil
+		direction.random = nil
+		direction.mu.Unlock()
+	}
+}
+
+func zeroESPBytes(value []byte) {
+	for index := range value {
+		value[index] = 0
+	}
 }
 
 func (tunnel *espTunnel) seal(innerPacket []byte) ([]byte, error) {

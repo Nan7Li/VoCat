@@ -23,6 +23,7 @@ import (
 
 	"vocat/internal/auth"
 	"vocat/internal/config"
+	"vocat/internal/desktop"
 	"vocat/internal/developer"
 	"vocat/internal/device"
 	"vocat/internal/exportproxy"
@@ -328,6 +329,9 @@ func startupFlightModeContext(parent context.Context) (context.Context, context.
 func main() {
 	logs := loghub.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}), 2000)
 	logger := slog.New(logs)
+	if runWindowsServiceIfNeeded(logger, logs) {
+		return
+	}
 
 	args := os.Args[1:]
 	switch subcommand, rest := splitSubcommand(args); subcommand {
@@ -353,6 +357,16 @@ func main() {
 		// would otherwise enter the menu (root on a TTY) but a server is wanted.
 		if err := run(logger, logs); err != nil {
 			logger.Error("server stopped", "error", err)
+			os.Exit(1)
+		}
+	case "desktop", "windows-ui":
+		if err := desktop.Run(); err != nil {
+			desktop.ShowError(err)
+			os.Exit(1)
+		}
+	case "update-helper":
+		if err := update.RunHelper(rest); err != nil {
+			logger.Error("Windows update helper failed", "error", err)
 			os.Exit(1)
 		}
 	case "version", "-v", "--version":
@@ -411,6 +425,10 @@ func splitSubcommand(args []string) (string, []string) {
 }
 
 func run(logger *slog.Logger, logs *loghub.Hub) error {
+	return runWithContext(context.Background(), logger, logs)
+}
+
+func runWithContext(runContext context.Context, logger *slog.Logger, logs *loghub.Hub) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
@@ -667,7 +685,7 @@ func run(logger *slog.Logger, logs *loghub.Hub) error {
 	protocolMux := httpsmode.NewMultiplexer(baseListener, httpsManager)
 
 	signalContext, stopSignals := signal.NotifyContext(
-		context.Background(),
+		runContext,
 		os.Interrupt,
 		syscall.SIGTERM,
 	)
@@ -742,6 +760,11 @@ func configureDeviceBackends(
 		entry, mapErr := mapper.Get(config.ID)
 		if mapErr != nil {
 			continue
+		}
+		if reconcileWindowsDeviceConfig(&config, entry) {
+			if err := database.UpsertDevice(ctx, config); err != nil {
+				logger.Warn("migrate Windows cellular binding", "device_id", config.ID, "error", err)
+			}
 		}
 		if config.DeviceType == store.DeviceTypeUSBSIMReader {
 			if err := manager.SetSIMPin(entry.ID, config.SIMPIN); err != nil {
@@ -858,7 +881,7 @@ func disableAllDeveloperCellularData(
 	}
 	mapper := integration.ATMapper{Store: database, Devices: manager}
 	for _, config := range configs {
-		if config.DeviceType == store.DeviceTypeUSBSIMReader {
+		if config.DeviceType == store.DeviceTypeUSBSIMReader || store.NativeCellularData(config) {
 			continue
 		}
 		entry, err := mapper.Get(config.ID)

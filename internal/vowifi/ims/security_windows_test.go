@@ -1,0 +1,139 @@
+//go:build windows && (amd64 || arm64)
+
+package ims
+
+import (
+	"encoding/binary"
+	"net"
+	"testing"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+func TestWindowsWFPABISizes(t *testing.T) {
+	tests := []struct {
+		name string
+		got  uintptr
+		want uintptr
+	}{
+		{"FWP_BYTE_BLOB", unsafe.Sizeof(wfpByteBlob{}), 16},
+		{"FWPM_FILTER_CONDITION0", unsafe.Sizeof(wfpFilterCondition0{}), 40},
+		{"FWPM_FILTER0", unsafe.Sizeof(wfpFilter0{}), 200},
+		{"FWPM_SESSION0", unsafe.Sizeof(wfpSession0{}), 72},
+		{"IPSEC_TRAFFIC1", unsafe.Sizeof(ipsecTraffic1{}), 72},
+		{"IPSEC_GETSPI1", unsafe.Sizeof(ipsecGetSPI1{}), 96},
+		{"IPSEC_SA_AUTH_INFORMATION0", unsafe.Sizeof(ipsecSAAuthInformation0{}), 32},
+		{"IPSEC_SA_AUTH_AND_CIPHER_INFORMATION0", unsafe.Sizeof(ipsecSAAuthAndCipherInformation0{}), 64},
+		{"IPSEC_SA_BUNDLE0", unsafe.Sizeof(ipsecSABundle0{}), 88},
+	}
+	for _, test := range tests {
+		if test.got != test.want {
+			t.Errorf("%s size = %d, want %d", test.name, test.got, test.want)
+		}
+	}
+}
+
+func TestWindowsWFPIPv4AddressUsesHostOrder(t *testing.T) {
+	version, value, address6, err := wfpAddressValue(net.ParseIP("192.0.2.10"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != fwpIPVersionV4 || value.type_ != wfpUint32 || address6 != nil {
+		t.Fatalf("unexpected WFP address result: version=%d type=%d v6=%v", version, value.type_, address6)
+	}
+	want := uint32(0xc000020a)
+	if uint32(value.value) != want {
+		t.Fatalf("WFP IPv4 value = %#x, want %#x", value.value, want)
+	}
+}
+
+func TestWindowsWFPTrafficIPv4UsesHostOrderUnion(t *testing.T) {
+	traffic, version, err := makeIPSecTraffic(net.ParseIP("192.0.2.10"), net.ParseIP("198.51.100.20"), 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != fwpIPVersionV4 || binary.LittleEndian.Uint32(traffic.localAddress[:4]) != 0xc000020a || binary.LittleEndian.Uint32(traffic.remoteAddress[:4]) != 0xc6336414 {
+		t.Fatal("IPsec traffic IPv4 unions do not contain host-order UINT32 addresses")
+	}
+}
+
+func TestWindowsWFPTrafficPreservesIPv6Bytes(t *testing.T) {
+	local := net.ParseIP("2001:db8::10")
+	remote := net.ParseIP("2001:db8::20")
+	traffic, version, err := makeIPSecTraffic(local, remote, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != fwpIPVersionV6 || traffic.filterOrPolicy != 42 {
+		t.Fatalf("unexpected traffic header: version=%d filter=%d", version, traffic.filterOrPolicy)
+	}
+	if got := net.IP(traffic.localAddress[:]).String(); got != "2001:db8::10" {
+		t.Fatalf("local address = %s", got)
+	}
+	if got := net.IP(traffic.remoteAddress[:]).String(); got != "2001:db8::20" {
+		t.Fatalf("remote address = %s", got)
+	}
+}
+
+func TestWindowsWFPManualSAProceduresAreAvailable(t *testing.T) {
+	for _, procedure := range []*windows.LazyProc{
+		procFwpmEngineOpen0,
+		procFwpmEngineClose0,
+		procFwpmFilterAdd0,
+		procFwpmFilterDeleteByID0,
+		procIPSecSaContextCreate1,
+		procIPSecSaContextSetSPI0,
+		procIPSecSaContextAddInbound0,
+		procIPSecSaContextAddOutbound0,
+		procIPSecSaContextDeleteByID0,
+	} {
+		if err := procedure.Find(); err != nil {
+			t.Errorf("%s unavailable: %v", procedure.Name, err)
+		}
+	}
+}
+
+func TestWindowsWFPManualSAConstants(t *testing.T) {
+	if fwpActionCalloutTerminating != 0x5003 {
+		t.Fatalf("FWP_ACTION_CALLOUT_TERMINATING = %#x, want SDK value 0x5003", fwpActionCalloutTerminating)
+	}
+	if ipsecTransformESPAuth != 2 || ipsecTransformESPAuthAndCipher != 4 {
+		t.Fatalf("unexpected IPsec transform constants: auth=%d auth+cipher=%d", ipsecTransformESPAuth, ipsecTransformESPAuthAndCipher)
+	}
+	if ipsecCipherType3DES != 2 || ipsecCipherTypeAES128 != 3 {
+		t.Fatalf("unexpected IPsec cipher constants: 3DES=%d AES=%d", ipsecCipherType3DES, ipsecCipherTypeAES128)
+	}
+}
+
+func TestWindowsWFPFilterProtocol(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		protocols []uint8
+		want      uint8
+		wantErr   bool
+	}{
+		{name: "tcp", protocols: []uint8{6}, want: 6},
+		{name: "duplicate tcp", protocols: []uint8{6, 6}, want: 6},
+		{name: "tcp and udp", protocols: []uint8{6, 17}},
+		{name: "udp and tcp", protocols: []uint8{17, 6}},
+		{name: "empty", wantErr: true},
+		{name: "unsupported combination", protocols: []uint8{6, 132}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := wfpFilterProtocol(test.protocols)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("wfpFilterProtocol() error = nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("wfpFilterProtocol() error = %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("wfpFilterProtocol() = %d, want %d", got, test.want)
+			}
+		})
+	}
+}

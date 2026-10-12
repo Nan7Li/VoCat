@@ -26,6 +26,7 @@ const CELLULAR_DATA_DISABLE_UI_TIMEOUT_MS = 35000;
 const CELLULAR_DATA_ENABLE_UI_TIMEOUT_MS = 80000;
 
 interface CellularDataStatus {
+  exportProxyOnly?: boolean;
   enabled: boolean;
   connected: boolean;
   phase: "unknown" | "starting" | "connected" | "stopping" | "recovering" | "disabled" | "failed";
@@ -299,7 +300,7 @@ export default function DevicesPage() {
 	  if (terminal.phase === "failed") {
 		throw new Error(terminal.lastError || (enabled ? t("开启漫游数据失败") : t("关闭漫游数据失败")));
 	  }
-	  message.success(enabled ? t("漫游数据已开启，仅供 Export Proxy 使用") : t("漫游数据已关闭"));
+	  message.success(enabled ? accepted.exportProxyOnly === false ? t("Windows 蜂窝数据已连接") : t("漫游数据已开启，仅供 Export Proxy 使用") : t("蜂窝数据已关闭"));
     } catch (e) {
 	  message.error(apiMessage(e) || (enabled ? t("开启漫游数据失败") : t("关闭漫游数据失败")));
     } finally {
@@ -483,7 +484,7 @@ export default function DevicesPage() {
     setAddConfig((prev) => {
       const mode = String(d.mode || "").toLowerCase();
       const isReader = d.hardwareKind === "pcsc" || mode === "pcsc";
-      const backend = isReader ? "pcsc" : mode === "mbim" ? "mbim" : isQmiControl(d.controlPath) || (mode === "qmi" && d.controlPath) ? "qmi" : "at";
+      const backend = isReader ? "pcsc" : mode === "mbn" ? "mbn" : mode === "mbim" ? "mbim" : isQmiControl(d.controlPath) || (mode === "qmi" && d.controlPath) ? "qmi" : "at";
       return {
         ...prev,
         interface: d.netInterface || "",

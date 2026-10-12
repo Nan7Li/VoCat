@@ -1115,7 +1115,7 @@ func (runtime *cellularDataRuntime) observe(configID string, desired, connected 
 		entry.status.Phase = "connected"
 	} else {
 		entry.status.Phase = "failed"
-		entry.status.LastError = "live QMI packet session or host route is not ready"
+		entry.status.LastError = "live cellular data session or host route is not ready"
 	}
 	runtime.signalLocked(entry)
 	return entry.status

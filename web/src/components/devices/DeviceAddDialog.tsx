@@ -48,6 +48,7 @@ export function DeviceAddDialog(props: DeviceAddDialogProps) {
   const { t } = useI18n();
   const { addSelected, addConfig } = props;
   const fixedQmi = isQmiControl(addSelected?.controlPath || addConfig?.controlDevice);
+  const isMbn = String(addSelected?.mode || "").toLowerCase() === "mbn";
   const isMbim = String(addSelected?.mode || "").toLowerCase() === "mbim";
 	const isReader = addSelected?.hardwareKind === "pcsc" || String(addSelected?.mode || "").toLowerCase() === "pcsc";
 
@@ -68,6 +69,7 @@ export function DeviceAddDialog(props: DeviceAddDialogProps) {
           { value: "qmi", label: "QMI", disabled: !addConfig.controlDevice },
         ]),
     ...(isMbim ? [{ value: "mbim", label: "MBIM" }] : []),
+    ...(isMbn ? [{ value: "mbn", label: t("Windows 移动宽带") }] : []),
   ];
   const set = (patch: Partial<AddDeviceForm>) => props.onConfigChange({ ...addConfig, ...patch });
 

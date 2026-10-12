@@ -126,6 +126,15 @@ func dualStackTrafficSelectors(kind uint8) payload {
 	return payload{Type: kind, Body: body}
 }
 
+func trafficSelectorsForFamily(kind uint8, family string) payload {
+	if family == "ipv4" || family == "ipv6" {
+		selector := anyTrafficSelector(family == "ipv6")
+		selector.Type = kind
+		return selector
+	}
+	return dualStackTrafficSelectors(kind)
+}
+
 func parseTrafficSelectors(item payload) ([]trafficSelector, error) {
 	if len(item.Body) < 4 {
 		return nil, errors.New("ike: traffic selector payload is truncated")
@@ -180,6 +189,14 @@ type networkConfiguration struct {
 }
 
 func configurationRequest() payload {
+	return configurationRequestForFamily("dual")
+}
+
+func configurationRequestForFamily(family string) payload {
+	return configurationRequestForProfile(family, false)
+}
+
+func configurationRequestForProfile(family string, minimal bool) payload {
 	attributes := []uint16{
 		configInternalIPv4Address,
 		configInternalIPv6Address,
@@ -193,6 +210,15 @@ func configurationRequest() payload {
 	}
 	body := []byte{configRequest, 0, 0, 0}
 	for _, attribute := range attributes {
+		if minimal && attribute == configApplicationVersion {
+			continue
+		}
+		if family == "ipv4" && (attribute == configInternalIPv6Address || attribute == configInternalIPv6DNS || attribute == configPCSCFIPv6Address) {
+			continue
+		}
+		if family == "ipv6" && (attribute == configInternalIPv4Address || attribute == configInternalIPv4DNS || attribute == configPCSCFIPv4Address) {
+			continue
+		}
 		var header [4]byte
 		binary.BigEndian.PutUint16(header[0:2], attribute)
 		body = append(body, header[:]...)

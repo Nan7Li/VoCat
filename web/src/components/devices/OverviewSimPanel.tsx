@@ -27,7 +27,7 @@ export function OverviewSimPanel({ device, simOperatorDisplay, customPhoneNumber
   const carrierCountryCode = String(modem?.homeCarrierCountryCode ?? "").trim() || carrierIso(modem?.imsi);
   const displayedPhoneNumber = customPhoneNumber?.trim() || device.localPhone || "--";
   const backendLabel =
-    device.backendMode === "qmi" ? "QMI" : device.backendMode === "mbim" ? "MBIM" : device.backendMode === "at" ? "AT" : "Auto";
+    device.backendMode === "mbn" ? t("Windows 移动宽带") : device.backendMode === "qmi" ? "QMI" : device.backendMode === "mbim" ? "MBIM" : device.backendMode === "at" ? "AT" : "Auto";
   const storage = device.smsStorage;
   const meFull = storageAreaFull(storage?.me);
   const smFull = storageAreaFull(storage?.sm);

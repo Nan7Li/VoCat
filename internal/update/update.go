@@ -246,6 +246,9 @@ func applyUpdate(ctx context.Context, logger *slog.Logger, opts Options, release
 	// If a verified installation already succeeded but its restart failed,
 	// retry the restart without replacing .previous with the new binary itself.
 	alreadyInstalled, _ := VerifyFileSHA256(opts.Target, expectedHash)
+	if runtime.GOOS == "windows" && !alreadyInstalled {
+		return installVerifiedBinary(ctx, logger, opts.Target, tmpPath, latest, restart)
+	}
 	if !alreadyInstalled {
 		if err := backupAndReplace(opts.Target, tmpPath); err != nil {
 			return err
@@ -420,6 +423,9 @@ func planServiceRestart(logger *slog.Logger) serviceRestartPlan {
 // VOCAT_SYSTEMD_UNIT selects the NAS unit and is not replaced by an old
 // OpenWrt init script. Without that variable, OpenWrt behavior is unchanged.
 func RestartService(logger *slog.Logger) error {
+	if runtime.GOOS == "windows" {
+		return restartWindowsService(logger)
+	}
 	plan := planServiceRestart(logger)
 	if plan.openwrt {
 		cmd := exec.Command("/etc/init.d/vocat", "restart")
@@ -540,6 +546,16 @@ func assetNamesFor(goos, goarch string) []string {
 		// Official 32-bit ARM builds target GOARM=7. Keep the generic legacy
 		// name as a fallback for installations consuming an older release.
 		return []string{"halo-linux-armv7", "halo-linux-arm", "vocat-linux-armv7", "vocat-linux-arm"}
+	}
+	if goos == "windows" {
+		// Current Windows releases publish a .exe asset. Keep the extensionless
+		// names so an older release asset still matches. Linux names are above.
+		return []string{
+			fmt.Sprintf("halo-%s-%s.exe", goos, goarch),
+			fmt.Sprintf("vocat-%s-%s.exe", goos, goarch),
+			fmt.Sprintf("halo-%s-%s", goos, goarch),
+			fmt.Sprintf("vocat-%s-%s", goos, goarch),
+		}
 	}
 	return []string{
 		fmt.Sprintf("halo-%s-%s", goos, goarch),

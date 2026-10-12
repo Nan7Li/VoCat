@@ -174,6 +174,7 @@ func (session *Session) DialCall(ctx context.Context, number string) (vowifi.Cal
 }
 
 func (session *Session) watchOutgoingCall(call *imsCall, key sipTransactionKey) {
+	earlyDialogTag := ""
 	timer := time.NewTimer(2 * time.Minute)
 	defer timer.Stop()
 	defer func() {
@@ -203,6 +204,7 @@ func (session *Session) watchOutgoingCall(call *imsCall, key sipTransactionKey) 
 				session.updateCallDialogFromResponse(call, response)
 				if len(response.Body) > 0 {
 					if mediaErr := call.media.configureRemote(response.Body); mediaErr == nil {
+						earlyDialogTag = headerParameter(response.value("To"), "tag")
 						session.setCallMediaReady(call.callID)
 						session.setCallState(call.callID, "early_media")
 					}
@@ -216,7 +218,12 @@ func (session *Session) watchOutgoingCall(call *imsCall, key sipTransactionKey) 
 			}
 			if response.StatusCode >= 200 && response.StatusCode < 300 {
 				session.updateCallDialogFromResponse(call, response)
-				mediaErr := call.media.configureRemote(response.Body)
+				// A reliable provisional response may already have answered our
+				// offer. The final 2xx need not repeat that SDP (RFC 3262, section 5).
+				var mediaErr error
+				if len(response.Body) > 0 || !call.media.ready() || earlyDialogTag != headerParameter(response.value("To"), "tag") {
+					mediaErr = call.media.configureRemote(response.Body)
+				}
 				_ = session.sendACK(call)
 				if mediaErr != nil {
 					session.finishCall(call.callID, "failed", response.StatusCode, mediaErr.Error())
@@ -910,6 +917,8 @@ func (session *Session) setCallMediaReady(id string) {
 	}
 	call.public.MediaReady = call.media.ready()
 	call.public.Codec = call.media.Codec()
+	session.imsLogger().Debug("IMS call media negotiated", "category", "call",
+		"codec", call.public.Codec, "media_ready", call.public.MediaReady)
 	if call.public.MediaReady && call.public.Recording == "" && session.provider.config.RecordingsDir != "" {
 		relative, absolute := session.recordingPath(call)
 		if absolute != "" {
@@ -992,6 +1001,10 @@ func (session *Session) finishCall(id, state string, code int, reason string) {
 		}
 	}
 	session.callMu.Unlock()
+	if state == "failed" {
+		session.imsLogger().Warn("IMS call failed", "category", "call",
+			"state", state, "sip_status", code, "error", safeSIPDiagnostic(reason))
+	}
 	if media != nil {
 		_ = media.Close()
 	}

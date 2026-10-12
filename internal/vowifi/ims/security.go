@@ -909,6 +909,16 @@ func (session *Session) activateIPSec(
 
 	session.conn = connection
 	if session.transport == "tcp" {
+		// MT MESSAGE can arrive over UDP despite a TCP REGISTER. TS 33.203
+		// requires UDP requests and responses to leave via port_uc, toward
+		// port_ps; replying from the port_us listener misses the outbound SA.
+		udpClient, err := net.ListenUDP("udp", &net.UDPAddr{IP: localIP, Port: session.securityProposal.portClient})
+		if err != nil {
+			_ = connection.Close()
+			_ = handle.Close(context.Background())
+			return fmt.Errorf("ims: reserve protected UDP client port: %w", err)
+		}
+		session.protectedUDPClient = udpClient
 		session.reader = bufio.NewReader(connection)
 	} else {
 		session.reader = nil

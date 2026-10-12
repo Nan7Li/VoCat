@@ -110,15 +110,9 @@ func (media *rtpMedia) ready() bool {
 }
 
 func (media *rtpMedia) offerSDP(local net.IP) []byte {
-	return media.buildSDP(local, "8 0 104 102 100", []string{
+	return media.buildSDP(local, "8 0", []string{
 		"a=rtpmap:8 PCMA/8000",
 		"a=rtpmap:0 PCMU/8000",
-		"a=rtpmap:104 AMR-WB/16000",
-		"a=fmtp:104 mode-change-capability=2;max-red=220",
-		"a=rtpmap:102 AMR/8000",
-		"a=fmtp:102 mode-change-capability=2;max-red=220",
-		"a=rtpmap:100 telephone-event/8000",
-		"a=fmtp:100 0-15",
 	})
 }
 
@@ -165,12 +159,6 @@ func (media *rtpMedia) buildSDP(local net.IP, formats string, attributes []strin
 		lines = append(lines,
 			"a=rtpmap:8 PCMA/8000",
 			"a=rtpmap:0 PCMU/8000",
-			"a=rtpmap:104 AMR-WB/16000",
-			"a=fmtp:104 mode-change-capability=2;max-red=220",
-			"a=rtpmap:102 AMR/8000",
-			"a=fmtp:102 mode-change-capability=2;max-red=220",
-			"a=rtpmap:100 telephone-event/8000",
-			"a=fmtp:100 0-15",
 		)
 	} else {
 		lines = append(lines, attributes...)
@@ -204,18 +192,13 @@ func (media *rtpMedia) configureRemote(body []byte) error {
 				name = fmt.Sprintf("PAYLOAD-%d", parsed)
 			}
 		}
-		if name != "TELEPHONE-EVENT" {
+		if name == "PCMA" || name == "PCMU" {
 			codec, payload = name, byte(parsed)
 			break
 		}
 	}
-	if codec == "" && len(formats) > 0 {
-		if parsed, parseErr := strconv.Atoi(formats[0]); parseErr == nil && parsed >= 0 && parsed <= 127 {
-			codec, payload = fmt.Sprintf("PAYLOAD-%d", parsed), byte(parsed)
-		}
-	}
 	if codec == "" {
-		return errors.New("ims: remote SDP has no usable audio format")
+		return errors.New("ims: remote SDP has no supported audio codec (PCMA/PCMU required)")
 	}
 	media.mu.Lock()
 	media.remote = &net.UDPAddr{IP: address, Port: port}
@@ -293,6 +276,9 @@ func (media *rtpMedia) WritePCM(samples []int16) error {
 	if remote == nil || codec == "" {
 		return errors.New("ims: RTP media is not negotiated")
 	}
+	if codec != "PCMA" && codec != "PCMU" {
+		return errors.New("ims: RTP codec has no PCM encoder")
+	}
 	media.writeMu.Lock()
 	defer media.writeMu.Unlock()
 	media.pending = append(media.pending, samples...)
@@ -334,7 +320,7 @@ func (media *rtpMedia) receive() {
 			remote.Port = source.Port // symmetric RTP/NAT port learning
 		}
 		media.mu.Unlock()
-		if remote == nil || !remote.IP.Equal(source.IP) || count < 12 || packet[0]>>6 != 2 || packet[1]&0x7f != payload {
+		if remote == nil || (codec != "PCMA" && codec != "PCMU") || !remote.IP.Equal(source.IP) || count < 12 || packet[0]>>6 != 2 || packet[1]&0x7f != payload {
 			continue
 		}
 		header := 12 + int(packet[0]&0x0f)*4
