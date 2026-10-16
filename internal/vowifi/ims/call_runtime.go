@@ -216,7 +216,13 @@ func (session *Session) watchOutgoingCall(call *imsCall, key sipTransactionKey) 
 			}
 			if response.StatusCode >= 200 && response.StatusCode < 300 {
 				session.updateCallDialogFromResponse(call, response)
-				mediaErr := call.media.configureRemote(response.Body)
+				// An IMS peer may answer in a provisional response and omit
+				// SDP from the final 2xx. Keep that negotiated media, while
+				// still rejecting missing or invalid answers when necessary.
+				var mediaErr error
+				if len(response.Body) > 0 || !call.media.ready() {
+					mediaErr = call.media.configureRemote(response.Body)
+				}
 				_ = session.sendACK(call)
 				if mediaErr != nil {
 					session.finishCall(call.callID, "failed", response.StatusCode, mediaErr.Error())
