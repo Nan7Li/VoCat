@@ -76,7 +76,9 @@ func buildRTP(seq uint16, timestamp, ssrc uint32, payload []byte) []byte {
 
 // validateAudioSDP accepts an offer or answer that contains PCMU and a port
 // aimed at the authenticated SIP source. 0.0.0.0 means "use that source".
-// Any other address is refused so media is not sent to a third party.
+// Proxy clients may advertise a benchmark-range TUN address over Tailscale;
+// that address is also pinned to the authenticated source, never dialed.
+// Other mismatched addresses are refused.
 func validateAudioSDP(body string, source net.IP) (net.IP, int, error) {
 	body = strings.ReplaceAll(body, "\r\n", "\n")
 	var sessionIP, mediaIP net.IP
@@ -181,7 +183,16 @@ func pinMediaIP(declared, source net.IP) (net.IP, bool) {
 		return append(net.IP(nil), source...), true
 	}
 	if !sameIP(declared, source) {
-		return nil, false
+		// Some iOS proxy clients advertise their local 198.18.0.0/15
+		// tunnel address while SIP arrives from their Tailscale address.
+		// Accept only that combination and retain the authenticated source
+		// as the RTP destination, so SDP cannot redirect audio elsewhere.
+		tun := declared.To4()
+		peer := source.To4()
+		if tun == nil || peer == nil || tun[0] != 198 || tun[1]&0xfe != 18 ||
+			peer[0] != 100 || peer[1]&0xc0 != 64 {
+			return nil, false
+		}
 	}
 	return append(net.IP(nil), source...), true
 }
