@@ -2130,6 +2130,10 @@
       },
       "epdg": {
         "hostname": "epdg.epc.mnc840.mcc311.pub.3gppnetwork.org"
+      },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 15
       }
     },
     {
@@ -3226,6 +3230,10 @@
       "epdg": {
         "hostname": "epdg.epc.mnc270.mcc302.pub.3gppnetwork.org"
       },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 15
+      },
       "ims": {
         "ipsec_encryption": "aes-cbc"
       }
@@ -3291,6 +3299,10 @@
       },
       "epdg": {
         "hostname": "epdg.epc.mnc017.mcc716.pub.3gppnetwork.org"
+      },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 16
       }
     },
     {
@@ -3438,6 +3450,10 @@
       "epdg": {
         "hostname": "epdg.fastweb.it"
       },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 15
+      },
       "ims": {
         "ipsec_encryption": "aes-cbc"
       }
@@ -3451,6 +3467,10 @@
       },
       "epdg": {
         "hostname": "epdg.epc.mnc370.mcc302.pub.3gppnetwork.org"
+      },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 5
       },
       "ims": {
         "ipsec_encryption": "aes-cbc"
@@ -4788,6 +4808,9 @@
           "893710"
         ]
       },
+      "ike": {
+        "proposal": "modern"
+      },
       "ims": {
         "ipsec_encryption": "aes-cbc"
       }
@@ -4971,6 +4994,10 @@
       },
       "epdg": {
         "hostname": "epdg.epc.mnc005.mcc283.pub.3gppnetwork.org"
+      },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 15
       },
       "ims": {
         "ipsec_encryption": "aes-cbc"
@@ -5258,6 +5285,10 @@
       },
       "epdg": {
         "hostname": "epdg.epc.mnc010.mcc206.pub.3gppnetwork.org"
+      },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 5
       },
       "ims": {
         "ipsec_encryption": "aes-cbc"
@@ -6253,6 +6284,10 @@
       "epdg": {
         "hostname": "epdg.epc.mnc003.mcc214.pub.3gppnetwork.org"
       },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 5
+      },
       "ims": {
         "ipsec_encryption": "aes-cbc"
       }
@@ -6403,6 +6438,10 @@
       },
       "epdg": {
         "hostname": "epdg.epc.mnc003.mcc260.pub.3gppnetwork.org"
+      },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 5
       },
       "ims": {
         "ipsec_encryption": "aes-cbc"
@@ -7040,6 +7079,10 @@
       },
       "epdg": {
         "hostname": "epdg.epc.mnc720.mcc302.pub.3gppnetwork.org"
+      },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 5
       },
       "ims": {
         "ipsec_encryption": "aes-cbc"
@@ -7787,6 +7830,10 @@
       },
       "epdg": {
         "hostname": "epdg.epc.mnc001.mcc222.pub.3gppnetwork.org"
+      },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 16
       },
       "ims": {
         "ipsec_encryption": "aes-cbc"
@@ -8874,6 +8921,10 @@
       "epdg": {
         "hostname": "epdg.epc.mnc720.mcc302.pub.3gppnetwork.org"
       },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 5
+      },
       "ims": {
         "ipsec_encryption": "aes-cbc"
       }
@@ -9301,6 +9352,10 @@
       },
       "epdg": {
         "hostname": "epdg.epc.mnc001.mcc242.pub.3gppnetwork.org"
+      },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 15
       },
       "ims": {
         "ipsec_encryption": "aes-cbc"
@@ -9858,6 +9913,10 @@
       "epdg": {
         "hostname": "epdg.eps.truphone.net"
       },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 15
+      },
       "ims": {
         "ipsec_encryption": "aes-cbc"
       }
@@ -9951,6 +10010,10 @@
       },
       "epdg": {
         "hostname": "epdg.epc.mnc580.mcc311.pub.3gppnetwork.org"
+      },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 15
       }
     },
     {
@@ -10019,6 +10082,10 @@
       },
       "epdg": {
         "hostname": "epdg.epc.mnc007.mcc454.pub.3gppnetwork.org"
+      },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 16
       },
       "ims": {
         "ipsec_encryption": "aes-cbc"
@@ -10096,6 +10163,10 @@
       },
       "epdg": {
         "hostname": "epdg.epc.mnc099.mcc270.pub.3gppnetwork.org"
+      },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 5
       },
       "ims": {
         "ipsec_encryption": "aes-cbc"
@@ -10634,6 +10705,10 @@
       "epdg": {
         "hostname": "epdg.epc.mnc003.mcc230.pub.3gppnetwork.org"
       },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 5
+      },
       "ims": {
         "ipsec_encryption": "aes-cbc"
       }
@@ -10723,6 +10798,9 @@
         "iccid_prefixes": [
           "893670"
         ]
+      },
+      "ike": {
+        "proposal": "modern"
       }
     },
     {
@@ -11748,6 +11826,10 @@
       },
       "epdg": {
         "hostname": "epdg.epc.mnc006.mcc716.pub.3gppnetwork.org"
+      },
+      "ike": {
+        "proposal": "modern",
+        "dh_group": 5
       },
       "ims": {
         "ipsec_encryption": "aes-cbc"
