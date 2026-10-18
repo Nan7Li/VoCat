@@ -208,3 +208,53 @@ func hasIPCCWarning(warnings []IPCCImportWarning, code string) bool {
 	}
 	return false
 }
+
+func TestImportCarrierIPCCKeepsSupportedDHGroups(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		groups      []any
+		proposal    string
+		dhGroup     uint16
+		unsupported bool
+	}{
+		{name: "orange-modp1536", groups: []any{5}, proposal: IKEProposalModern, dhGroup: 5},
+		{name: "large-modp", groups: []any{16, 15}, proposal: IKEProposalModern, dhGroup: 15},
+		{name: "modp2048-with-ecp", groups: []any{19, 14}, proposal: IKEProposalModern, unsupported: true},
+		{name: "legacy", groups: []any{2}, proposal: IKEProposalLegacy},
+		{name: "ecp-only", groups: []any{19}, unsupported: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			proposals := make([]any, 0, len(test.groups))
+			for _, group := range test.groups {
+				proposals = append(proposals, map[string]any{"DHGroup": group, "EAPMethod": "EAP-AKA"})
+			}
+			archivePath := writeTestIPCC(t, map[string]testIPCCPlist{
+				"Payload/Orange_ES.bundle/carrier.plist": {
+					format: plist.XMLFormat,
+					value: map[string]any{
+						"CarrierName":    "Orange",
+						"SupportedPLMNs": []any{"21403"},
+						"TechSettings": map[string]any{
+							"IKE": map[string]any{"Proposals": proposals},
+						},
+					},
+				},
+			})
+			result, err := ImportCarrierIPCC(archivePath, IPCCImportOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var document carrierProfileDocument
+			if err := json.Unmarshal(result.Document, &document); err != nil {
+				t.Fatal(err)
+			}
+			rule := document.Profiles[0]
+			if rule.IKE.Proposal != test.proposal || rule.IKE.DHGroup != test.dhGroup {
+				t.Fatalf("IKE = %#v, want proposal %q group %d", rule.IKE, test.proposal, test.dhGroup)
+			}
+			if hasIPCCWarning(result.Warnings, "unsupported_ike_group") != test.unsupported {
+				t.Fatalf("unsupported_ike_group warning = %v, want %v", !test.unsupported, test.unsupported)
+			}
+		})
+	}
+}

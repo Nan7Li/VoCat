@@ -190,3 +190,71 @@ func TestRFC7383FragmentationAndReassembly(t *testing.T) {
 		t.Fatalf("tampered fragment decrypt error = %v, want errIntegrityMismatch", err)
 	}
 }
+
+func TestRFC3526MODPGroupsAgree(t *testing.T) {
+	for group, bits := range map[uint16]int{dhMODP1536: 1536, dhMODP3072: 3072, dhMODP4096: 4096} {
+		if !supportedDHGroup(group) {
+			t.Fatalf("group %d is not supported", group)
+		}
+		exchange, err := newDHExchange(group, bytes.NewReader(bytes.Repeat([]byte{0x42}, bits/8)))
+		if err != nil {
+			t.Fatalf("group %d: newDHExchange() error = %v", group, err)
+		}
+		if exchange.prime.BitLen() != bits || len(exchange.Public) != bits/8 {
+			t.Fatalf("group %d: prime bits %d KE length %d", group, exchange.prime.BitLen(), len(exchange.Public))
+		}
+		// RFC 3526 primes are safe primes; a transcription error would fail here.
+		if !exchange.prime.ProbablyPrime(20) {
+			t.Fatalf("group %d: prime constant is not prime", group)
+		}
+		peer, err := newDHExchange(group, bytes.NewReader(bytes.Repeat([]byte{0x24}, bits/8)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		first, err := exchange.shared(peer.Public)
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := peer.shared(exchange.Public)
+		if err != nil || !bytes.Equal(first, second) {
+			t.Fatalf("group %d: shared secrets differ (%v)", group, err)
+		}
+	}
+	if supportedDHGroup(19) {
+		t.Fatal("ECP group 19 must not be reported as supported")
+	}
+}
+
+func TestSHA2LargeSuitesRoundTrip(t *testing.T) {
+	for _, item := range []struct {
+		prf, integrity uint16
+		prfLen, keyLen int
+		checksumLength int
+	}{
+		{prfHMACSHA384, integrityHMACSHA384_192, 48, 48, 24},
+		{prfHMACSHA512, integrityHMACSHA512_256, 64, 64, 32},
+	} {
+		suite := negotiatedSuite{EncryptionID: encryptionAESCBC, EncryptionBits: 256, PRFID: item.prf, IntegrityID: item.integrity, DHID: dhMODP2048}
+		keys, err := deriveIKEKeys(suite, bytes.Repeat([]byte{1}, 256), bytes.Repeat([]byte{2}, 32), bytes.Repeat([]byte{3}, 32), [8]byte{1}, [8]byte{2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(keys.SKd) != item.prfLen || len(keys.SKai) != item.keyLen || len(keys.SKei) != 32 {
+			t.Fatalf("PRF %d: SKd=%d SKai=%d SKei=%d", item.prf, len(keys.SKd), len(keys.SKai), len(keys.SKei))
+		}
+		header := ikeHeader{InitiatorSPI: [8]byte{1}, ResponderSPI: [8]byte{2}, Exchange: exchangeIKEAuth, Flags: flagInitiator, MessageID: 1}
+		inner := []payload{{Type: payloadEAP, Body: []byte{2, 1, 0, 5, 1}}}
+		packet, err := encryptPayloads(header, inner, suite, keys.SKei, keys.SKai, bytes.NewReader(bytes.Repeat([]byte{9}, 64)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, decrypted, err := decryptPayloads(packet, suite, keys.SKei, keys.SKai)
+		if err != nil || len(decrypted) != 1 || !bytes.Equal(decrypted[0].Body, inner[0].Body) {
+			t.Fatalf("integrity %d: round trip = %v, %v", item.integrity, decrypted, err)
+		}
+		packet[len(packet)-item.checksumLength] ^= 1
+		if _, _, err := decryptPayloads(packet, suite, keys.SKei, keys.SKai); !errors.Is(err, errIntegrityMismatch) {
+			t.Fatalf("integrity %d: tampered packet error = %v", item.integrity, err)
+		}
+	}
+}

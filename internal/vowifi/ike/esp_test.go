@@ -43,6 +43,20 @@ func TestESPTunnelRoundTripNegotiatedSuites(t *testing.T) {
 			encKey:     bytes.Repeat([]byte{0x33}, 32),
 			authKey:    bytes.Repeat([]byte{0x44}, 32),
 		},
+		{
+			name:       "AES256-SHA384",
+			encryption: "aes-cbc-256",
+			integrity:  "hmac-sha2-384-192",
+			encKey:     bytes.Repeat([]byte{0x55}, 32),
+			authKey:    bytes.Repeat([]byte{0x66}, 48),
+		},
+		{
+			name:       "AES128-SHA512",
+			encryption: "aes-cbc-128",
+			integrity:  "hmac-sha2-512-256",
+			encKey:     bytes.Repeat([]byte{0x77}, 16),
+			authKey:    bytes.Repeat([]byte{0x88}, 64),
+		},
 	}
 	for _, test := range tests {
 		test := test

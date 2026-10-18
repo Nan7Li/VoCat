@@ -136,6 +136,25 @@ func TestDeriveEPDGUsesExplicitPLMNAndNeverIMSIHeuristics(t *testing.T) {
 			want: "epdg.epc.att.net",
 		},
 		{
+			name: "Verizon uses verified supplemental ePDG",
+			identity: SIMIdentity{
+				ICCID:   "8914800000000000001",
+				IMSI:    "311480000000001",
+				HomeMCC: "311",
+				HomeMNC: "480",
+			},
+			want: "wo.vzwwo.com",
+		},
+		{
+			name: "Globe two digit MNC uses supplemental ePDG",
+			identity: SIMIdentity{
+				ICCID:   "one",
+				HomeMCC: "515",
+				HomeMNC: "02",
+			},
+			want: "weconnect.globe.com.ph",
+		},
+		{
 			name: "explicit endpoint",
 			identity: SIMIdentity{
 				ICCID:   "one",

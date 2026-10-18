@@ -148,7 +148,10 @@ func (provider *Provider) start(ctx context.Context, request vowifi.TunnelReques
 	advertiseEAPOnly := carrierProfile.AdvertiseEAPOnly
 	if legacyFirst {
 		group = dhMODP1024
+	} else if supportedDHGroup(carrierProfile.IKEDHGroup) {
+		group = carrierProfile.IKEDHGroup
 	}
+	offeredGroups := ikeOfferGroups(group, legacyFirst)
 	dh, err := newDHExchange(group, provider.config.Random)
 	if err != nil {
 		return nil, err
@@ -161,13 +164,10 @@ func (provider *Provider) start(ctx context.Context, request vowifi.TunnelReques
 	if _, err := io.ReadFull(provider.config.Random, initiatorNonce); err != nil {
 		return nil, fmt.Errorf("ike: generate initiator nonce: %w", err)
 	}
-	ikeProposalBody, err := marshalProposals([]proposal{ikeOffer(group, legacyFirst)})
+	ikeProposalBody, err := marshalProposals([]proposal{ikeOffer(offeredGroups, legacyFirst)})
 	if err != nil {
 		return nil, err
 	}
-	keBody := make([]byte, 4+len(dh.Public))
-	binary.BigEndian.PutUint16(keBody[0:2], group)
-	copy(keBody[4:], dh.Public)
 	localAddress := transport.LocalAddr()
 	remoteAddress := transport.RemoteAddr()
 	if localAddress == nil || remoteAddress == nil {
@@ -183,7 +183,7 @@ func (provider *Provider) start(ctx context.Context, request vowifi.TunnelReques
 	}
 	initPayloads := []payload{
 		{Type: payloadSA, Body: ikeProposalBody},
-		{Type: payloadKE, Body: keBody},
+		{Type: payloadKE, Body: keyExchangeBody(dh)},
 		{Type: payloadNonce, Body: initiatorNonce},
 		makeNotify(notifyNATSource, sourceHash),
 		makeNotify(notifyNATDestination, destinationHash),
@@ -195,6 +195,7 @@ func (provider *Provider) start(ctx context.Context, request vowifi.TunnelReques
 		responseHeader       ikeHeader
 		initResponsePayloads []payload
 		cookie               []byte
+		switchedGroup        bool
 	)
 	for attempt := 0; attempt < maxIKEInitCookieChallenges; attempt++ {
 		requestPayloads := append([]payload(nil), initPayloads...)
@@ -226,7 +227,25 @@ func (provider *Provider) start(ctx context.Context, request vowifi.TunnelReques
 			return nil, err
 		}
 		if err := rejectFatalNotifications(initResponsePayloads); err != nil {
-			return nil, err
+			// RFC 7296 section 1.3: INVALID_KE_PAYLOAD names the offered group
+			// the responder wants. Retry once with that KE instead of failing.
+			var invalidKE *invalidKEPayloadError
+			if switchedGroup || !errors.As(err, &invalidKE) || invalidKE.group == group ||
+				!containsDHGroup(offeredGroups, invalidKE.group) {
+				return nil, err
+			}
+			provider.config.Logger.Info("IKE ePDG requested another DH group",
+				"carrier_profile", carrierProfile.ID, "from_group", dhName(group), "to_group", dhName(invalidKE.group))
+			group = invalidKE.group
+			dh, err = newDHExchange(group, provider.config.Random)
+			if err != nil {
+				return nil, err
+			}
+			initPayloads[1] = payload{Type: payloadKE, Body: keyExchangeBody(dh)}
+			switchedGroup = true
+			cookie = nil
+			attempt = -1
+			continue
 		}
 		challenge, hasCookie, err := ikeInitCookie(initResponsePayloads)
 		if err != nil {
@@ -707,7 +726,41 @@ func buildInitialEAPOnlyAuth(
 	return buildInitialEAPAuth(idi, requestedIDr, childOfferBody, tsi, tsr, true)
 }
 
-func ikeOffer(group uint16, legacyFirst bool) proposal {
+// ikeOfferGroups lists the DH groups offered in IKE_SA_INIT, the KE group
+// first. The modern offer adds the other MODP groups carrier ePDGs require
+// (Orange uses group 5, some UK/US operators 15 or 16) so that a responder
+// can answer INVALID_KE_PAYLOAD instead of NO_PROPOSAL_CHOSEN. Group 2 stays
+// confined to the legacy offer and its explicit fallback path.
+func ikeOfferGroups(group uint16, legacyFirst bool) []uint16 {
+	if legacyFirst {
+		return []uint16{group}
+	}
+	groups := []uint16{group}
+	for _, candidate := range []uint16{dhMODP2048, dhMODP3072, dhMODP4096, dhMODP1536} {
+		if !containsDHGroup(groups, candidate) {
+			groups = append(groups, candidate)
+		}
+	}
+	return groups
+}
+
+func containsDHGroup(groups []uint16, group uint16) bool {
+	for _, candidate := range groups {
+		if candidate == group {
+			return true
+		}
+	}
+	return false
+}
+
+func keyExchangeBody(dh *dhExchange) []byte {
+	body := make([]byte, 4+len(dh.Public))
+	binary.BigEndian.PutUint16(body[0:2], dh.Group)
+	copy(body[4:], dh.Public)
+	return body
+}
+
+func ikeOffer(groups []uint16, legacyFirst bool) proposal {
 	transforms := []transform{
 		{Type: transformEncryption, ID: encryptionAESCBC, KeyLength: 128},
 		{Type: transformEncryption, ID: encryptionAESCBC, KeyLength: 256},
@@ -715,11 +768,22 @@ func ikeOffer(group uint16, legacyFirst bool) proposal {
 		{Type: transformPRF, ID: prfHMACSHA256},
 		{Type: transformIntegrity, ID: integrityHMACSHA1_96},
 		{Type: transformIntegrity, ID: integrityHMACSHA256_128},
-		{Type: transformDH, ID: group},
 	}
 	if !legacyFirst {
 		transforms[2], transforms[3] = transforms[3], transforms[2]
 		transforms[4], transforms[5] = transforms[5], transforms[4]
+	}
+	// SHA-2 384/512 follow the established choices so responders that honour
+	// initiator order keep negotiating what they did before.
+	transforms = append(transforms[:4:4],
+		transform{Type: transformPRF, ID: prfHMACSHA384},
+		transform{Type: transformPRF, ID: prfHMACSHA512},
+		transforms[4], transforms[5],
+		transform{Type: transformIntegrity, ID: integrityHMACSHA384_192},
+		transform{Type: transformIntegrity, ID: integrityHMACSHA512_256},
+	)
+	for _, group := range groups {
+		transforms = append(transforms, transform{Type: transformDH, ID: group})
 	}
 	return proposal{Number: 1, Protocol: protocolIKE, Transforms: transforms}
 }
@@ -730,6 +794,8 @@ func espOffer(spi []byte, legacyFirst bool) proposal {
 		{Type: transformEncryption, ID: encryptionAESCBC, KeyLength: 256},
 		{Type: transformIntegrity, ID: integrityHMACSHA1_96},
 		{Type: transformIntegrity, ID: integrityHMACSHA256_128},
+		{Type: transformIntegrity, ID: integrityHMACSHA384_192},
+		{Type: transformIntegrity, ID: integrityHMACSHA512_256},
 		{Type: transformESN, ID: 0},
 	}
 	if !legacyFirst {
@@ -1028,6 +1094,10 @@ func ikeIntegrityName(identifier uint16) string {
 		return "hmac-sha1-96"
 	case integrityHMACSHA256_128:
 		return "hmac-sha2-256-128"
+	case integrityHMACSHA384_192:
+		return "hmac-sha2-384-192"
+	case integrityHMACSHA512_256:
+		return "hmac-sha2-512-256"
 	default:
 		return ""
 	}
@@ -1037,8 +1107,14 @@ func dhName(identifier uint16) string {
 	switch identifier {
 	case dhMODP1024:
 		return "modp1024"
+	case dhMODP1536:
+		return "modp1536"
 	case dhMODP2048:
 		return "modp2048"
+	case dhMODP3072:
+		return "modp3072"
+	case dhMODP4096:
+		return "modp4096"
 	default:
 		return ""
 	}

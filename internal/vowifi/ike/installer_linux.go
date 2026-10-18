@@ -257,6 +257,10 @@ func (handle *linuxXFRMHandle) stateArguments(
 		arguments = append(arguments, "auth-trunc", "hmac(sha1)", "0x"+hex.EncodeToString(integrityKey), "96")
 	case "hmac-sha2-256-128":
 		arguments = append(arguments, "auth-trunc", "hmac(sha256)", "0x"+hex.EncodeToString(integrityKey), "128")
+	case "hmac-sha2-384-192":
+		arguments = append(arguments, "auth-trunc", "hmac(sha384)", "0x"+hex.EncodeToString(integrityKey), "192")
+	case "hmac-sha2-512-256":
+		arguments = append(arguments, "auth-trunc", "hmac(sha512)", "0x"+hex.EncodeToString(integrityKey), "256")
 	}
 	arguments = append(arguments, "enc", "cbc(aes)", "0x"+hex.EncodeToString(encryptionKey))
 	if handle.config.UDPEncapsulation {

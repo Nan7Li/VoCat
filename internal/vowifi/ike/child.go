@@ -46,6 +46,10 @@ func (suite espSuite) integrityKeyLength() (int, error) {
 		return 20, nil
 	case integrityHMACSHA256_128:
 		return 32, nil
+	case integrityHMACSHA384_192:
+		return 48, nil
+	case integrityHMACSHA512_256:
+		return 64, nil
 	default:
 		return 0, fmt.Errorf("%w: ESP integrity id=%d", errUnsupportedSuite, suite.IntegrityID)
 	}
@@ -335,6 +339,10 @@ func espSuiteNames(suite espSuite) (encryption string, integrity string) {
 		integrity = "hmac-sha1-96"
 	case integrityHMACSHA256_128:
 		integrity = "hmac-sha2-256-128"
+	case integrityHMACSHA384_192:
+		integrity = "hmac-sha2-384-192"
+	case integrityHMACSHA512_256:
+		integrity = "hmac-sha2-512-256"
 	}
 	return encryption, integrity
 }

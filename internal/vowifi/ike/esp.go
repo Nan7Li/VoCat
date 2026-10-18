@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/subtle"
 	"encoding/binary"
 	"errors"
@@ -136,6 +137,12 @@ func newESPDirection(
 	case "hmac-sha2-256-128":
 		expectedAuthenticationLength = sha256.Size
 		icvLength = 16
+	case "hmac-sha2-384-192":
+		expectedAuthenticationLength = sha512.Size384
+		icvLength = 24
+	case "hmac-sha2-512-256":
+		expectedAuthenticationLength = sha512.Size
+		icvLength = 32
 	default:
 		return nil, fmt.Errorf("unsupported integrity suite %q", integrity)
 	}
@@ -304,6 +311,10 @@ func (direction *espDirection) authenticationCode(packet []byte) []byte {
 		mac = hmac.New(sha1.New, direction.authKey)
 	case "hmac-sha2-256-128":
 		mac = hmac.New(sha256.New, direction.authKey)
+	case "hmac-sha2-384-192":
+		mac = hmac.New(sha512.New384, direction.authKey)
+	case "hmac-sha2-512-256":
+		mac = hmac.New(sha512.New, direction.authKey)
 	default:
 		panic("unreachable ESP integrity suite")
 	}

@@ -71,6 +71,10 @@ type firstAuthCaptureTransport struct {
 	cookieChallenge []byte
 	cookieSeen      bool
 	cookieLoop      bool
+	// requireGroup makes the responder answer INVALID_KE_PAYLOAD until the
+	// initiator's KE uses this group, as Orange ePDGs do for MODP-1536.
+	requireGroup  uint16
+	invalidKESent bool
 }
 
 func (transport *firstAuthCaptureTransport) LocalAddr() *net.UDPAddr {
@@ -106,6 +110,18 @@ func (transport *firstAuthCaptureTransport) RoundTrip(ctx context.Context, packe
 			return nil, errors.New("test: unexpected exchange")
 		}
 	}
+	if transport.requireGroup != 0 {
+		switch transport.calls {
+		case 1:
+			return transport.answerInvalidKE(packet)
+		case 2:
+			return transport.answerIKEInit(packet)
+		case 3:
+			return nil, transport.observeFirstAuth(packet)
+		default:
+			return nil, errors.New("test: unexpected exchange")
+		}
+	}
 	switch transport.calls {
 	case 1:
 		return transport.answerIKEInit(packet)
@@ -125,6 +141,47 @@ func (transport *firstAuthCaptureTransport) RoundTripExchange(ctx context.Contex
 		return nil, err
 	}
 	return [][]byte{resp}, nil
+}
+
+func (transport *firstAuthCaptureTransport) answerInvalidKE(packet []byte) ([]byte, error) {
+	header, body, err := parseIKEPacket(packet)
+	if err != nil {
+		return nil, err
+	}
+	payloads, err := parsePayloadChain(header.NextPayload, body)
+	if err != nil {
+		return nil, err
+	}
+	sa, err := onePayload(payloads, payloadSA)
+	if err != nil {
+		return nil, err
+	}
+	offered, err := parseProposals(sa.Body)
+	if err != nil {
+		return nil, err
+	}
+	found := false
+	for _, candidate := range offered[0].Transforms {
+		if candidate.Type == transformDH && candidate.ID == transport.requireGroup {
+			found = true
+		}
+	}
+	if !found {
+		transport.t.Fatalf("IKE_SA_INIT did not offer DH group %d", transport.requireGroup)
+	}
+	var group [2]byte
+	group[0], group[1] = byte(transport.requireGroup>>8), byte(transport.requireGroup)
+	first, responseBody, err := marshalPayloadChain([]payload{makeNotify(notifyInvalidKE, group[:])})
+	if err != nil {
+		return nil, err
+	}
+	transport.invalidKESent = true
+	return ikeHeader{
+		InitiatorSPI: header.InitiatorSPI,
+		NextPayload:  first,
+		Exchange:     exchangeIKEInit,
+		Flags:        flagResponse,
+	}.marshal(responseBody), nil
 }
 
 func (transport *firstAuthCaptureTransport) answerIKECookie(packet []byte) ([]byte, error) {
@@ -209,13 +266,13 @@ func (transport *firstAuthCaptureTransport) answerIKEInit(packet []byte) ([]byte
 	}
 	group := uint16(ke.Body[0])<<8 | uint16(ke.Body[1])
 	wantGroup := transport.wantGroup
+	if transport.requireGroup != 0 {
+		wantGroup = transport.requireGroup
+	}
 	if wantGroup == 0 {
 		wantGroup = dhMODP2048
 	}
-	wantKELength := 128
-	if wantGroup == dhMODP2048 {
-		wantKELength = 256
-	}
+	wantKELength := len(modpPrimes[wantGroup]) / 2
 	if group != wantGroup || len(ke.Body[4:]) != wantKELength {
 		transport.t.Fatalf("init KE = group %d length %d, want group %d length %d", group, len(ke.Body[4:]), wantGroup, wantKELength)
 	}
@@ -235,6 +292,14 @@ func (transport *firstAuthCaptureTransport) answerIKEInit(packet []byte) ([]byte
 			PRFID:          prfHMACSHA256,
 			IntegrityID:    integrityHMACSHA256_128,
 			DHID:           dhMODP2048,
+		}
+	} else if group != dhMODP1024 {
+		transport.suite = negotiatedSuite{
+			EncryptionID:   encryptionAESCBC,
+			EncryptionBits: 128,
+			PRFID:          prfHMACSHA512,
+			IntegrityID:    integrityHMACSHA512_256,
+			DHID:           group,
 		}
 	}
 	transport.spii = header.InitiatorSPI
@@ -376,6 +441,65 @@ func TestProviderVodafoneFirstAuthIsEAPOnlyAndRequestsIMSAPN(t *testing.T) {
 	}
 	if capture.calls != 2 || capture.floated || aka.calls != 0 {
 		t.Fatalf("capture calls=%d floated=%v AKA calls=%d", capture.calls, capture.floated, aka.calls)
+	}
+}
+
+func TestProviderSwitchesDHGroupAfterInvalidKE(t *testing.T) {
+	for _, group := range []uint16{dhMODP1536, dhMODP3072, dhMODP4096} {
+		capture := &firstAuthCaptureTransport{t: t, wantEAPOnly: true, requireGroup: group}
+		provider, err := NewProvider(Config{
+			Random:    constantReader{value: 0x42},
+			Timeout:   time.Second,
+			Installer: unusedInstaller{},
+			APN:       "ims",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		provider.transportFactory = func(
+			context.Context,
+			transportConfig,
+			vowifi.ProxyRoute,
+			string,
+		) (datagramTransport, error) {
+			return capture, nil
+		}
+		_, err = provider.Start(context.Background(), vowifi.TunnelRequest{
+			DeviceID: "ec20-1",
+			Identity: vowifi.SIMIdentity{
+				ICCID:   "8944100000000000000",
+				IMSI:    "234150123456789",
+				HomeMCC: "234",
+				HomeMNC: "15",
+			},
+			EPDG: "epdg.epc.mnc015.mcc234.pub.3gppnetwork.org",
+			AKA:  &testAKAProvider{},
+		})
+		// Reaching the first IKE_AUTH proves the SHA2-512 keys derived from the
+		// new group decrypt correctly on the responder side.
+		if !errors.Is(err, errFirstAuthObserved) {
+			t.Fatalf("group %d: Start() error = %v, want capture sentinel", group, err)
+		}
+		if !capture.invalidKESent || capture.calls != 3 {
+			t.Fatalf("group %d: invalidKE=%v calls=%d", group, capture.invalidKESent, capture.calls)
+		}
+	}
+}
+
+func TestIKEOfferGroups(t *testing.T) {
+	if got := ikeOfferGroups(dhMODP1024, true); len(got) != 1 || got[0] != dhMODP1024 {
+		t.Fatalf("legacy groups = %v", got)
+	}
+	got := ikeOfferGroups(dhMODP1536, false)
+	want := []uint16{dhMODP1536, dhMODP2048, dhMODP3072, dhMODP4096}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("modern groups = %v, want %v", got, want)
+	}
+	offer := ikeOffer(ikeOfferGroups(dhMODP2048, false), false)
+	if suite, err := parseIKESuite(proposal{Protocol: protocolIKE, Transforms: []transform{
+		offer.Transforms[0], offer.Transforms[2], offer.Transforms[6], offer.Transforms[len(offer.Transforms)-4],
+	}}); err != nil || suite.PRFID != prfHMACSHA256 || suite.IntegrityID != integrityHMACSHA256_128 || suite.DHID != dhMODP2048 {
+		t.Fatalf("modern offer first choices = %+v, %v", suite, err)
 	}
 }
 

@@ -49,11 +49,18 @@ const (
 
 	prfHMACSHA1   = 2
 	prfHMACSHA256 = 5
+	prfHMACSHA384 = 6
+	prfHMACSHA512 = 7
 
 	integrityHMACSHA1_96     = 2
 	integrityHMACSHA256_128  = 12
+	integrityHMACSHA384_192  = 13
+	integrityHMACSHA512_256  = 14
 	dhMODP1024               = 2
+	dhMODP1536               = 5
 	dhMODP2048               = 14
+	dhMODP3072               = 15
+	dhMODP4096               = 16
 	transformAttributeKeyLen = 14
 
 	notifyInitialContact         = 16384
@@ -397,13 +404,13 @@ func parseIKESuite(item proposal) (negotiatedSuite, error) {
 	if suite.EncryptionID != encryptionAESCBC || (suite.EncryptionBits != 128 && suite.EncryptionBits != 256) {
 		return negotiatedSuite{}, fmt.Errorf("%w: encryption id=%d bits=%d", errUnsupportedSuite, suite.EncryptionID, suite.EncryptionBits)
 	}
-	if suite.PRFID != prfHMACSHA1 && suite.PRFID != prfHMACSHA256 {
-		return negotiatedSuite{}, fmt.Errorf("%w: PRF id=%d", errUnsupportedSuite, suite.PRFID)
+	if _, _, err := suite.prf(); err != nil {
+		return negotiatedSuite{}, err
 	}
-	if suite.IntegrityID != integrityHMACSHA1_96 && suite.IntegrityID != integrityHMACSHA256_128 {
-		return negotiatedSuite{}, fmt.Errorf("%w: integrity id=%d", errUnsupportedSuite, suite.IntegrityID)
+	if _, _, err := suite.integrityLengths(); err != nil {
+		return negotiatedSuite{}, err
 	}
-	if suite.DHID != dhMODP1024 && suite.DHID != dhMODP2048 {
+	if !supportedDHGroup(suite.DHID) {
 		return negotiatedSuite{}, fmt.Errorf("%w: DH id=%d", errUnsupportedSuite, suite.DHID)
 	}
 	return suite, nil

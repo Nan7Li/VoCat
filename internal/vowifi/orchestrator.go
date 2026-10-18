@@ -708,12 +708,12 @@ func DeriveEPDG(identity SIMIdentity) (string, error) {
 		return profile.EPDG, nil
 	}
 	if profile.RouteMCC != "" {
-		return standardEPDGHostname(profile.RouteMCC, profile.RouteMNC), nil
+		return homeEPDGHostname(profile.RouteMCC, profile.RouteMNC), nil
 	}
 	if err := identity.validate(); err != nil {
 		return "", err
 	}
-	return standardEPDGHostname(identity.HomeMCC, identity.HomeMNC), nil
+	return homeEPDGHostname(identity.HomeMCC, identity.HomeMNC), nil
 }
 
 func normalizeProxyRoute(route ProxyRoute) (ProxyRoute, error) {

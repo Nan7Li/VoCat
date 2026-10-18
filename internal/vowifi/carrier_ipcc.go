@@ -600,19 +600,29 @@ func importCarrierIKE(rule *carrierProfileRule, plists []ipccPlist, warnings *ip
 	}
 	if len(groups) > 0 {
 		unknown := make([]string, 0)
-		_, hasModern := groups[14]
-		_, hasLegacy := groups[2]
 		for group := range groups {
-			if group != 2 && group != 14 {
+			if !SupportedIKEDHGroup(group) {
 				unknown = append(unknown, strconv.Itoa(group))
 			}
 		}
 		sort.Strings(unknown)
-		switch {
-		case len(unknown) > 0:
+		if len(unknown) > 0 {
 			warnings.add("unsupported_ike_group", "unsupported IKE DH group(s) were not imported: "+strings.Join(unknown, ", "), "TechSettings.IKE.Proposals")
-		case hasModern:
+		}
+		// Prefer MODP-2048, then the larger MODP groups, then MODP-1536; the
+		// provider still follows INVALID_KE_PAYLOAD among its offered groups.
+		_, hasLegacy := groups[2]
+		switch {
+		case hasIKEGroup(groups, 14):
 			rule.IKE.Proposal = IKEProposalModern
+		case hasIKEGroup(groups, 15), hasIKEGroup(groups, 16), hasIKEGroup(groups, 5):
+			rule.IKE.Proposal = IKEProposalModern
+			for _, group := range []int{15, 16, 5} {
+				if hasIKEGroup(groups, group) {
+					rule.IKE.DHGroup = uint16(group)
+					break
+				}
+			}
 		case hasLegacy:
 			rule.IKE.Proposal = IKEProposalLegacy
 		}
@@ -622,6 +632,11 @@ func importCarrierIKE(rule *carrierProfileRule, plists []ipccPlist, warnings *ip
 			warnings.add("unsupported_eap_method", "VoCat does not import Apple EAP method "+strconv.Quote(method), "TechSettings.IKE.Proposals.EAPMethod")
 		}
 	}
+}
+
+func hasIKEGroup(groups map[int]struct{}, group int) bool {
+	_, ok := groups[group]
+	return ok
 }
 
 func importCarrierIMS(rule *carrierProfileRule, plists []ipccPlist, warnings *ipccWarningSet) {

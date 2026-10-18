@@ -35,6 +35,7 @@ type CarrierProfile struct {
 	RouteMNC                           string
 	EPDG                               string
 	IKEProposal                        string
+	IKEDHGroup                         uint16
 	AdvertiseEAPOnly                   bool
 	AllowSMSWithoutContactConfirmation bool
 	IMSRegisterOptions                 IMSRegisterOptions
@@ -81,6 +82,17 @@ const (
 	IMSContactFormatATT      = "att"
 	IMSContactFormatGSMA     = "gsma"
 )
+
+// SupportedIKEDHGroup reports whether the IKE provider implements the IANA
+// IKEv2 Diffie-Hellman group (RFC 2409/3526 MODP groups 2, 5, 14, 15 and 16).
+func SupportedIKEDHGroup(group int) bool {
+	switch group {
+	case 2, 5, 14, 15, 16:
+		return true
+	default:
+		return false
+	}
+}
 
 type carrierProfileDocument struct {
 	Version  int                  `json:"version"`
@@ -129,6 +141,7 @@ type carrierProfileEPDG struct {
 
 type carrierProfileIKE struct {
 	Proposal         string `json:"proposal,omitempty"`
+	DHGroup          uint16 `json:"dh_group,omitempty"`
 	AdvertiseEAPOnly *bool  `json:"advertise_eap_only,omitempty"`
 }
 
@@ -342,6 +355,9 @@ func validCarrierProfileRule(rule carrierProfileRule) bool {
 	}
 	if proposal := strings.TrimSpace(rule.IKE.Proposal); proposal != "" &&
 		proposal != IKEProposalModern && proposal != IKEProposalLegacy {
+		return false
+	}
+	if rule.IKE.DHGroup != 0 && !SupportedIKEDHGroup(int(rule.IKE.DHGroup)) {
 		return false
 	}
 	if transport := strings.ToLower(strings.TrimSpace(rule.IMS.Transport)); transport != "" &&
@@ -612,6 +628,9 @@ func applyCarrierProfileRule(base CarrierProfile, rule carrierProfileRule, sourc
 	if value := strings.TrimSpace(rule.IKE.Proposal); value != "" {
 		base.IKEProposal = value
 	}
+	if rule.IKE.DHGroup != 0 {
+		base.IKEDHGroup = rule.IKE.DHGroup
+	}
 	if rule.IKE.AdvertiseEAPOnly != nil {
 		base.AdvertiseEAPOnly = *rule.IKE.AdvertiseEAPOnly
 	}
@@ -814,7 +833,7 @@ func applyAssignedCarrierRoute(identity SIMIdentity) SIMIdentity {
 		if profile.EPDG != "" {
 			identity.EPDG = profile.EPDG
 		} else {
-			identity.EPDG = standardEPDGHostname(profile.RouteMCC, profile.RouteMNC)
+			identity.EPDG = homeEPDGHostname(profile.RouteMCC, profile.RouteMNC)
 		}
 		return identity
 	}
@@ -830,7 +849,7 @@ func applyAssignedCarrierRoute(identity SIMIdentity) SIMIdentity {
 		}
 	}
 	if strings.TrimSpace(identity.EPDG) == "" && identity.HomeMCC != "" && identity.HomeMNC != "" {
-		identity.EPDG = standardEPDGHostname(identity.HomeMCC, identity.HomeMNC)
+		identity.EPDG = homeEPDGHostname(identity.HomeMCC, identity.HomeMNC)
 	}
 	return identity
 }

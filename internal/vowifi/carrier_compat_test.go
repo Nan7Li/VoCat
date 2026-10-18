@@ -1,6 +1,7 @@
 package vowifi
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -328,5 +329,22 @@ func TestThreeHKCarrierProfileAndPANI(t *testing.T) {
 	}
 	if profile.PANIEnabled == nil || !*profile.PANIEnabled || profile.PANICountry != "AUTO" {
 		t.Fatalf("3HK PANI configuration = enabled=%v country=%q", profile.PANIEnabled, profile.PANICountry)
+	}
+}
+
+func TestCarrierProfileDHGroupIsValidatedAndApplied(t *testing.T) {
+	document := func(group int) []byte {
+		return []byte(fmt.Sprintf(`{"version":1,"profiles":[{"id":"orange-test","match":{"home_plmns":["21403"]},"ike":{"proposal":"modern","dh_group":%d}}]}`, group))
+	}
+	rules, err := loadCarrierProfiles(document(5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := applyCarrierProfileRule(defaultCarrierProfile(), rules[0], "hplmn", SIMIdentity{HomeMCC: "214", HomeMNC: "03"})
+	if profile.IKEDHGroup != 5 || profile.IKEProposal != IKEProposalModern {
+		t.Fatalf("profile IKE = proposal %q group %d", profile.IKEProposal, profile.IKEDHGroup)
+	}
+	if _, err := loadCarrierProfiles(document(19)); err == nil {
+		t.Fatal("unsupported DH group 19 was accepted")
 	}
 }
